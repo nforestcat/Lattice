@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -141,6 +141,14 @@ struct LinkMutationResult {
 struct EntryMutationResult {
     vault: VaultSnapshot,
     selected_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureInput {
+    content: String,
+    related_path: Option<String>,
+    captured_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,6 +344,36 @@ fn delete_entry(path: String, state: tauri::State<AppState>) -> Result<EntryMuta
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path,
+    })
+}
+
+#[tauri::command]
+fn capture_to_inbox(input: CaptureInput, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let captured_at = input.captured_at.unwrap_or_else(|| Utc::now().to_rfc3339());
+    let path = inbox_path_for_capture(&captured_at)?;
+    let related_title = input
+        .related_path
+        .as_ref()
+        .and_then(|path| guard.notes.iter().find(|note| note.meta.path == *path))
+        .map(|note| note.meta.title.as_str());
+    let capture = format_inbox_capture(&input.content, related_title, &captured_at)?;
+    let full_path = resolve_vault_path(&root, &path)?;
+    if let Some(parent_dir) = full_path.parent() {
+        fs::create_dir_all(parent_dir).map_err(|error| error.to_string())?;
+    }
+    if full_path.exists() {
+        let current = fs::read_to_string(&full_path).unwrap_or_default();
+        fs::write(&full_path, format!("{}\n\n{}", current.trim_end(), capture)).map_err(|error| error.to_string())?;
+    } else {
+        let title = path.trim_start_matches("Inbox/").trim_end_matches(".md");
+        fs::write(&full_path, format!("# {}\n\n{}", title, capture)).map_err(|error| error.to_string())?;
+    }
+    guard.notes = resolve_links(scan_vault(&root)?);
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(path),
     })
 }
 
@@ -641,6 +679,43 @@ fn render_context_bundle(title: &str, included: &[(ParsedNote, &'static str)]) -
     format!("{}\n", lines.join("\n").trim())
 }
 
+fn inbox_path_for_capture(captured_at: &str) -> Result<String, String> {
+    let date = parse_capture_time(captured_at)?;
+    Ok(format!("Inbox/{}.md", date.format("%Y-%m-%d")))
+}
+
+fn format_inbox_capture(content: &str, related_title: Option<&str>, captured_at: &str) -> Result<String, String> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err("Capture content is required".to_string());
+    }
+
+    let date = parse_capture_time(captured_at)?;
+    let mut lines = vec![
+        format!("## {}", date.format("%Y-%m-%d %H:%M")),
+        String::new(),
+    ];
+
+    if let Some(title) = related_title {
+        lines.push(format!("Related: [[{}]]", title));
+        lines.push(String::new());
+    }
+
+    lines.extend([
+        "#inbox".to_string(),
+        String::new(),
+        content.to_string(),
+    ]);
+
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
+fn parse_capture_time(captured_at: &str) -> Result<DateTime<Utc>, String> {
+    DateTime::parse_from_rfc3339(captured_at)
+        .map(|date| date.with_timezone(&Utc))
+        .map_err(|error| error.to_string())
+}
+
 fn build_graph(notes: &[ParsedNote]) -> GraphData {
     GraphData {
         focused_path: None,
@@ -829,6 +904,7 @@ pub fn run() {
             create_folder,
             rename_entry,
             delete_entry,
+            capture_to_inbox,
             get_context_bundle,
             get_context_bundle_candidates,
             search_notes,
@@ -936,5 +1012,16 @@ mod tests {
         assert!(bundle.markdown.contains("## Note: Project"));
         assert!(bundle.markdown.contains("## Note: Home"));
         assert!(!bundle.markdown.contains("## Note: Research"));
+    }
+
+    #[test]
+    fn inbox_capture_formats_related_daily_entry() {
+        let captured_at = "2026-06-04T06:30:00.000Z";
+
+        assert_eq!(inbox_path_for_capture(captured_at).unwrap(), "Inbox/2026-06-04.md");
+        assert_eq!(
+            format_inbox_capture("Keep this answer.", Some("Project"), captured_at).unwrap(),
+            "## 2026-06-04 06:30\n\nRelated: [[Project]]\n\n#inbox\n\nKeep this answer.\n"
+        );
     }
 }

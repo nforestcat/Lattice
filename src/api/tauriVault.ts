@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SearchFilters } from "../core/types";
 import type {
+  CaptureInput,
   ContextBundle,
   ContextBundleCandidate,
   ContextBundleOptions,
@@ -27,6 +28,7 @@ export function createTauriVaultApi(): VaultApi {
     renameEntry: (path: string, newName: string) =>
       invoke<EntryMutationResult>("rename_entry", { path, newName }),
     deleteEntry: (path: string) => invoke<EntryMutationResult>("delete_entry", { path }),
+    captureToInbox: (input: CaptureInput) => invoke<EntryMutationResult>("capture_to_inbox", { input }),
     getContextBundle: (path: string, options?: ContextBundleOptions) =>
       invoke<ContextBundle>("get_context_bundle", { path, options: options ?? {} }),
     getContextBundleCandidates: (path: string) =>

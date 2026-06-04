@@ -284,6 +284,10 @@ summary:hover .treeActions {
   gap: 8px;
 }
 
+.captureInput {
+  min-height: 120px;
+}
+
 .bundleSummary {
   display: flex;
   justify-content: space-between;

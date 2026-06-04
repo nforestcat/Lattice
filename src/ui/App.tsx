@@ -28,6 +28,7 @@ export function App() {
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
+  const [captureDraft, setCaptureDraft] = useState("");
   const [status, setStatus] = useState("Ready");
 
   useEffect(() => {
@@ -292,6 +293,28 @@ export function App() {
     }
   }
 
+  async function captureToInbox() {
+    if (!vault || !captureDraft.trim()) {
+      return;
+    }
+    try {
+      const result = await vaultApi.captureToInbox({
+        content: captureDraft,
+        relatedPath: activePath,
+        capturedAt: new Date().toISOString()
+      });
+      setCaptureDraft("");
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Captured to ${result.selectedPath}`);
+      if (result.selectedPath) {
+        await selectNote(result.selectedPath);
+      }
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
   const html = useMemo(() => ({ __html: marked.parse(draft) as string }), [draft]);
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
   const selectedContextCount = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).length;
@@ -421,6 +444,17 @@ export function App() {
               <textarea readOnly value={contextBundle.markdown} />
             </div>
           )}
+        </section>
+        <section>
+          <h2>Capture</h2>
+          <textarea
+            className="captureInput"
+            placeholder="Paste an LLM answer, idea, or loose note..."
+            value={captureDraft}
+            onChange={(event) => setCaptureDraft(event.target.value)}
+          />
+          <p className="muted">{context ? `Related to [[${context.note.title}]]` : "No related note selected"}</p>
+          <button onClick={() => void captureToInbox()} disabled={!vault || !captureDraft.trim()}>Capture to Inbox</button>
         </section>
         <section>
           <h2>Backlinks</h2>

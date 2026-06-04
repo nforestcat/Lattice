@@ -55,6 +55,12 @@ export type EntryMutationResult = {
   selectedPath: string | null;
 };
 
+export type CaptureInput = {
+  content: string;
+  relatedPath?: string | null;
+  capturedAt?: string;
+};
+
 export type ContextBundle = {
   title: string;
   focusPath: string;
@@ -82,6 +88,7 @@ export type VaultApi = {
   createFolder(parentPath: string | null, name: string): Promise<EntryMutationResult>;
   renameEntry(path: string, newName: string): Promise<EntryMutationResult>;
   deleteEntry(path: string): Promise<EntryMutationResult>;
+  captureToInbox(input: CaptureInput): Promise<EntryMutationResult>;
   getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle>;
   getContextBundleCandidates(path: string): Promise<ContextBundleCandidate[]>;
   searchNotes(filters: SearchFilters): Promise<NoteMeta[]>;

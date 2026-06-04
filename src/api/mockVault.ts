@@ -2,6 +2,7 @@ import { addManagedLink, removeManagedLink } from "../core/markdown";
 import { buildVaultIndex, getNoteContext, searchNotes } from "../core/indexer";
 import type { SearchFilters, VaultFile, VaultIndex } from "../core/types";
 import type {
+  CaptureInput,
   FileTreeNode,
   GitSettings,
   GitStatus,
@@ -17,6 +18,7 @@ import type {
   VaultSnapshot
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
+import { formatInboxCapture, inboxPathForDate } from "../core/capture";
 
 const initialFiles: VaultFile[] = [
   {
@@ -221,6 +223,29 @@ export function createMockVaultApi(): VaultApi {
       }
       rebuild();
       return { vault: vaultSnapshot(openRoot, index, files), selectedPath: files[0]?.path ?? null };
+    },
+    async captureToInbox(input: CaptureInput): Promise<EntryMutationResult> {
+      const capturedAt = input.capturedAt ? new Date(input.capturedAt) : new Date();
+      const path = inboxPathForDate(capturedAt);
+      const relatedTitle = input.relatedPath ? getNoteContext(index, input.relatedPath).note.title : null;
+      const capture = formatInboxCapture({
+        content: input.content,
+        relatedTitle,
+        capturedAt
+      });
+      const existing = files.find((file) => file.path === path);
+      if (existing) {
+        existing.content = `${existing.content.trimEnd()}\n\n${capture}`;
+        existing.modifiedAt = new Date().toISOString();
+      } else {
+        files.push({
+          path,
+          content: `# ${path.replace(/^Inbox\//, "").replace(/\.md$/i, "")}\n\n${capture}`,
+          modifiedAt: new Date().toISOString()
+        });
+      }
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: path };
     },
     async getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle> {
       return createContextBundle(index, path, options);
