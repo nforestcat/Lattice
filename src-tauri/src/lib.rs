@@ -2,7 +2,7 @@ use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -150,6 +150,22 @@ struct ContextBundle {
     focus_path: String,
     note_paths: Vec<String>,
     markdown: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ContextBundleOptions {
+    selected_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContextBundleCandidate {
+    path: String,
+    title: String,
+    reason: String,
+    selected: bool,
+    character_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,9 +340,15 @@ fn delete_entry(path: String, state: tauri::State<AppState>) -> Result<EntryMuta
 }
 
 #[tauri::command]
-fn get_context_bundle(path: String, state: tauri::State<AppState>) -> Result<ContextBundle, String> {
+fn get_context_bundle(path: String, options: ContextBundleOptions, state: tauri::State<AppState>) -> Result<ContextBundle, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
-    create_context_bundle(&guard.notes, &path)
+    create_context_bundle(&guard.notes, &path, options)
+}
+
+#[tauri::command]
+fn get_context_bundle_candidates(path: String, state: tauri::State<AppState>) -> Result<Vec<ContextBundleCandidate>, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    context_bundle_candidates(&guard.notes, &path)
 }
 
 #[tauri::command]
@@ -520,7 +542,37 @@ fn note_context(notes: &[ParsedNote], path: &str) -> Result<NoteContext, String>
     Ok(NoteContext { outgoing_links: note.links.clone(), note, backlinks })
 }
 
-fn create_context_bundle(notes: &[ParsedNote], focus_path: &str) -> Result<ContextBundle, String> {
+fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: ContextBundleOptions) -> Result<ContextBundle, String> {
+    let focus = notes.iter().find(|note| note.meta.path == focus_path).ok_or("Note not found")?;
+    let mut included = context_bundle_included_notes(notes, focus_path)?;
+    if let Some(selected_paths) = options.selected_paths {
+        let selected: HashSet<String> = selected_paths.into_iter().collect();
+        included.retain(|(note, _)| selected.contains(&note.meta.path));
+    }
+
+    let title = format!("Context Bundle: {}", focus.meta.title);
+    Ok(ContextBundle {
+        title: title.clone(),
+        focus_path: focus_path.to_string(),
+        note_paths: included.iter().map(|(note, _)| note.meta.path.clone()).collect(),
+        markdown: render_context_bundle(&title, &included),
+    })
+}
+
+fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<ContextBundleCandidate>, String> {
+    Ok(context_bundle_included_notes(notes, focus_path)?
+        .into_iter()
+        .map(|(note, reason)| ContextBundleCandidate {
+            path: note.meta.path.clone(),
+            title: note.meta.title.clone(),
+            reason: reason.to_string(),
+            selected: true,
+            character_count: note.content.len(),
+        })
+        .collect())
+}
+
+fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<(ParsedNote, &'static str)>, String> {
     let context = note_context(notes, focus_path)?;
     let mut included: Vec<(ParsedNote, &'static str)> = vec![(context.note.clone(), "Focus")];
 
@@ -542,13 +594,7 @@ fn create_context_bundle(notes: &[ParsedNote], focus_path: &str) -> Result<Conte
         }
     }
 
-    let title = format!("Context Bundle: {}", context.note.meta.title);
-    Ok(ContextBundle {
-        title: title.clone(),
-        focus_path: focus_path.to_string(),
-        note_paths: included.iter().map(|(note, _)| note.meta.path.clone()).collect(),
-        markdown: render_context_bundle(&title, &included),
-    })
+    Ok(included)
 }
 
 fn render_context_bundle(title: &str, included: &[(ParsedNote, &'static str)]) -> String {
@@ -784,6 +830,7 @@ pub fn run() {
             rename_entry,
             delete_entry,
             get_context_bundle,
+            get_context_bundle_candidates,
             search_notes,
             get_note_context,
             get_graph,
@@ -851,5 +898,43 @@ mod tests {
         ];
 
         assert_eq!(unique_note_path("Projects", "New Note", &existing), "Projects/New Note 3.md");
+    }
+
+    #[test]
+    fn context_bundle_uses_selected_candidate_paths() {
+        let mut project = parsed("Project.md", "Project");
+        project.links = vec![NoteLink {
+            source_path: "Project.md".to_string(),
+            target_ref: "Research".to_string(),
+            resolved_path: Some("Research.md".to_string()),
+            line: 3,
+            is_managed: false,
+        }];
+        let mut home = parsed("Home.md", "Home");
+        home.links = vec![NoteLink {
+            source_path: "Home.md".to_string(),
+            target_ref: "Project".to_string(),
+            resolved_path: Some("Project.md".to_string()),
+            line: 3,
+            is_managed: false,
+        }];
+        let notes = vec![project, parsed("Research.md", "Research"), home];
+
+        let candidates = context_bundle_candidates(&notes, "Project.md").unwrap();
+        assert_eq!(candidates.iter().map(|candidate| candidate.path.as_str()).collect::<Vec<_>>(), vec!["Project.md", "Research.md", "Home.md"]);
+
+        let bundle = create_context_bundle(
+            &notes,
+            "Project.md",
+            ContextBundleOptions {
+                selected_paths: Some(vec!["Project.md".to_string(), "Home.md".to_string()]),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(bundle.note_paths, vec!["Project.md", "Home.md"]);
+        assert!(bundle.markdown.contains("## Note: Project"));
+        assert!(bundle.markdown.contains("## Note: Home"));
+        assert!(!bundle.markdown.contains("## Note: Research"));
     }
 }

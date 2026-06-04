@@ -5,7 +5,7 @@ import { marked } from "marked";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
@@ -26,6 +26,8 @@ export function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
+  const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
+  const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState("Ready");
 
   useEffect(() => {
@@ -48,6 +50,8 @@ export function App() {
     setDocument(null);
     setDraft("");
     setContext(null);
+    setContextCandidates([]);
+    setSelectedContextPaths(new Set());
     setStatus(`Opened ${nextVault.rootPath}`);
     if (nextVault.notes[0]) {
       await selectNote(nextVault.notes[0].path);
@@ -80,6 +84,8 @@ export function App() {
       setDocument(null);
       setDraft("");
       setContext(null);
+      setContextCandidates([]);
+      setSelectedContextPaths(new Set());
     }
   }
 
@@ -96,6 +102,9 @@ export function App() {
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
     setContextBundle(null);
+    const candidates = await vaultApi.getContextBundleCandidates(path);
+    setContextCandidates(candidates);
+    setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
   }
@@ -235,6 +244,8 @@ export function App() {
         setDocument(null);
         setDraft("");
         setContext(null);
+        setContextCandidates([]);
+        setSelectedContextPaths(new Set());
       }
     } catch (error) {
       setStatus(errorMessage(error));
@@ -246,12 +257,27 @@ export function App() {
       return;
     }
     try {
-      const bundle = await vaultApi.getContextBundle(activePath);
+      const bundle = await vaultApi.getContextBundle(activePath, {
+        selectedPaths: contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).map((candidate) => candidate.path)
+      });
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
     } catch (error) {
       setStatus(errorMessage(error));
     }
+  }
+
+  function toggleContextCandidate(path: string) {
+    setSelectedContextPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+    setContextBundle(null);
   }
 
   async function copyContextBundle() {
@@ -268,6 +294,10 @@ export function App() {
 
   const html = useMemo(() => ({ __html: marked.parse(draft) as string }), [draft]);
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
+  const selectedContextCount = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).length;
+  const selectedContextCharacters = contextCandidates
+    .filter((candidate) => selectedContextPaths.has(candidate.path))
+    .reduce((total, candidate) => total + candidate.characterCount, 0);
 
   return (
     <main className="workspace">
@@ -364,7 +394,26 @@ export function App() {
       <aside className="contextPane">
         <section>
           <h2>LLM Context</h2>
-          <button onClick={() => void generateContextBundle()} disabled={!activePath}>Generate bundle</button>
+          <div className="bundleSummary">
+            <span>{selectedContextCount}/{contextCandidates.length} notes</span>
+            <span>{selectedContextCharacters} chars</span>
+          </div>
+          <div className="candidateList">
+            {contextCandidates.map((candidate) => (
+              <label key={candidate.path} className="candidateRow">
+                <input
+                  type="checkbox"
+                  checked={selectedContextPaths.has(candidate.path)}
+                  onChange={() => toggleContextCandidate(candidate.path)}
+                />
+                <span>
+                  <strong>{candidate.title}</strong>
+                  <small>{candidate.reason} · {candidate.characterCount} chars · {candidate.path}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+          <button onClick={() => void generateContextBundle()} disabled={!activePath || selectedContextCount === 0}>Generate bundle</button>
           {contextBundle && (
             <div className="bundleBox">
               <p className="muted">{contextBundle.notePaths.length} notes · {contextBundle.markdown.length} chars</p>

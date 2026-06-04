@@ -284,6 +284,53 @@ summary:hover .treeActions {
   gap: 8px;
 }
 
+.bundleSummary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #475467;
+  font-size: 12px;
+}
+
+.candidateList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.candidateRow {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid #d9dee3;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.candidateRow input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.candidateRow span {
+  min-width: 0;
+}
+
+.candidateRow strong,
+.candidateRow small {
+  display: block;
+}
+
+.candidateRow small {
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .graphShell {
   display: grid;
   grid-template-rows: 48px 1fr;

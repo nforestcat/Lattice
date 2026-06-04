@@ -8,12 +8,52 @@ export type ContextBundle = {
   markdown: string;
 };
 
+export type ContextBundleOptions = {
+  selectedPaths?: string[];
+};
+
+export type ContextBundleCandidate = {
+  path: string;
+  title: string;
+  reason: "Focus" | "Outgoing" | "Backlink";
+  selected: boolean;
+  characterCount: number;
+};
+
 type IncludedNote = {
   note: ParsedNote;
   reason: "Focus" | "Outgoing" | "Backlink";
 };
 
-export function createContextBundle(index: VaultIndex, focusPath: string): ContextBundle {
+export function createContextBundle(index: VaultIndex, focusPath: string, options: ContextBundleOptions = {}): ContextBundle {
+  const candidates = getIncludedNotes(index, focusPath);
+  const selected = options.selectedPaths ? new Set(options.selectedPaths) : null;
+  const notes = selected ? candidates.filter((entry) => selected.has(entry.note.path)) : candidates;
+  const focus = findNote(index, focusPath);
+  if (!focus) {
+    throw new Error(`Note not found: ${focusPath}`);
+  }
+  const title = `Context Bundle: ${focus.title}`;
+
+  return {
+    title,
+    focusPath,
+    notePaths: notes.map((entry) => entry.note.path),
+    markdown: renderBundle(title, notes)
+  };
+}
+
+export function getContextBundleCandidates(index: VaultIndex, focusPath: string): ContextBundleCandidate[] {
+  return getIncludedNotes(index, focusPath).map(({ note, reason }) => ({
+    path: note.path,
+    title: note.title,
+    reason,
+    selected: true,
+    characterCount: note.content.length
+  }));
+}
+
+function getIncludedNotes(index: VaultIndex, focusPath: string): IncludedNote[] {
   const context = getNoteContext(index, focusPath);
   const included = new Map<string, IncludedNote>();
 
@@ -33,15 +73,7 @@ export function createContextBundle(index: VaultIndex, focusPath: string): Conte
     }
   }
 
-  const notes = Array.from(included.values());
-  const title = `Context Bundle: ${context.note.title}`;
-
-  return {
-    title,
-    focusPath,
-    notePaths: notes.map((entry) => entry.note.path),
-    markdown: renderBundle(title, notes)
-  };
+  return Array.from(included.values());
 }
 
 function findNote(index: VaultIndex, path: string): ParsedNote | null {

@@ -7,6 +7,8 @@ import type {
   GitStatus,
   EntryMutationResult,
   ContextBundle,
+  ContextBundleCandidate,
+  ContextBundleOptions,
   LinkMutationResult,
   NoteDocument,
   SaveResult,
@@ -14,7 +16,7 @@ import type {
   VaultApi,
   VaultSnapshot
 } from "./types";
-import { createContextBundle } from "../core/contextBundle";
+import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 
 const initialFiles: VaultFile[] = [
   {
@@ -220,8 +222,11 @@ export function createMockVaultApi(): VaultApi {
       rebuild();
       return { vault: vaultSnapshot(openRoot, index, files), selectedPath: files[0]?.path ?? null };
     },
-    async getContextBundle(path: string): Promise<ContextBundle> {
-      return createContextBundle(index, path);
+    async getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle> {
+      return createContextBundle(index, path, options);
+    },
+    async getContextBundleCandidates(path: string): Promise<ContextBundleCandidate[]> {
+      return getContextBundleCandidates(index, path);
     },
     async searchNotes(filters: SearchFilters) {
       return searchNotes(index, filters);

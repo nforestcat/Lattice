@@ -62,6 +62,18 @@ export type ContextBundle = {
   markdown: string;
 };
 
+export type ContextBundleOptions = {
+  selectedPaths?: string[];
+};
+
+export type ContextBundleCandidate = {
+  path: string;
+  title: string;
+  reason: "Focus" | "Outgoing" | "Backlink";
+  selected: boolean;
+  characterCount: number;
+};
+
 export type VaultApi = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;
@@ -70,7 +82,8 @@ export type VaultApi = {
   createFolder(parentPath: string | null, name: string): Promise<EntryMutationResult>;
   renameEntry(path: string, newName: string): Promise<EntryMutationResult>;
   deleteEntry(path: string): Promise<EntryMutationResult>;
-  getContextBundle(path: string): Promise<ContextBundle>;
+  getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle>;
+  getContextBundleCandidates(path: string): Promise<ContextBundleCandidate[]>;
   searchNotes(filters: SearchFilters): Promise<NoteMeta[]>;
   getNoteContext(path: string): Promise<NoteContext>;
   getGraph(filters?: Record<string, unknown>): Promise<GraphData>;
