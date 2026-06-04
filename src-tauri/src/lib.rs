@@ -145,6 +145,15 @@ struct EntryMutationResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ContextBundle {
+    title: String,
+    focus_path: String,
+    note_paths: Vec<String>,
+    markdown: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SnapshotRecord {
     id: String,
     path: String,
@@ -312,6 +321,12 @@ fn delete_entry(path: String, state: tauri::State<AppState>) -> Result<EntryMuta
         vault: vault_snapshot(&root, &guard.notes),
         selected_path,
     })
+}
+
+#[tauri::command]
+fn get_context_bundle(path: String, state: tauri::State<AppState>) -> Result<ContextBundle, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    create_context_bundle(&guard.notes, &path)
 }
 
 #[tauri::command]
@@ -505,6 +520,81 @@ fn note_context(notes: &[ParsedNote], path: &str) -> Result<NoteContext, String>
     Ok(NoteContext { outgoing_links: note.links.clone(), note, backlinks })
 }
 
+fn create_context_bundle(notes: &[ParsedNote], focus_path: &str) -> Result<ContextBundle, String> {
+    let context = note_context(notes, focus_path)?;
+    let mut included: Vec<(ParsedNote, &'static str)> = vec![(context.note.clone(), "Focus")];
+
+    for link in &context.outgoing_links {
+        if let Some(resolved_path) = &link.resolved_path {
+            if !included.iter().any(|(note, _)| note.meta.path == *resolved_path) {
+                if let Some(note) = notes.iter().find(|note| note.meta.path == *resolved_path) {
+                    included.push((note.clone(), "Outgoing"));
+                }
+            }
+        }
+    }
+
+    for link in &context.backlinks {
+        if !included.iter().any(|(note, _)| note.meta.path == link.source_path) {
+            if let Some(note) = notes.iter().find(|note| note.meta.path == link.source_path) {
+                included.push((note.clone(), "Backlink"));
+            }
+        }
+    }
+
+    let title = format!("Context Bundle: {}", context.note.meta.title);
+    Ok(ContextBundle {
+        title: title.clone(),
+        focus_path: focus_path.to_string(),
+        note_paths: included.iter().map(|(note, _)| note.meta.path.clone()).collect(),
+        markdown: render_context_bundle(&title, &included),
+    })
+}
+
+fn render_context_bundle(title: &str, included: &[(ParsedNote, &'static str)]) -> String {
+    let mut lines = vec![
+        format!("# {}", title),
+        String::new(),
+        "## Included Notes".to_string(),
+    ];
+
+    for (note, reason) in included {
+        lines.push(format!("- {}: [[{}]] (`{}`)", reason, note.meta.title, note.meta.path));
+    }
+
+    lines.extend([
+        String::new(),
+        "## Instructions".to_string(),
+        String::new(),
+        "Use this bundle as local wiki context. Prefer cited note names when answering or proposing edits.".to_string(),
+        String::new(),
+    ]);
+
+    for (note, _) in included {
+        lines.extend([
+            format!("## Note: {}", note.meta.title),
+            String::new(),
+            format!("Path: `{}`", note.meta.path),
+            String::new(),
+        ]);
+
+        if !note.meta.frontmatter.is_empty() {
+            lines.push("Frontmatter:".to_string());
+            lines.push("```yaml".to_string());
+            for (key, value) in &note.meta.frontmatter {
+                lines.push(format!("{}: {}", key, value));
+            }
+            lines.push("```".to_string());
+            lines.push(String::new());
+        }
+
+        lines.push(note.content.trim().to_string());
+        lines.push(String::new());
+    }
+
+    format!("{}\n", lines.join("\n").trim())
+}
+
 fn build_graph(notes: &[ParsedNote]) -> GraphData {
     GraphData {
         focused_path: None,
@@ -693,6 +783,7 @@ pub fn run() {
             create_folder,
             rename_entry,
             delete_entry,
+            get_context_bundle,
             search_notes,
             get_note_context,
             get_graph,

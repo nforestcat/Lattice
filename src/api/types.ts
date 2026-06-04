@@ -55,6 +55,13 @@ export type EntryMutationResult = {
   selectedPath: string | null;
 };
 
+export type ContextBundle = {
+  title: string;
+  focusPath: string;
+  notePaths: string[];
+  markdown: string;
+};
+
 export type VaultApi = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;
@@ -63,6 +70,7 @@ export type VaultApi = {
   createFolder(parentPath: string | null, name: string): Promise<EntryMutationResult>;
   renameEntry(path: string, newName: string): Promise<EntryMutationResult>;
   deleteEntry(path: string): Promise<EntryMutationResult>;
+  getContextBundle(path: string): Promise<ContextBundle>;
   searchNotes(filters: SearchFilters): Promise<NoteMeta[]>;
   getNoteContext(path: string): Promise<NoteContext>;
   getGraph(filters?: Record<string, unknown>): Promise<GraphData>;

@@ -38,12 +38,21 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #d4d9de;
   background: #fff;
   border-radius: 6px;
   padding: 8px 10px;
+}
+
+textarea {
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .workspace {
@@ -267,6 +276,12 @@ summary:hover .treeActions {
   margin-top: 18px;
   color: #344054;
   font-size: 13px;
+}
+
+.bundleBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .graphShell {

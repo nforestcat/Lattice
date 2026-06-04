@@ -5,7 +5,7 @@ import { marked } from "marked";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
+import type { ContextBundle, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
@@ -25,6 +25,7 @@ export function App() {
   const [results, setResults] = useState<NoteMeta[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [status, setStatus] = useState("Ready");
 
   useEffect(() => {
@@ -94,6 +95,7 @@ export function App() {
   async function refreshContext(path: string) {
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
+    setContextBundle(null);
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
   }
@@ -239,6 +241,31 @@ export function App() {
     }
   }
 
+  async function generateContextBundle() {
+    if (!activePath) {
+      return;
+    }
+    try {
+      const bundle = await vaultApi.getContextBundle(activePath);
+      setContextBundle(bundle);
+      setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function copyContextBundle() {
+    if (!contextBundle) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(contextBundle.markdown);
+      setStatus("Context bundle copied");
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
   const html = useMemo(() => ({ __html: marked.parse(draft) as string }), [draft]);
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
 
@@ -335,6 +362,17 @@ export function App() {
       </section>
 
       <aside className="contextPane">
+        <section>
+          <h2>LLM Context</h2>
+          <button onClick={() => void generateContextBundle()} disabled={!activePath}>Generate bundle</button>
+          {contextBundle && (
+            <div className="bundleBox">
+              <p className="muted">{contextBundle.notePaths.length} notes · {contextBundle.markdown.length} chars</p>
+              <button onClick={() => void copyContextBundle()}>Copy bundle</button>
+              <textarea readOnly value={contextBundle.markdown} />
+            </div>
+          )}
+        </section>
         <section>
           <h2>Backlinks</h2>
           {context?.backlinks.length ? context.backlinks.map((link) => (
