@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
+import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
@@ -28,6 +29,7 @@ export function App() {
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
+  const [inboxCaptures, setInboxCaptures] = useState<InboxCaptureBlock[]>([]);
   const [captureDraft, setCaptureDraft] = useState("");
   const [status, setStatus] = useState("Ready");
 
@@ -53,6 +55,7 @@ export function App() {
     setContext(null);
     setContextCandidates([]);
     setSelectedContextPaths(new Set());
+    setInboxCaptures([]);
     setStatus(`Opened ${nextVault.rootPath}`);
     if (nextVault.notes[0]) {
       await selectNote(nextVault.notes[0].path);
@@ -87,6 +90,7 @@ export function App() {
       setContext(null);
       setContextCandidates([]);
       setSelectedContextPaths(new Set());
+      setInboxCaptures([]);
     }
   }
 
@@ -106,6 +110,7 @@ export function App() {
     const candidates = await vaultApi.getContextBundleCandidates(path);
     setContextCandidates(candidates);
     setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
+    setInboxCaptures(isInboxPath(path) ? await vaultApi.getInboxCaptures(path) : []);
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
   }
@@ -247,6 +252,7 @@ export function App() {
         setContext(null);
         setContextCandidates([]);
         setSelectedContextPaths(new Set());
+        setInboxCaptures([]);
       }
     } catch (error) {
       setStatus(errorMessage(error));
@@ -310,6 +316,46 @@ export function App() {
       if (result.selectedPath) {
         await selectNote(result.selectedPath);
       }
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function promoteInboxCapture(captureId: string) {
+    if (!activePath) {
+      return;
+    }
+    const title = window.prompt("New note title");
+    if (!title) {
+      return;
+    }
+    try {
+      const result = await vaultApi.promoteInboxCapture({
+        inboxPath: activePath,
+        captureId,
+        title
+      });
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Promoted to ${result.selectedPath}`);
+      if (result.selectedPath) {
+        await selectNote(result.selectedPath);
+      }
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function markInboxCaptureProcessed(captureId: string) {
+    if (!activePath) {
+      return;
+    }
+    try {
+      const result = await vaultApi.markInboxCaptureProcessed(activePath, captureId);
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus("Capture marked processed");
+      await selectNote(activePath);
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -465,6 +511,22 @@ export function App() {
           <p className="muted">{context ? `Related to [[${context.note.title}]]` : "No related note selected"}</p>
           <button onClick={() => void captureToInbox()} disabled={!vault || !captureDraft.trim()}>Capture to Inbox</button>
         </section>
+        {activePath && isInboxPath(activePath) && (
+          <section>
+            <h2>Inbox Triage</h2>
+            {inboxCaptures.length ? inboxCaptures.map((capture) => (
+              <div key={capture.id} className="triageCard">
+                <strong>{capture.title}</strong>
+                {capture.relatedTitle && <small>Related: [[{capture.relatedTitle}]]</small>}
+                <p>{capture.body}</p>
+                <div className="inlineActions">
+                  <button onClick={() => void promoteInboxCapture(capture.id)}>Create Note</button>
+                  <button onClick={() => void markInboxCaptureProcessed(capture.id)}>Mark Processed</button>
+                </div>
+              </div>
+            )) : <p className="muted">No unprocessed captures</p>}
+          </section>
+        )}
         <section>
           <h2>Backlinks</h2>
           {context?.backlinks.length ? context.backlinks.map((link) => (
@@ -658,6 +720,10 @@ function currentFolderPath(activePath: string | null): string | null {
   }
   const index = activePath.lastIndexOf("/");
   return index === -1 ? null : activePath.slice(0, index);
+}
+
+function isInboxPath(path: string): boolean {
+  return /^Inbox\/.+\.md$/i.test(path);
 }
 
 function errorMessage(error: unknown): string {

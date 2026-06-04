@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMockVaultApi } from "../src/api/mockVault";
-import { formatInboxCapture } from "../src/core/capture";
+import { formatInboxCapture, parseInboxCaptures } from "../src/core/capture";
 
 describe("formatInboxCapture", () => {
   it("formats captured text with timestamp, related note, inbox tag, and body", () => {
@@ -41,5 +41,76 @@ describe("mock vault capture", () => {
     });
     const matches = await api.searchNotes({ query: "durable note", tags: ["inbox"] });
     expect(matches.map((note) => note.path)).toEqual(["Inbox/2026-06-04.md"]);
+  });
+});
+
+describe("parseInboxCaptures", () => {
+  it("finds unprocessed inbox capture blocks before the processed section", () => {
+    const captures = parseInboxCaptures([
+      "# 2026-06-04",
+      "",
+      "## 2026-06-04 06:30",
+      "",
+      "Related: [[Project]]",
+      "",
+      "#inbox",
+      "",
+      "First captured idea.",
+      "",
+      "## 2026-06-04 07:00",
+      "",
+      "#inbox",
+      "",
+      "Second captured idea.",
+      "",
+      "## Processed",
+      "",
+      "## 2026-06-04 05:00",
+      "",
+      "#inbox",
+      "",
+      "Already handled."
+    ].join("\n"));
+
+    expect(captures).toEqual([
+      expect.objectContaining({
+        id: "2026-06-04 06:30",
+        title: "2026-06-04 06:30",
+        relatedTitle: "Project",
+        body: "First captured idea."
+      }),
+      expect.objectContaining({
+        id: "2026-06-04 07:00",
+        title: "2026-06-04 07:00",
+        relatedTitle: null,
+        body: "Second captured idea."
+      })
+    ]);
+  });
+
+  it("promotes a capture into a new note and moves it to processed", async () => {
+    const api = createMockVaultApi();
+    await api.openVault("Demo Vault");
+    await api.captureToInbox({
+      content: "Make this a real note.",
+      relatedPath: "Home.md",
+      capturedAt: "2026-06-04T06:30:00.000Z"
+    });
+
+    const captures = await api.getInboxCaptures("Inbox/2026-06-04.md");
+    const result = await api.promoteInboxCapture({
+      inboxPath: "Inbox/2026-06-04.md",
+      captureId: captures[0].id,
+      title: "Real Note"
+    });
+
+    expect(result.selectedPath).toBe("Real Note.md");
+    await expect(api.readNote("Real Note.md")).resolves.toMatchObject({
+      content: expect.stringContaining("Make this a real note.")
+    });
+    await expect(api.readNote("Inbox/2026-06-04.md")).resolves.toMatchObject({
+      content: expect.stringContaining("## Processed")
+    });
+    await expect(api.getInboxCaptures("Inbox/2026-06-04.md")).resolves.toEqual([]);
   });
 });

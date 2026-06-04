@@ -153,6 +153,24 @@ struct CaptureInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct InboxCaptureBlock {
+    id: String,
+    title: String,
+    related_title: Option<String>,
+    body: String,
+    markdown: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromoteInboxCaptureInput {
+    inbox_path: String,
+    capture_id: String,
+    title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ContextBundle {
     title: String,
     focus_path: String,
@@ -374,6 +392,51 @@ fn capture_to_inbox(input: CaptureInput, state: tauri::State<AppState>) -> Resul
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path: Some(path),
+    })
+}
+
+#[tauri::command]
+fn get_inbox_captures(inbox_path: String, state: tauri::State<AppState>) -> Result<Vec<InboxCaptureBlock>, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let full_path = resolve_vault_path(&root, &inbox_path)?;
+    let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
+    Ok(parse_inbox_captures(&content))
+}
+
+#[tauri::command]
+fn mark_inbox_capture_processed(inbox_path: String, capture_id: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let full_path = resolve_vault_path(&root, &inbox_path)?;
+    let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
+    fs::write(&full_path, move_inbox_capture_to_processed(&content, &capture_id)?).map_err(|error| error.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(inbox_path),
+    })
+}
+
+#[tauri::command]
+fn promote_inbox_capture(input: PromoteInboxCaptureInput, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let inbox_full_path = resolve_vault_path(&root, &input.inbox_path)?;
+    let inbox_content = fs::read_to_string(&inbox_full_path).map_err(|error| error.to_string())?;
+    let capture = parse_inbox_captures(&inbox_content)
+        .into_iter()
+        .find(|capture| capture.id == input.capture_id)
+        .ok_or_else(|| format!("Capture not found: {}", input.capture_id))?;
+    let clean_title = clean_entry_name(&input.title)?;
+    let note_path = unique_note_path("", &clean_title, &guard.notes);
+    let note_full_path = resolve_vault_path(&root, &note_path)?;
+    fs::write(&note_full_path, format!("# {}\n\n{}\n", clean_title, capture.body.trim())).map_err(|error| error.to_string())?;
+    fs::write(&inbox_full_path, move_inbox_capture_to_processed(&inbox_content, &input.capture_id)?).map_err(|error| error.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(note_path),
     })
 }
 
@@ -710,6 +773,61 @@ fn format_inbox_capture(content: &str, related_title: Option<&str>, captured_at:
     Ok(format!("{}\n", lines.join("\n")))
 }
 
+fn parse_inbox_captures(markdown: &str) -> Vec<InboxCaptureBlock> {
+    let unprocessed = markdown.split("\n## Processed").next().unwrap_or("");
+    let heading = Regex::new(r"(?m)^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$").expect("valid inbox heading regex");
+    let matches: Vec<_> = heading.find_iter(unprocessed).collect();
+    matches
+        .iter()
+        .enumerate()
+        .map(|(index, matched)| {
+            let end = matches.get(index + 1).map(|next| next.start()).unwrap_or(unprocessed.len());
+            let block = unprocessed[matched.start()..end].trim();
+            let title = heading.captures(block).and_then(|captures| captures.get(1)).map(|value| value.as_str()).unwrap_or("").to_string();
+            let related_title = Regex::new(r"(?m)^Related:\s*\[\[([^\]]+)]]\s*$")
+                .expect("valid related regex")
+                .captures(block)
+                .and_then(|captures| captures.get(1))
+                .map(|value| value.as_str().to_string());
+            let body = block
+                .lines()
+                .filter(|line| {
+                    !line.starts_with("## ")
+                        && !line.starts_with("Related: [[")
+                        && line.trim() != "#inbox"
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string();
+            InboxCaptureBlock {
+                id: title.clone(),
+                title,
+                related_title,
+                body,
+                markdown: format!("{}\n", block),
+            }
+        })
+        .collect()
+}
+
+fn move_inbox_capture_to_processed(markdown: &str, capture_id: &str) -> Result<String, String> {
+    let capture = parse_inbox_captures(markdown)
+        .into_iter()
+        .find(|candidate| candidate.id == capture_id)
+        .ok_or_else(|| format!("Capture not found: {}", capture_id))?;
+    let without_capture = markdown
+        .replace(capture.markdown.trim(), "")
+        .replace("\n\n\n", "\n\n")
+        .trim_end()
+        .to_string();
+    if without_capture.lines().any(|line| line.trim() == "## Processed") {
+        Ok(format!("{}\n\n{}", without_capture, capture.markdown))
+    } else {
+        Ok(format!("{}\n\n## Processed\n\n{}", without_capture, capture.markdown))
+    }
+}
+
 fn parse_capture_time(captured_at: &str) -> Result<DateTime<Utc>, String> {
     DateTime::parse_from_rfc3339(captured_at)
         .map(|date| date.with_timezone(&Utc))
@@ -905,6 +1023,9 @@ pub fn run() {
             rename_entry,
             delete_entry,
             capture_to_inbox,
+            get_inbox_captures,
+            mark_inbox_capture_processed,
+            promote_inbox_capture,
             get_context_bundle,
             get_context_bundle_candidates,
             search_notes,
@@ -1023,5 +1144,19 @@ mod tests {
             format_inbox_capture("Keep this answer.", Some("Project"), captured_at).unwrap(),
             "## 2026-06-04 06:30\n\nRelated: [[Project]]\n\n#inbox\n\nKeep this answer.\n"
         );
+    }
+
+    #[test]
+    fn inbox_capture_moves_to_processed_section() {
+        let markdown = "# 2026-06-04\n\n## 2026-06-04 06:30\n\n#inbox\n\nKeep this answer.\n";
+
+        let captures = parse_inbox_captures(markdown);
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].id, "2026-06-04 06:30");
+
+        let processed = move_inbox_capture_to_processed(markdown, "2026-06-04 06:30").unwrap();
+        assert!(processed.contains("## Processed"));
+        assert!(processed.ends_with("## 2026-06-04 06:30\n\n#inbox\n\nKeep this answer.\n"));
+        assert_eq!(parse_inbox_captures(&processed).len(), 0);
     }
 }

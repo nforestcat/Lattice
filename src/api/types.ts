@@ -1,4 +1,5 @@
 import type { GraphData, NoteContext, NoteMeta, SearchFilters } from "../core/types";
+import type { InboxCaptureBlock } from "../core/capture";
 
 export type VaultSnapshot = {
   rootPath: string;
@@ -61,6 +62,12 @@ export type CaptureInput = {
   capturedAt?: string;
 };
 
+export type PromoteInboxCaptureInput = {
+  inboxPath: string;
+  captureId: string;
+  title: string;
+};
+
 export type ContextBundle = {
   title: string;
   focusPath: string;
@@ -89,6 +96,9 @@ export type VaultApi = {
   renameEntry(path: string, newName: string): Promise<EntryMutationResult>;
   deleteEntry(path: string): Promise<EntryMutationResult>;
   captureToInbox(input: CaptureInput): Promise<EntryMutationResult>;
+  getInboxCaptures(inboxPath: string): Promise<InboxCaptureBlock[]>;
+  markInboxCaptureProcessed(inboxPath: string, captureId: string): Promise<EntryMutationResult>;
+  promoteInboxCapture(input: PromoteInboxCaptureInput): Promise<EntryMutationResult>;
   getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle>;
   getContextBundleCandidates(path: string): Promise<ContextBundleCandidate[]>;
   searchNotes(filters: SearchFilters): Promise<NoteMeta[]>;

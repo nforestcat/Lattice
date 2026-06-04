@@ -12,13 +12,14 @@ import type {
   ContextBundleOptions,
   LinkMutationResult,
   NoteDocument,
+  PromoteInboxCaptureInput,
   SaveResult,
   Snapshot,
   VaultApi,
   VaultSnapshot
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
-import { formatInboxCapture, inboxPathForDate } from "../core/capture";
+import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
 
 const initialFiles: VaultFile[] = [
   {
@@ -244,6 +245,34 @@ export function createMockVaultApi(): VaultApi {
           modifiedAt: new Date().toISOString()
         });
       }
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: path };
+    },
+    async getInboxCaptures(inboxPath: string) {
+      return parseInboxCaptures(findFile(inboxPath).content);
+    },
+    async markInboxCaptureProcessed(inboxPath: string, captureId: string): Promise<EntryMutationResult> {
+      const inbox = findFile(inboxPath);
+      inbox.content = moveInboxCaptureToProcessed(inbox.content, captureId);
+      inbox.modifiedAt = new Date().toISOString();
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: inboxPath };
+    },
+    async promoteInboxCapture(input: PromoteInboxCaptureInput): Promise<EntryMutationResult> {
+      const inbox = findFile(input.inboxPath);
+      const capture = parseInboxCaptures(inbox.content).find((candidate) => candidate.id === input.captureId);
+      if (!capture) {
+        throw new Error(`Capture not found: ${input.captureId}`);
+      }
+      const cleanTitle = cleanEntryName(input.title);
+      const path = uniquePath(`${cleanTitle}.md`, files);
+      files.push({
+        path,
+        content: `# ${cleanTitle}\n\n${capture.body}\n`,
+        modifiedAt: new Date().toISOString()
+      });
+      inbox.content = moveInboxCaptureToProcessed(inbox.content, input.captureId);
+      inbox.modifiedAt = new Date().toISOString();
       rebuild();
       return { vault: vaultSnapshot(openRoot, index, files), selectedPath: path };
     },

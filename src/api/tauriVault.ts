@@ -9,6 +9,7 @@ import type {
   GitSettings,
   LinkMutationResult,
   NoteDocument,
+  PromoteInboxCaptureInput,
   SaveResult,
   Snapshot,
   VaultApi,
@@ -29,6 +30,11 @@ export function createTauriVaultApi(): VaultApi {
       invoke<EntryMutationResult>("rename_entry", { path, newName }),
     deleteEntry: (path: string) => invoke<EntryMutationResult>("delete_entry", { path }),
     captureToInbox: (input: CaptureInput) => invoke<EntryMutationResult>("capture_to_inbox", { input }),
+    getInboxCaptures: (inboxPath: string) => invoke("get_inbox_captures", { inboxPath }),
+    markInboxCaptureProcessed: (inboxPath: string, captureId: string) =>
+      invoke<EntryMutationResult>("mark_inbox_capture_processed", { inboxPath, captureId }),
+    promoteInboxCapture: (input: PromoteInboxCaptureInput) =>
+      invoke<EntryMutationResult>("promote_inbox_capture", { input }),
     getContextBundle: (path: string, options?: ContextBundleOptions) =>
       invoke<ContextBundle>("get_context_bundle", { path, options: options ?? {} }),
     getContextBundleCandidates: (path: string) =>
