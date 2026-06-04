@@ -1,0 +1,103 @@
+# Lattice
+
+Lattice is an experimental local-first Markdown wiki for working with LLMs.
+
+It started as an Obsidian-style desktop notes app, but the current goal is more specific: help a local Markdown vault become a useful, inspectable context layer for LLM work.
+
+## Current Status
+
+This is an early v1 desktop app built with Tauri 2, React, TypeScript, Vite, and Rust.
+
+Implemented so far:
+
+- Open a local Markdown vault folder
+- Browse notes in a folder tree
+- Create, rename, and delete notes/folders
+- Edit Markdown with CodeMirror
+- View rendered Markdown preview beside the editor
+- Parse wiki links, backlinks, outgoing links, tags, and frontmatter
+- View and edit note relationships in a graph
+- Generate LLM context bundles from selected related notes
+- Capture loose ideas or LLM answers into daily Inbox notes
+- Triage Inbox captures into new notes or mark them processed
+- Create snapshots and optionally auto-commit saves in existing Git vaults
+
+## LLM Wiki Direction
+
+Lattice is not trying to clone every Obsidian feature.
+
+The main product direction is:
+
+- Capture useful LLM conversation fragments into a local wiki
+- Promote rough captures into durable notes
+- Build high-quality context bundles from local notes
+- Help discover related notes that are not linked yet
+- Keep Markdown files as the source of truth
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the web dev server:
+
+```bash
+npm run dev
+```
+
+Run the Tauri desktop app:
+
+```bash
+npm run dev:tauri
+```
+
+Run tests:
+
+```bash
+npm test
+```
+
+Build the frontend:
+
+```bash
+npm run build
+```
+
+Build the desktop app:
+
+```bash
+npm run build:tauri
+```
+
+On Windows, if Rust commands are not found after installation, make sure Cargo is on PATH:
+
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+```
+
+## Architecture
+
+- `src/core`: Markdown parsing, indexing, context bundle, capture logic
+- `src/api`: shared frontend API types plus mock/Tauri adapters
+- `src/ui`: React app UI
+- `src-tauri`: Rust backend and Tauri commands
+- `tests`: Vitest coverage for core behavior and UI smoke tests
+
+Markdown files are the source of truth. Generated indexes, graph data, and context bundles are rebuildable from the vault.
+
+## Next Ideas
+
+Likely next work:
+
+- Append Inbox captures to an existing target note
+- Add context bundle modes: short, standard, full
+- Add bundle purpose/instructions field
+- Recommend related notes beyond explicit wiki links
+- Add a first LLM prompt workspace before direct API integration
+
+## License
+
+MIT
