@@ -414,12 +414,52 @@ fn build_graph(notes: &[ParsedNote]) -> GraphData {
 }
 
 fn build_tree(notes: &[ParsedNote]) -> Vec<FileTreeNode> {
-    notes.iter().map(|note| FileTreeNode {
-        name: note.meta.path.split('/').last().unwrap_or(&note.meta.path).to_string(),
-        path: note.meta.path.clone(),
-        kind: "note".to_string(),
-        children: Vec::new(),
-    }).collect()
+    let mut root = Vec::new();
+    for note in notes {
+        insert_tree_path(&mut root, &note.meta.path);
+    }
+    sort_tree(&mut root);
+    root
+}
+
+fn insert_tree_path(nodes: &mut Vec<FileTreeNode>, note_path: &str) {
+    let parts: Vec<&str> = note_path.split('/').filter(|part| !part.is_empty()).collect();
+    let mut level = nodes;
+    let mut current_path = String::new();
+
+    for (index, part) in parts.iter().enumerate() {
+        if !current_path.is_empty() {
+            current_path.push('/');
+        }
+        current_path.push_str(part);
+
+        let kind = if index == parts.len() - 1 { "note" } else { "folder" };
+        let node_index = match level.iter().position(|node| node.path == current_path) {
+            Some(existing) => existing,
+            None => {
+                level.push(FileTreeNode {
+                    name: (*part).to_string(),
+                    path: current_path.clone(),
+                    kind: kind.to_string(),
+                    children: Vec::new(),
+                });
+                level.len() - 1
+            }
+        };
+
+        level = &mut level[node_index].children;
+    }
+}
+
+fn sort_tree(nodes: &mut Vec<FileTreeNode>) {
+    nodes.sort_by(|a, b| match (a.kind.as_str(), b.kind.as_str()) {
+        ("folder", "note") => std::cmp::Ordering::Greater,
+        ("note", "folder") => std::cmp::Ordering::Less,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    for node in nodes {
+        sort_tree(&mut node.children);
+    }
 }
 
 fn add_managed_link(content: &str, target: &str) -> String {
@@ -492,6 +532,7 @@ fn auto_commit(root: &Path, path: &str) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             open_vault,
             read_note,
@@ -508,4 +549,41 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local Vault Notes");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(path: &str, title: &str) -> ParsedNote {
+        ParsedNote {
+            meta: NoteMeta {
+                path: path.to_string(),
+                title: title.to_string(),
+                tags: Vec::new(),
+                frontmatter: HashMap::new(),
+                modified_at: None,
+                content_hash: revision_of(title),
+            },
+            content: format!("# {}", title),
+            links: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn build_tree_preserves_nested_folders() {
+        let tree = build_tree(&[
+            parsed("Home.md", "Home"),
+            parsed("Projects/Lattice.md", "Lattice"),
+            parsed("일지/한글 노트.md", "한글 노트"),
+        ]);
+
+        assert_eq!(tree.len(), 3);
+        assert_eq!(tree[0].kind, "note");
+        assert_eq!(tree[1].kind, "folder");
+        assert_eq!(tree[1].name, "Projects");
+        assert_eq!(tree[1].children[0].path, "Projects/Lattice.md");
+        assert_eq!(tree[2].name, "일지");
+        assert_eq!(tree[2].children[0].name, "한글 노트.md");
+    }
 }

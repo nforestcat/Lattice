@@ -4,8 +4,10 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { marked } from "marked";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { vaultApi } from "../api";
+import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
+import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
 type ViewMode = "edit" | "preview" | "graph";
 
@@ -26,7 +28,7 @@ export function App() {
   const [status, setStatus] = useState("Ready");
 
   useEffect(() => {
-    void openVault("Demo Vault");
+    void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
   }, []);
 
   useEffect(() => {
@@ -41,12 +43,27 @@ export function App() {
     const nextVault = await vaultApi.openVault(path);
     setVault(nextVault);
     setResults(nextVault.notes);
+    setActivePath(null);
+    setDocument(null);
+    setDraft("");
+    setContext(null);
     setStatus(`Opened ${nextVault.rootPath}`);
-    if (!activePath && nextVault.notes[0]) {
+    if (nextVault.notes[0]) {
       await selectNote(nextVault.notes[0].path);
     }
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
+  }
+
+  async function chooseVaultFolder() {
+    const selectedPath = await pickVaultFolder();
+    if (!selectedPath) {
+      setStatus("Vault selection cancelled");
+      return;
+    }
+
+    rememberVaultPath(window.localStorage, selectedPath);
+    await openVault(selectedPath);
   }
 
   async function selectNote(path: string) {
@@ -137,7 +154,7 @@ export function App() {
           <strong>Local Vault</strong>
           <span>{vault?.rootPath ?? "No vault"}</span>
         </div>
-        <button className="primary" onClick={() => void openVault("Demo Vault")}>Open vault</button>
+        <button className="primary" onClick={() => void chooseVaultFolder()}>Open vault</button>
         <SearchPanel
           query={query}
           tagFilter={tagFilter}

@@ -1,1 +1,1 @@
-{}
+{"main-capability":{"identifier":"main-capability","description":"Allow the main Lattice window to use core APIs and open vault folders.","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
