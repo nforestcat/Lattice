@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SearchFilters } from "../core/types";
-import type { GitSettings, LinkMutationResult, NoteDocument, SaveResult, Snapshot, VaultApi, VaultSnapshot } from "./types";
+import type { EntryMutationResult, GitSettings, LinkMutationResult, NoteDocument, SaveResult, Snapshot, VaultApi, VaultSnapshot } from "./types";
 
 export function createTauriVaultApi(): VaultApi {
   return {
@@ -8,6 +8,13 @@ export function createTauriVaultApi(): VaultApi {
     readNote: (path: string) => invoke<NoteDocument>("read_note", { path }),
     saveNote: (path: string, content: string, baseRevision: string) =>
       invoke<SaveResult>("save_note", { path, content, baseRevision }),
+    createNote: (parentPath: string | null, title: string) =>
+      invoke<EntryMutationResult>("create_note", { parentPath, title }),
+    createFolder: (parentPath: string | null, name: string) =>
+      invoke<EntryMutationResult>("create_folder", { parentPath, name }),
+    renameEntry: (path: string, newName: string) =>
+      invoke<EntryMutationResult>("rename_entry", { path, newName }),
+    deleteEntry: (path: string) => invoke<EntryMutationResult>("delete_entry", { path }),
     searchNotes: (filters: SearchFilters) => invoke("search_notes", { filters }),
     getNoteContext: (path: string) => invoke("get_note_context", { path }),
     getGraph: (filters?: Record<string, unknown>) => invoke("get_graph", { filters: filters ?? {} }),

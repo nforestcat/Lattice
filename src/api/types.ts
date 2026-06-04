@@ -50,10 +50,19 @@ export type LinkMutationResult = {
   graph: GraphData;
 };
 
+export type EntryMutationResult = {
+  vault: VaultSnapshot;
+  selectedPath: string | null;
+};
+
 export type VaultApi = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;
   saveNote(path: string, content: string, baseRevision: string): Promise<SaveResult>;
+  createNote(parentPath: string | null, title: string): Promise<EntryMutationResult>;
+  createFolder(parentPath: string | null, name: string): Promise<EntryMutationResult>;
+  renameEntry(path: string, newName: string): Promise<EntryMutationResult>;
+  deleteEntry(path: string): Promise<EntryMutationResult>;
   searchNotes(filters: SearchFilters): Promise<NoteMeta[]>;
   getNoteContext(path: string): Promise<NoteContext>;
   getGraph(filters?: Record<string, unknown>): Promise<GraphData>;

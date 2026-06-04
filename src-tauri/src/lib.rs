@@ -138,6 +138,13 @@ struct LinkMutationResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct EntryMutationResult {
+    vault: VaultSnapshot,
+    selected_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SnapshotRecord {
     id: String,
     path: String,
@@ -216,6 +223,94 @@ fn save_note(path: String, content: String, base_revision: String, state: tauri:
         conflict: false,
         snapshot_id: Some(snapshot_id),
         git_commit,
+    })
+}
+
+#[tauri::command]
+fn create_note(parent_path: Option<String>, title: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let clean_title = clean_entry_name(&title)?;
+    let parent = parent_path.unwrap_or_default();
+    let path = unique_note_path(&parent, &clean_title, &guard.notes);
+    let full_path = resolve_vault_path(&root, &path)?;
+    if let Some(parent_dir) = full_path.parent() {
+        fs::create_dir_all(parent_dir).map_err(|error| error.to_string())?;
+    }
+    fs::write(&full_path, format!("# {}\n", clean_title)).map_err(|error| error.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(path),
+    })
+}
+
+#[tauri::command]
+fn create_folder(parent_path: Option<String>, name: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let clean_name = clean_entry_name(&name)?;
+    let folder_path = join_vault_path(parent_path.as_deref().unwrap_or(""), &clean_name);
+    let full_path = resolve_vault_path(&root, &folder_path)?;
+    if full_path.exists() {
+        return Err(format!("Entry already exists: {}", folder_path));
+    }
+    fs::create_dir_all(&full_path).map_err(|error| error.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(folder_path),
+    })
+}
+
+#[tauri::command]
+fn rename_entry(path: String, new_name: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let clean_name = clean_entry_name(&new_name)?;
+    let from = resolve_vault_path(&root, &path)?;
+    if !from.exists() {
+        return Err(format!("Entry not found: {}", path));
+    }
+    let is_note = path.to_lowercase().ends_with(".md");
+    let parent = parent_path(&path);
+    let target_name = if is_note { format!("{}.md", clean_name) } else { clean_name };
+    let to_path = join_vault_path(parent.as_deref().unwrap_or(""), &target_name);
+    let to = resolve_vault_path(&root, &to_path)?;
+    if to.exists() {
+        return Err(format!("Entry already exists: {}", to_path));
+    }
+    fs::rename(&from, &to).map_err(|error| error.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(to_path),
+    })
+}
+
+#[tauri::command]
+fn delete_entry(path: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let target = resolve_vault_path(&root, &path)?;
+    if target.is_dir() {
+        let mut entries = fs::read_dir(&target).map_err(|error| error.to_string())?;
+        if entries.next().is_some() {
+            return Err("Folder is not empty".to_string());
+        }
+        fs::remove_dir(&target).map_err(|error| error.to_string())?;
+    } else if target.is_file() {
+        let content = fs::read_to_string(&target).unwrap_or_default();
+        snapshot(&mut guard, &path, &content, "delete");
+        fs::remove_file(&target).map_err(|error| error.to_string())?;
+    } else {
+        return Err(format!("Entry not found: {}", path));
+    }
+    guard.notes = resolve_links(scan_vault(&root)?);
+    let selected_path = guard.notes.first().map(|note| note.meta.path.clone());
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path,
     })
 }
 
@@ -330,6 +425,14 @@ fn scan_vault(root: &Path) -> Result<Vec<ParsedNote>, String> {
         notes.push(parse_note(rel, content, modified_at));
     }
     Ok(resolve_links(notes))
+}
+
+fn vault_snapshot(root: &Path, notes: &[ParsedNote]) -> VaultSnapshot {
+    VaultSnapshot {
+        root_path: root.to_string_lossy().to_string(),
+        notes: notes.iter().map(|note| note.meta.clone()).collect(),
+        tree: build_tree(notes),
+    }
 }
 
 fn parse_note(path: String, raw: String, modified_at: Option<String>) -> ParsedNote {
@@ -462,6 +565,55 @@ fn sort_tree(nodes: &mut Vec<FileTreeNode>) {
     }
 }
 
+fn clean_entry_name(name: &str) -> Result<String, String> {
+    let cleaned = name.trim().replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], "-");
+    if cleaned.is_empty() {
+        Err("Entry name is required".to_string())
+    } else {
+        Ok(cleaned)
+    }
+}
+
+fn unique_note_path(parent_path: &str, title: &str, notes: &[ParsedNote]) -> String {
+    let first = join_vault_path(parent_path, &format!("{}.md", title));
+    if !note_path_exists(&first, notes) {
+        return first;
+    }
+
+    for index in 2.. {
+        let candidate = join_vault_path(parent_path, &format!("{} {}.md", title, index));
+        if !note_path_exists(&candidate, notes) {
+            return candidate;
+        }
+    }
+
+    unreachable!()
+}
+
+fn note_path_exists(path: &str, notes: &[ParsedNote]) -> bool {
+    notes.iter().any(|note| note.meta.path.eq_ignore_ascii_case(path))
+}
+
+fn parent_path(path: &str) -> Option<String> {
+    path.rsplit_once('/').map(|(parent, _)| parent.to_string())
+}
+
+fn join_vault_path(parent_path: &str, name: &str) -> String {
+    if parent_path.trim().is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", parent_path.trim_end_matches('/'), name)
+    }
+}
+
+fn resolve_vault_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(path);
+    if relative.is_absolute() || path.split(['/', '\\']).any(|part| part == "..") {
+        return Err(format!("Unsafe vault path: {}", path));
+    }
+    Ok(root.join(relative))
+}
+
 fn add_managed_link(content: &str, target: &str) -> String {
     if content.contains(&format!("- [[{}]]", target)) {
         return content.to_string();
@@ -537,6 +689,10 @@ pub fn run() {
             open_vault,
             read_note,
             save_note,
+            create_note,
+            create_folder,
+            rename_entry,
+            delete_entry,
             search_notes,
             get_note_context,
             get_graph,
@@ -585,5 +741,24 @@ mod tests {
         assert_eq!(tree[1].children[0].path, "Projects/Lattice.md");
         assert_eq!(tree[2].name, "일지");
         assert_eq!(tree[2].children[0].name, "한글 노트.md");
+    }
+
+    #[test]
+    fn vault_paths_stay_inside_the_vault() {
+        let root = PathBuf::from("C:/vault");
+
+        assert_eq!(resolve_vault_path(&root, "Projects/Note.md").unwrap(), root.join("Projects/Note.md"));
+        assert!(resolve_vault_path(&root, "../outside.md").is_err());
+        assert!(resolve_vault_path(&root, "C:/outside.md").is_err());
+    }
+
+    #[test]
+    fn unique_note_path_adds_numeric_suffixes() {
+        let existing = vec![
+            parsed("Projects/New Note.md", "New Note"),
+            parsed("Projects/New Note 2.md", "New Note 2"),
+        ];
+
+        assert_eq!(unique_note_path("Projects", "New Note", &existing), "Projects/New Note 3.md");
     }
 }

@@ -98,6 +98,31 @@ select {
   margin-top: 16px;
 }
 
+.sectionHeader,
+summary,
+.treeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sectionHeader {
+  justify-content: space-between;
+}
+
+.inlineActions,
+.treeActions {
+  display: flex;
+  gap: 4px;
+}
+
+.inlineActions button,
+.treeActions button {
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1;
+}
+
 h2 {
   font-size: 13px;
   letter-spacing: 0;
@@ -114,6 +139,7 @@ summary {
   color: #344054;
   font-size: 13px;
   padding: 6px 0;
+  justify-content: space-between;
 }
 
 .treeChildren {
@@ -123,16 +149,34 @@ summary {
   padding-left: 10px;
 }
 
+.treeRow,
 .treeItem,
 .result,
 .contextPane section button {
   width: 100%;
 }
 
-.treeItem.active,
+.treeRow.active .treeItem,
 .segmented .active {
   background: #dde9ff;
   border-color: #8bb6ff;
+}
+
+.treeItem {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeActions {
+  opacity: 0;
+}
+
+.treeRow:hover .treeActions,
+summary:hover .treeActions {
+  opacity: 1;
 }
 
 .editorPane {

@@ -66,6 +66,22 @@ export function App() {
     await openVault(selectedPath);
   }
 
+  async function refreshVault(selectedPath: string | null) {
+    const nextVault = await vaultApi.openVault(vault?.rootPath ?? "Demo Vault");
+    setVault(nextVault);
+    setResults(nextVault.notes);
+    setGraph(await vaultApi.getGraph());
+    setGitStatus(await vaultApi.getGitStatus());
+    if (selectedPath) {
+      await selectNote(selectedPath);
+    } else {
+      setActivePath(null);
+      setDocument(null);
+      setDraft("");
+      setContext(null);
+    }
+  }
+
   async function selectNote(path: string) {
     const note = await vaultApi.readNote(path);
     setActivePath(path);
@@ -144,6 +160,85 @@ export function App() {
     await refreshContext(sourcePath);
   }
 
+  async function createNoteInCurrentFolder() {
+    const title = window.prompt("New note name");
+    if (!title) {
+      return;
+    }
+    try {
+      const result = await vaultApi.createNote(currentFolderPath(activePath), title);
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Created ${result.selectedPath}`);
+      if (result.selectedPath) {
+        await selectNote(result.selectedPath);
+      }
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function createFolderInCurrentFolder() {
+    const name = window.prompt("New folder name");
+    if (!name) {
+      return;
+    }
+    try {
+      const result = await vaultApi.createFolder(currentFolderPath(activePath), name);
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Created folder ${result.selectedPath}`);
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function renameTreeEntry(path: string) {
+    const currentName = path.split("/").pop()?.replace(/\.md$/i, "") ?? path;
+    const newName = window.prompt("Rename", currentName);
+    if (!newName || newName === currentName) {
+      return;
+    }
+    try {
+      const result = await vaultApi.renameEntry(path, newName);
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Renamed to ${result.selectedPath}`);
+      if (result.selectedPath?.endsWith(".md")) {
+        await selectNote(result.selectedPath);
+      } else {
+        await refreshVault(activePath);
+      }
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function deleteTreeEntry(path: string, kind: FileTreeNode["kind"]) {
+    const message = kind === "folder"
+      ? `Delete empty folder "${path}"? Non-empty folders are refused.`
+      : `Delete note "${path}"?`;
+    if (!window.confirm(message)) {
+      return;
+    }
+    try {
+      const result = await vaultApi.deleteEntry(path);
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Deleted ${path}`);
+      if (result.selectedPath) {
+        await selectNote(result.selectedPath);
+      } else {
+        setActivePath(null);
+        setDocument(null);
+        setDraft("");
+        setContext(null);
+      }
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
   const html = useMemo(() => ({ __html: marked.parse(draft) as string }), [draft]);
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
 
@@ -174,9 +269,22 @@ export function App() {
           }}
         />
         <section className="tree">
-          <h2>Files</h2>
+          <div className="sectionHeader">
+            <h2>Files</h2>
+            <div className="inlineActions">
+              <button title="New note" onClick={() => void createNoteInCurrentFolder()}>+</button>
+              <button title="New folder" onClick={() => void createFolderInCurrentFolder()}>Folder</button>
+            </div>
+          </div>
           {vault?.tree.map((node) => (
-            <TreeNode key={node.path} node={node} activePath={activePath} onSelect={(path) => void selectNote(path)} />
+            <TreeNode
+              key={node.path}
+              node={node}
+              activePath={activePath}
+              onSelect={(path) => void selectNote(path)}
+              onRename={(path) => void renameTreeEntry(path)}
+              onDelete={(path, kind) => void deleteTreeEntry(path, kind)}
+            />
           ))}
         </section>
         <section className="results">
@@ -303,20 +411,58 @@ function SearchPanel(props: {
   );
 }
 
-function TreeNode({ node, activePath, onSelect }: { node: FileTreeNode; activePath: string | null; onSelect(path: string): void }) {
+function TreeNode({
+  node,
+  activePath,
+  onSelect,
+  onRename,
+  onDelete
+}: {
+  node: FileTreeNode;
+  activePath: string | null;
+  onSelect(path: string): void;
+  onRename(path: string): void;
+  onDelete(path: string, kind: FileTreeNode["kind"]): void;
+}) {
+  const actions = (
+    <span className="treeActions">
+      <button title={`Rename ${node.name}`} onClick={(event) => {
+        event.stopPropagation();
+        onRename(node.path);
+      }}>Rename</button>
+      <button title={`Delete ${node.name}`} onClick={(event) => {
+        event.stopPropagation();
+        onDelete(node.path, node.kind);
+      }}>Delete</button>
+    </span>
+  );
+
   if (node.kind === "note") {
     return (
-      <button className={node.path === activePath ? "treeItem active" : "treeItem"} onClick={() => onSelect(node.path)}>
-        {node.name}
-      </button>
+      <div className={node.path === activePath ? "treeRow active" : "treeRow"}>
+        <button className="treeItem" onClick={() => onSelect(node.path)}>{node.name}</button>
+        {actions}
+      </div>
     );
   }
 
   return (
     <details open>
-      <summary>{node.name}</summary>
+      <summary>
+        <span>{node.name}</span>
+        {actions}
+      </summary>
       <div className="treeChildren">
-        {node.children.map((child) => <TreeNode key={child.path} node={child} activePath={activePath} onSelect={onSelect} />)}
+        {node.children.map((child) => (
+          <TreeNode
+            key={child.path}
+            node={child}
+            activePath={activePath}
+            onSelect={onSelect}
+            onRename={onRename}
+            onDelete={onDelete}
+          />
+        ))}
       </div>
     </details>
   );
@@ -374,4 +520,16 @@ function parsePropertyFilter(value: string): Record<string, string> {
   }
   const [key, ...rest] = value.split("=");
   return key.trim() ? { [key.trim()]: rest.join("=").trim() } : {};
+}
+
+function currentFolderPath(activePath: string | null): string | null {
+  if (!activePath) {
+    return null;
+  }
+  const index = activePath.lastIndexOf("/");
+  return index === -1 ? null : activePath.slice(0, index);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -5,6 +5,7 @@ import type {
   FileTreeNode,
   GitSettings,
   GitStatus,
+  EntryMutationResult,
   LinkMutationResult,
   NoteDocument,
   SaveResult,
@@ -150,6 +151,73 @@ export function createMockVaultApi(): VaultApi {
         gitCommit: autoGitEnabled ? shortHash(`${path}:${content}`) : null
       };
     },
+    async createNote(parentPath: string | null, title: string): Promise<EntryMutationResult> {
+      const cleanTitle = cleanEntryName(title);
+      const path = uniquePath(joinPath(parentPath, `${cleanTitle}.md`), files);
+      files.push({
+        path,
+        content: `# ${cleanTitle}\n`,
+        modifiedAt: new Date().toISOString()
+      });
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: path };
+    },
+    async createFolder(parentPath: string | null, name: string): Promise<EntryMutationResult> {
+      const cleanName = cleanEntryName(name);
+      const folderPath = joinPath(parentPath, cleanName);
+      if (entryExists(folderPath, files)) {
+        throw new Error(`Entry already exists: ${folderPath}`);
+      }
+      files.push({
+        path: joinPath(folderPath, ".lattice-folder.md"),
+        content: `# ${cleanName}\n`,
+        modifiedAt: new Date().toISOString()
+      });
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: folderPath };
+    },
+    async renameEntry(path: string, newName: string): Promise<EntryMutationResult> {
+      const cleanName = cleanEntryName(newName);
+      const isNote = path.toLowerCase().endsWith(".md");
+      const parentPath = parentOf(path);
+      const nextPath = joinPath(parentPath, isNote ? `${cleanName}.md` : cleanName);
+      if (entryExists(nextPath, files)) {
+        throw new Error(`Entry already exists: ${nextPath}`);
+      }
+      const prefix = `${path}/`;
+      let changed = false;
+      files = files.map((file) => {
+        if (file.path === path) {
+          changed = true;
+          return { ...file, path: nextPath };
+        }
+        if (file.path.startsWith(prefix)) {
+          changed = true;
+          return { ...file, path: `${nextPath}/${file.path.slice(prefix.length)}` };
+        }
+        return file;
+      });
+      if (!changed) {
+        throw new Error(`Entry not found: ${path}`);
+      }
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: nextPath };
+    },
+    async deleteEntry(path: string): Promise<EntryMutationResult> {
+      const isNote = files.some((file) => file.path === path);
+      const prefix = `${path}/`;
+      const descendants = files.filter((file) => file.path.startsWith(prefix));
+      if (!isNote && descendants.length > 0) {
+        throw new Error("Folder is not empty");
+      }
+      const before = files.length;
+      files = files.filter((file) => file.path !== path);
+      if (files.length === before) {
+        throw new Error(`Entry not found: ${path}`);
+      }
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: files[0]?.path ?? null };
+    },
     async searchNotes(filters: SearchFilters) {
       return searchNotes(index, filters);
     },
@@ -215,6 +283,14 @@ export function createMockVaultApi(): VaultApi {
   };
 }
 
+function vaultSnapshot(rootPath: string, index: VaultIndex, files: VaultFile[]): VaultSnapshot {
+  return {
+    rootPath,
+    notes: index.notes,
+    tree: buildFileTree(files)
+  };
+}
+
 function buildFileTree(files: VaultFile[]): FileTreeNode[] {
   const root: FileTreeNode[] = [];
   for (const file of files) {
@@ -232,6 +308,41 @@ function buildFileTree(files: VaultFile[]): FileTreeNode[] {
     });
   }
   return root;
+}
+
+function cleanEntryName(name: string): string {
+  const cleaned = name.trim().replace(/[\\/:*?"<>|]/g, "-");
+  if (!cleaned) {
+    throw new Error("Entry name is required");
+  }
+  return cleaned;
+}
+
+function joinPath(parentPath: string | null | undefined, name: string): string {
+  return parentPath ? `${parentPath.replace(/\/+$/g, "")}/${name}` : name;
+}
+
+function parentOf(path: string): string | null {
+  const index = path.lastIndexOf("/");
+  return index === -1 ? null : path.slice(0, index);
+}
+
+function entryExists(path: string, files: VaultFile[]): boolean {
+  return files.some((file) => file.path === path || file.path.startsWith(`${path}/`));
+}
+
+function uniquePath(path: string, files: VaultFile[]): string {
+  if (!entryExists(path, files)) {
+    return path;
+  }
+  const extension = path.endsWith(".md") ? ".md" : "";
+  const base = extension ? path.slice(0, -extension.length) : path;
+  for (let index = 2; ; index += 1) {
+    const candidate = `${base} ${index}${extension}`;
+    if (!entryExists(candidate, files)) {
+      return candidate;
+    }
+  }
 }
 
 function revisionOf(content: string): string {
