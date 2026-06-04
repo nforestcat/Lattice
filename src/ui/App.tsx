@@ -9,14 +9,14 @@ import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, No
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
-type ViewMode = "edit" | "preview" | "graph";
+type ViewMode = "split" | "edit" | "preview" | "graph";
 
 export function App() {
   const [vault, setVault] = useState<VaultSnapshot | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [document, setDocument] = useState<NoteDocument | null>(null);
   const [draft, setDraft] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>("edit");
+  const [viewMode, setViewMode] = useState<ViewMode>("split");
   const [context, setContext] = useState<NoteContext | null>(null);
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [query, setQuery] = useState("");
@@ -95,7 +95,7 @@ export function App() {
     setActivePath(path);
     setDocument(note);
     setDraft(note.content);
-    setViewMode("edit");
+    setViewMode("split");
     await refreshContext(path);
   }
 
@@ -385,6 +385,7 @@ export function App() {
             <span>{activePath}</span>
           </div>
           <div className="segmented">
+            <button className={viewMode === "split" ? "active" : ""} onClick={() => setViewMode("split")}>Split</button>
             <button className={viewMode === "edit" ? "active" : ""} onClick={() => setViewMode("edit")}>Edit</button>
             <button className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>Preview</button>
             <button className={viewMode === "graph" ? "active" : ""} onClick={() => setViewMode("graph")}>Graph</button>
@@ -392,26 +393,34 @@ export function App() {
           <button className="primary" onClick={() => void saveActiveNote()}>Save</button>
         </header>
 
-        {viewMode === "edit" && (
-          <CodeMirror
-            value={draft}
-            height="100%"
-            extensions={[markdown()]}
-            theme="light"
-            basicSetup={{ lineNumbers: true, foldGutter: true }}
-            onChange={setDraft}
-          />
-        )}
-        {viewMode === "preview" && <article className="preview" dangerouslySetInnerHTML={html} />}
-        {viewMode === "graph" && graph && (
-          <GraphView
-            graph={graph}
-            activePath={activePath}
-            onOpen={(path) => void selectNote(path)}
-            onCreateLink={(targetPath) => activePath && void createGraphLink(activePath, targetPath)}
-            onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
-          />
-        )}
+        <div className={`editorWorkspace ${viewMode === "split" ? "split" : "single"}`}>
+          {(viewMode === "split" || viewMode === "edit") && (
+            <section className="editorSurface">
+              <CodeMirror
+                value={draft}
+                height="100%"
+                extensions={[markdown()]}
+                theme="light"
+                basicSetup={{ lineNumbers: true, foldGutter: true }}
+                onChange={setDraft}
+              />
+            </section>
+          )}
+          {(viewMode === "split" || viewMode === "preview") && (
+            <article className="preview previewSurface" dangerouslySetInnerHTML={html} />
+          )}
+          {viewMode === "graph" && graph && (
+            <section className="graphSurface">
+              <GraphView
+                graph={graph}
+                activePath={activePath}
+                onOpen={(path) => void selectNote(path)}
+                onCreateLink={(targetPath) => activePath && void createGraphLink(activePath, targetPath)}
+                onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
+              />
+            </section>
+          )}
+        </div>
       </section>
 
       <aside className="contextPane">
