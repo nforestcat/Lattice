@@ -65,21 +65,21 @@ function getAttributeValue(attrsStr: string, name: string): string | null {
 }
 
 function getTagContent(innerContent: string, tagName: string): string | undefined {
-  const openTag = `<${tagName}>`;
-  const closeTag = `</${tagName}>`;
+  const openRegex = new RegExp(`<${tagName}\\s*>`, "i");
+  const openMatch = openRegex.exec(innerContent);
 
-  const start = innerContent.indexOf(openTag);
-  if (start === -1) {
+  if (!openMatch) {
     return undefined;
   }
 
-  const contentStart = start + openTag.length;
-  const end = innerContent.indexOf(closeTag, contentStart);
-  if (end === -1) {
+  const contentStart = openMatch.index + openMatch[0].length;
+  const closeRegex = new RegExp(`</${tagName}>`, "i");
+  const closeMatch = closeRegex.exec(innerContent.slice(contentStart));
+  if (!closeMatch) {
     return undefined;
   }
 
-  let val = innerContent.slice(contentStart, end);
+  let val = innerContent.slice(contentStart, contentStart + closeMatch.index);
 
   if (val.startsWith("<![CDATA[")) {
     val = val.slice(9);

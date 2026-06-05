@@ -1082,6 +1082,7 @@ describe("App layout", () => {
   });
 
   it("allows navigating to Distill workspace, loading mock proposal, inline editing, and applying checked edits", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockResolvedValue({
       vault: { rootPath: "Demo Vault", notes: [], tree: [] },
       selectedPath: "Research/Compounding Memory.md"
@@ -1146,6 +1147,7 @@ describe("App layout", () => {
     fireEvent.click(applyBtn);
 
     await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("Apply 4 proposed wiki edit(s), including 2 destructive edit(s)?");
       expect(createNoteSpy).toHaveBeenCalledWith("Research", "Compounding Memory");
       expect(saveNoteSpy).toHaveBeenCalledWith("Research/Compounding Memory.md", "# Compounding Memory - Updated", "");
       expect(readNoteSpy).toHaveBeenCalledWith("Home.md");
@@ -1157,10 +1159,44 @@ describe("App layout", () => {
       expect(deleteEntrySpy).toHaveBeenCalledWith("TempDraft.md");
       expect(deleteEntrySpy).toHaveBeenCalledWith("StaleNotes.md");
     });
+    const mergeDeleteOrder = deleteEntrySpy.mock.invocationCallOrder.find((_, index) => deleteEntrySpy.mock.calls[index][0] === "StaleNotes.md");
+    const mergeSaveOrder = saveNoteSpy.mock.invocationCallOrder.find((_, index) => saveNoteSpy.mock.calls[index][0] === "Home.md" && saveNoteSpy.mock.calls[index][1].includes("Also merging relevant guidelines"));
+    expect(mergeSaveOrder).not.toBeUndefined();
+    expect(mergeDeleteOrder).not.toBeUndefined();
+    expect(mergeSaveOrder ?? Number.POSITIVE_INFINITY).toBeLessThan(mergeDeleteOrder ?? Number.NEGATIVE_INFINITY);
 
+    confirmSpy.mockRestore();
     createNoteSpy.mockRestore();
     saveNoteSpy.mockRestore();
     readNoteSpy.mockRestore();
+    deleteEntrySpy.mockRestore();
+  });
+
+  it("does not apply checked distill edits when confirmation is cancelled", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote");
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote");
+    const deleteEntrySpy = vi.spyOn(vaultApi, "deleteEntry");
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByText("Load Mock Proposal"));
+    fireEvent.click(screen.getByText("Propose Wiki Edits"));
+
+    await waitFor(() => expect(screen.getByText("Research/Compounding Memory.md")).toBeTruthy());
+    fireEvent.click(screen.getByText("Apply Checked Edits"));
+
+    expect(confirmSpy).toHaveBeenCalledWith("Apply 4 proposed wiki edit(s), including 2 destructive edit(s)?");
+    expect(createNoteSpy).not.toHaveBeenCalled();
+    expect(saveNoteSpy).not.toHaveBeenCalled();
+    expect(deleteEntrySpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
     deleteEntrySpy.mockRestore();
   });
 });

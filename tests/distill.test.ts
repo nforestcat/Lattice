@@ -50,4 +50,21 @@ describe("Distill Parser", () => {
     expect(result[0].path).toBe("Temp.md");
     expect(result[0].reason).toBe("Delete temp note");
   });
+
+  it("accepts case-insensitive content tags with harmless tag spacing", () => {
+    const raw = `
+      <propose_edit type="update" path="Home.md">
+        <Reason >Add durable summary.</Reason>
+        <TARGET_CONTENT>Old text</TARGET_CONTENT>
+        <Replacement_Content>New text</Replacement_Content>
+      </propose_edit>
+    `;
+
+    const result = parseProposedEdits(raw);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe("Add durable summary.");
+    expect(result[0].targetContent).toBe("Old text");
+    expect(result[0].replacementContent).toBe("New text");
+  });
 });

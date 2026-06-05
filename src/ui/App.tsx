@@ -1004,6 +1004,19 @@ export function App() {
   }
 
   async function applyCheckedEdits() {
+    const checkedEdits = proposedEdits.filter((edit) => edit.checked && !edit.applied);
+    if (checkedEdits.length === 0) {
+      return;
+    }
+
+    const destructiveCount = checkedEdits.filter((edit) => edit.type === "delete" || edit.type === "merge").length;
+    const message = destructiveCount > 0
+      ? `Apply ${checkedEdits.length} proposed wiki edit(s), including ${destructiveCount} destructive edit(s)?`
+      : `Apply ${checkedEdits.length} proposed wiki edit(s)?`;
+    if (!(await askConfirm(message, "Apply Proposed Wiki Edits"))) {
+      return;
+    }
+
     let appliedCount = 0;
     const nextEdits = [...proposedEdits];
 
@@ -1041,8 +1054,6 @@ export function App() {
           appliedCount++;
           nextEdits[i] = { ...edit, applied: true };
         } else if (edit.type === "merge") {
-          await vaultApi.deleteEntry(edit.path);
-
           let targetPath = edit.newPath || "";
           let existingRevision = "";
           try {
@@ -1057,6 +1068,7 @@ export function App() {
           }
 
           await vaultApi.saveNote(targetPath, edit.content || "", existingRevision);
+          await vaultApi.deleteEntry(edit.path);
           appliedCount++;
           nextEdits[i] = { ...edit, applied: true };
         }
