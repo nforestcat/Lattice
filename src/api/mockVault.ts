@@ -418,6 +418,12 @@ export function createMockVaultApi(): VaultApi {
         }
       }
       return { fileCount, totalBytes };
+    },
+    async loadEmbeddingsCache(): Promise<string> {
+      return localStorage.getItem(`lattice:mock_embeddings:${openRoot}`) || "{}";
+    },
+    async saveEmbeddingsCache(content: string): Promise<void> {
+      localStorage.setItem(`lattice:mock_embeddings:${openRoot}`, content);
     }
   };
 }

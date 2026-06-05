@@ -144,6 +144,8 @@ export type VaultApi = {
   deleteArchivedPrompt(runId: string): Promise<void>;
   pruneArchivedPrompts(activeRunIds: string[]): Promise<void>;
   getArchiveStatus(): Promise<{ fileCount: number; totalBytes: number }>;
+  loadEmbeddingsCache(): Promise<string>;
+  saveEmbeddingsCache(content: string): Promise<void>;
 };
 
 export type PromptRun = {
@@ -167,6 +169,16 @@ export type PromptTemplate = {
   isSystem?: boolean;
 };
 
+export type LlmProvider = "openai" | "anthropic" | "gemini" | "ollama" | "custom";
+
+export type LlmConfig = {
+  provider: LlmProvider;
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  embeddingModel?: string;
+};
+
 export type VaultConfig = {
   version?: number;
   contextLimit?: number;
@@ -177,6 +189,7 @@ export type VaultConfig = {
   promptInstructions?: Record<string, string>;
   promptRuns?: PromptRun[];
   promptTemplates?: PromptTemplate[];
+  llmConfig?: LlmConfig;
 };
 
 export type ProposedEdit = {

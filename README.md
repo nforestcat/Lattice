@@ -29,6 +29,9 @@ Implemented so far:
 - Capture loose ideas or LLM answers into daily Inbox notes
 - Triage Inbox captures (into new notes, append to existing notes, or mark processed)
 - Create snapshots and optionally auto-commit saves in existing Git vaults
+- Chat with an integrated LLM Copilot in the Distill Workspace (supporting Ollama, OpenAI, Gemini, and Anthropic), with active context bundle auto-injection and streaming responses containing structured proposed edits that instantly populate the pending edit checklist
+- Compute semantic note recommendations using vector embeddings (Ollama or OpenAI/Custom OpenAI-compatible) and store them in a persistent local cache file (`.lattice/embeddings.json`) to minimize API requests and save overhead on subsequent note selections
+- Automatically scan the active editor note for unlinked mentions of other note titles (supporting CJK languages via Unicode property boundary matching) and suggest turning them into `[[Wiki Links]]` with a one-click apply button
 
 ## LLM Wiki Direction
 

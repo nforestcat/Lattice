@@ -283,6 +283,18 @@ struct PromptTemplate {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+struct LlmConfig {
+    provider: String,
+    api_key: String,
+    model: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    embedding_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct VaultConfig {
     #[serde(default)]
     version: Option<usize>,
@@ -302,6 +314,8 @@ struct VaultConfig {
     prompt_runs: Option<Vec<PromptRun>>,
     #[serde(default)]
     prompt_templates: Option<Vec<PromptTemplate>>,
+    #[serde(default)]
+    llm_config: Option<LlmConfig>,
 }
 
 #[tauri::command]
@@ -727,6 +741,7 @@ fn vault_config_from_json(content: &str) -> VaultConfig {
                     .collect::<Vec<_>>()
             })
         }),
+        llm_config: object.get("llmConfig").and_then(|value| serde_json::from_value::<LlmConfig>(value.clone()).ok()),
     }
 }
 
@@ -886,6 +901,34 @@ fn save_vault_config(config: VaultConfig, state: tauri::State<AppState>) -> Resu
     let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(&config_path, content).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn embeddings_cache_path(root: &Path) -> PathBuf {
+    root.join(".lattice").join("embeddings.json")
+}
+
+#[tauri::command]
+fn load_embeddings_cache(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let path = embeddings_cache_path(root);
+    if path.exists() {
+        fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Ok("{}".to_string())
+    }
+}
+
+#[tauri::command]
+fn save_embeddings_cache(content: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let lattice_dir = root.join(".lattice");
+    if !lattice_dir.exists() {
+        fs::create_dir_all(&lattice_dir).map_err(|e| e.to_string())?;
+    }
+    let path = embeddings_cache_path(root);
+    fs::write(path, content).map_err(|e| e.to_string())
 }
 
 fn mutate_graph_link(source_path: String, target_path: String, add: bool, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
@@ -1765,7 +1808,9 @@ pub fn run() {
             get_archived_prompt,
             get_archive_status,
             delete_archived_prompt,
-            prune_archived_prompts
+            prune_archived_prompts,
+            load_embeddings_cache,
+            save_embeddings_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lattice");

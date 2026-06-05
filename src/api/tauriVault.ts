@@ -60,6 +60,8 @@ export function createTauriVaultApi(): VaultApi {
     getArchivedPrompt: (runId: string) => invoke<string>("get_archived_prompt", { runId }),
     deleteArchivedPrompt: (runId: string) => invoke<void>("delete_archived_prompt", { runId }),
     pruneArchivedPrompts: (activeRunIds: string[]) => invoke<void>("prune_archived_prompts", { activeRunIds }),
-    getArchiveStatus: () => invoke<{ fileCount: number; totalBytes: number }>("get_archive_status")
+    getArchiveStatus: () => invoke<{ fileCount: number; totalBytes: number }>("get_archive_status"),
+    loadEmbeddingsCache: () => invoke<string>("load_embeddings_cache"),
+    saveEmbeddingsCache: (content: string) => invoke<void>("save_embeddings_cache", { content })
   };
 }

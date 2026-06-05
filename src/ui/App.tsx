@@ -4,10 +4,13 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider } from "../api/types";
 import { parseProposedEdits } from "../core/distillParser";
+import { sendChatMessage, type ChatMessage } from "../api/llm";
+import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
+import { estimateTokens } from "../core/contextBundle";
 import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
@@ -83,6 +86,19 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
   }
 ];
 
+function normalizeLlmConfig(value: any): LlmConfig | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return {
+    provider: typeof value.provider === "string" && ["openai", "anthropic", "gemini", "ollama", "custom"].includes(value.provider) ? value.provider as LlmProvider : "openai",
+    apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+    model: typeof value.model === "string" ? value.model : "",
+    baseUrl: typeof value.baseUrl === "string" ? value.baseUrl : undefined,
+    embeddingModel: typeof value.embeddingModel === "string" ? value.embeddingModel : undefined
+  };
+}
+
 export function normalizeVaultConfig(config: any): VaultConfig {
   const preset = normalizePreset(config?.bundlePreset);
   const bundlePurpose = typeof config?.bundlePurpose === "string" ? config.bundlePurpose : PRESETS[preset].purpose;
@@ -96,7 +112,8 @@ export function normalizeVaultConfig(config: any): VaultConfig {
     selectedPaths: normalizeSelectedPaths(config?.selectedPaths),
     promptInstructions: normalizePromptInstructions(config?.promptInstructions),
     promptRuns: normalizePromptRuns(config?.promptRuns, bundlePurpose),
-    promptTemplates: normalizePromptTemplates(config?.promptTemplates)
+    promptTemplates: normalizePromptTemplates(config?.promptTemplates),
+    llmConfig: normalizeLlmConfig(config?.llmConfig)
   };
   return normalized;
 }
@@ -311,6 +328,15 @@ export function App() {
   const [currentPromptHash, setCurrentPromptHash] = useState<string | null>(null);
   const [distillInputText, setDistillInputText] = useState("");
   const [proposedEdits, setProposedEdits] = useState<ProposedEdit[]>([]);
+  const [llmConfig, setLlmConfig] = useState<LlmConfig>({ provider: "openai", apiKey: "", model: "gpt-4o" });
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [distillTab, setDistillTab] = useState<"paste" | "chat">("paste");
+  const [isLlmGenerating, setIsLlmGenerating] = useState(false);
+  const [includeContext, setIncludeContext] = useState(true);
+  const [showLlmSettings, setShowLlmSettings] = useState(false);
+  const [linkSuggestions, setLinkSuggestions] = useState<{ text: string; path: string }[]>([]);
+  const [embeddingStatus, setEmbeddingStatus] = useState("");
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -376,6 +402,12 @@ export function App() {
     };
   }, [contextBundle, promptInstruction]);
 
+  useEffect(() => {
+    if (vault?.notes) {
+      updateLinkSuggestions(draft, vault.notes);
+    }
+  }, [draft, vault?.notes]);
+
   async function openVault(path: string) {
     const nextVault = await vaultApi.openVault(path);
     setVault(nextVault);
@@ -408,6 +440,9 @@ export function App() {
 
       const mode = normalizeBundleMode(loadedConfig.bundleMode, PRESETS[preset].mode);
       setBundleMode(mode);
+
+      const llmCfg = loadedConfig.llmConfig || { provider: "openai", apiKey: "", model: "gpt-4o" };
+      setLlmConfig(llmCfg);
     } catch (e) {
       console.error("Failed to load vault config", e);
     }
@@ -484,6 +519,14 @@ export function App() {
     setInboxCaptures(isInboxPath(path) ? await vaultApi.getInboxCaptures(path) : []);
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
+
+    try {
+      const note = await vaultApi.readNote(path);
+      updateLinkSuggestions(note.content, vault?.notes || []);
+      void updateSemanticRecommendations(path, configToUse.llmConfig || llmConfig, vault?.notes || []);
+    } catch (e) {
+      console.error("Failed to read note for suggestions/semantics", e);
+    }
   }
 
   async function saveActiveNote() {
@@ -501,6 +544,246 @@ export function App() {
     setDocument({ ...document, content: draft, revision: result.revision });
     setStatus(result.gitCommit ? `Saved and committed ${result.gitCommit}` : "Saved");
     await refreshContext(document.path);
+  }
+
+  async function handleSendChatMessage() {
+    if (!chatInput.trim() || isLlmGenerating) {
+      return;
+    }
+
+    const userText = chatInput.trim();
+    setChatInput("");
+    setIsLlmGenerating(true);
+
+    const newMessages: ChatMessage[] = [...chatMessages, { role: "user", content: userText }];
+    setChatMessages(newMessages);
+
+    try {
+      const payload: ChatMessage[] = [];
+      let systemContent = "You are an expert wiki copilot. Use the local wiki context to answer user questions or propose wiki edits.";
+      
+      if (includeContext && contextBundle) {
+        systemContent += `\n\nHere is the active context bundle:\n\n${contextBundle.markdown}`;
+      }
+      
+      if (promptInstruction && promptInstruction.trim()) {
+        systemContent += `\n\nCustom Instructions:\n${promptInstruction.trim()}`;
+      }
+      
+      systemContent += `\n\nIf you want to suggest modifications to notes, format your edits inside the response using this tag pattern:
+<propose_edit type="create|update|merge|delete" path="relative/path/to/note.md" new_path="optional/new/path.md">
+<reason>Explain why this edit is suggested.</reason>
+<content><![CDATA[New content for create, or target replacement content details]]></content>
+<target_content><![CDATA[Exact text to replace in update/merge]]></target_content>
+<replacement_content><![CDATA[New replacement text in update/merge]]></replacement_content>
+</propose_edit>
+You can suggest multiple edits. Do not include markdown wraps around the tags.`;
+
+      payload.push({ role: "system", content: systemContent });
+      payload.push(...newMessages);
+
+      const response = await sendChatMessage(llmConfig, payload);
+      
+      const updatedMessages: ChatMessage[] = [...newMessages, { role: "assistant" as const, content: response }];
+      setChatMessages(updatedMessages);
+
+      const edits = parseProposedEdits(response);
+      if (edits.length > 0) {
+        setProposedEdits((prev) => {
+          const filteredPrev = prev.filter(p => !edits.some(e => e.path === p.path && e.type === p.type));
+          const checkedEdits = edits.map(e => ({ ...e, checked: true }));
+          return [...filteredPrev, ...checkedEdits];
+        });
+        setStatus(`LLM proposed ${edits.length} wiki edit(s)`);
+      }
+    } catch (error) {
+      console.error(error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      setChatMessages((prev) => [...prev, { role: "assistant" as const, content: `Error: ${errMsg}` }]);
+      setStatus("LLM chat request failed");
+    } finally {
+      setIsLlmGenerating(false);
+    }
+  }
+
+  function clearChatHistory() {
+    setChatMessages([]);
+  }
+
+  function escapeRegExp(str: string) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function updateLinkSuggestions(content: string, notes: NoteMeta[]) {
+    if (!activePath) {
+      setLinkSuggestions([]);
+      return;
+    }
+    
+    const suggestions: { text: string; path: string }[] = [];
+    for (const note of notes) {
+      if (note.path === activePath) {
+        continue;
+      }
+      const title = note.title.trim();
+      if (!title) {
+        continue;
+      }
+
+      const escaped = escapeRegExp(title);
+      const isLinkedPattern = new RegExp(`\\[\\[${escaped}(?:\\|[^\\]]+)?\\]\\]`, "i");
+      if (isLinkedPattern.test(content)) {
+        continue;
+      }
+
+      const maskedText = content.replace(/\[\[[^\]]+\]\]/g, "####LINK####");
+      const wordPattern = new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "iu");
+      if (wordPattern.test(maskedText)) {
+        suggestions.push({ text: title, path: note.path });
+      }
+    }
+    setLinkSuggestions(suggestions);
+  }
+
+  function applyWikiLinkSuggestion(text: string) {
+    if (!draft) return;
+    const escaped = escapeRegExp(text);
+    const regex = new RegExp(`(?<!\\[\\[)(${escaped})(?!\\]\\])`, "g");
+    const nextDraft = draft.replace(regex, `[[$1]]`);
+    setDraft(nextDraft);
+    if (vault?.notes) {
+      updateLinkSuggestions(nextDraft, vault.notes);
+    }
+  }
+
+  async function updateSemanticRecommendations(path: string, config: LlmConfig, notes: NoteMeta[]) {
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama")) {
+      return;
+    }
+    
+    setEmbeddingStatus("Semantic indexing...");
+    try {
+      const rawCache = await vaultApi.loadEmbeddingsCache();
+      let cache: VectorCache = {};
+      try {
+        cache = JSON.parse(rawCache);
+      } catch (e) {
+        cache = {};
+      }
+
+      let cacheUpdated = false;
+      const notesToProcess = vault?.notes || [];
+      const noteContents: Record<string, string> = {};
+      
+      for (const note of notesToProcess) {
+        const cached = cache[note.path];
+        if (!cached || cached.contentHash !== note.contentHash) {
+          try {
+            const doc = await vaultApi.readNote(note.path);
+            noteContents[note.path] = doc.content;
+            const vector = await getEmbedding(config, doc.content);
+            if (vector.length > 0) {
+              cache[note.path] = {
+                contentHash: note.contentHash,
+                vector
+              };
+              cacheUpdated = true;
+            }
+          } catch (err) {
+            console.error(`Failed to generate embedding for ${note.path}:`, err);
+            setEmbeddingStatus("Embedding error (API unreachable)");
+            return;
+          }
+        }
+      }
+
+      if (cacheUpdated) {
+        await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+      }
+
+      const activeEntry = cache[path];
+      if (!activeEntry) {
+        setEmbeddingStatus("Semantic indexing failed (Active note missing vector)");
+        return;
+      }
+
+      const activeVector = activeEntry.vector;
+
+      // Collect recommendations first
+      const recommendedItems: { note: NoteMeta; similarity: number; score: number; reasonDetail: string }[] = [];
+      for (const note of notesToProcess) {
+        if (note.path === path) continue;
+        const entry = cache[note.path];
+        if (!entry) continue;
+
+        const similarity = cosineSimilarity(activeVector, entry.vector);
+        if (similarity >= 0.5) {
+          const score = Math.min(9.5, Number((similarity * 10).toFixed(1)));
+          const reasonDetail = `Semantic similarity: ${Math.round(similarity * 100)}%`;
+          recommendedItems.push({ note, similarity, score, reasonDetail });
+        }
+      }
+
+      // Read contents of recommended items sequentially or retrieve from noteContents
+      const enrichedRecommended: { path: string; title: string; reasonDetail: string; score: number; excerpt: string; tokenEstimate: number; characterCount: number }[] = [];
+      for (const item of recommendedItems) {
+        let content = noteContents[item.note.path];
+        if (content === undefined) {
+          try {
+            const doc = await vaultApi.readNote(item.note.path);
+            content = doc.content;
+            noteContents[item.note.path] = content;
+          } catch (err) {
+            console.error(`Failed to read content for recommendation: ${item.note.path}`, err);
+            continue;
+          }
+        }
+        enrichedRecommended.push({
+          path: item.note.path,
+          title: item.note.title,
+          reasonDetail: item.reasonDetail,
+          score: item.score,
+          excerpt: content.slice(0, 100).replace(/\s+/g, " ").trim() + "...",
+          tokenEstimate: estimateTokens(content),
+          characterCount: content.length,
+        });
+      }
+
+      setContextCandidates((prev) => {
+        const next = [...prev];
+
+        for (const item of enrichedRecommended) {
+          const existingIdx = next.findIndex((c) => c.path === item.path);
+          if (existingIdx !== -1) {
+            const prevItem = next[existingIdx];
+            next[existingIdx] = {
+              ...prevItem,
+              score: Math.max(prevItem.score, item.score),
+              reasonDetail: prevItem.reason === "Recommended" ? item.reasonDetail : `${prevItem.reasonDetail} | ${item.reasonDetail}`
+            };
+          } else {
+            next.push({
+              path: item.path,
+              title: item.title,
+              reason: "Recommended",
+              reasonDetail: item.reasonDetail,
+              score: item.score,
+              excerpt: item.excerpt,
+              tokenEstimate: item.tokenEstimate,
+              selected: false,
+              characterCount: item.characterCount
+            });
+          }
+        }
+
+        return next.sort((a, b) => b.score - a.score);
+      });
+
+      setEmbeddingStatus("Semantic index updated");
+    } catch (err) {
+      console.error("Semantic recommendation error:", err);
+      setEmbeddingStatus("Semantic index failed");
+    }
   }
 
   async function runSearch(nextQuery = query, nextTag = tagFilter, nextProperty = propertyFilter) {
@@ -1359,6 +1642,24 @@ export function App() {
                 basicSetup={{ lineNumbers: true, foldGutter: true }}
                 onChange={setDraft}
               />
+              {linkSuggestions.length > 0 && (
+                <div className="linkSuggestionsPanel">
+                  <span className="panelLabel">Link Suggestions:</span>
+                  <div className="suggestionBadges">
+                    {linkSuggestions.map((s, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="suggestionBadge"
+                        onClick={() => applyWikiLinkSuggestion(s.text)}
+                        title={`Convert "${s.text}" to [[${s.text}]]`}
+                      >
+                        🔌 [[{s.text}]]
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           )}
           {(viewMode === "split" || viewMode === "preview") && (
@@ -1382,19 +1683,35 @@ export function App() {
             <section className="distillSurface">
               <div className="distillWorkspaceLayout">
                 <div className="distillLeftCol">
-                  <div className="distillInputArea">
-                    <h3>Raw Input Context</h3>
-                    <textarea
-                      className="distillTextarea"
-                      value={distillInputText}
-                      onChange={(e) => setDistillInputText(e.target.value)}
-                      placeholder="Paste raw conversation logs, inbox captures, or meeting notes here to distill into structured wiki page proposed edits..."
-                    />
-                    <div className="distillActions">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const mockPrompt = `<propose_edit type="create" path="Research/Compounding Memory.md">
+                  <div className="distillTabHeader">
+                    <button
+                      className={distillTab === "paste" ? "active" : ""}
+                      onClick={() => setDistillTab("paste")}
+                    >
+                      Paste Raw Input
+                    </button>
+                    <button
+                      className={distillTab === "chat" ? "active" : ""}
+                      onClick={() => setDistillTab("chat")}
+                    >
+                      Chat with LLM
+                    </button>
+                  </div>
+
+                  {distillTab === "paste" ? (
+                    <div className="distillInputArea">
+                      <h3>Raw Input Context</h3>
+                      <textarea
+                        className="distillTextarea"
+                        value={distillInputText}
+                        onChange={(e) => setDistillInputText(e.target.value)}
+                        placeholder="Paste raw conversation logs, inbox captures, or meeting notes here to distill into structured wiki page proposed edits..."
+                      />
+                      <div className="distillActions">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const mockPrompt = `<propose_edit type="create" path="Research/Compounding Memory.md">
   <reason>Documenting the core mechanism of LLM wiki maintenance.</reason>
   <content># Compounding Memory
 
@@ -1418,26 +1735,204 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
   <reason>Merge outdated stale notes into Home wiki page.</reason>
   <content>Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note. Also merging relevant guidelines here.</content>
 </propose_edit>`;
-                          setDistillInputText(mockPrompt);
-                        }}
-                      >
-                        Load Mock Proposal
-                      </button>
-                      <button
-                        className="primary"
-                        type="button"
-                        onClick={() => {
-                          const parsed = parseProposedEdits(distillInputText);
-                          // Mark all parsed proposed edits as checked by default
-                          const checkedParsed = parsed.map(p => ({ ...p, checked: true }));
-                          setProposedEdits(checkedParsed);
-                          setStatus(`Extracted ${checkedParsed.length} proposed edit(s).`);
-                        }}
-                      >
-                        Propose Wiki Edits
-                      </button>
+                            setDistillInputText(mockPrompt);
+                          }}
+                        >
+                          Load Mock Proposal
+                        </button>
+                        <button
+                          className="primary"
+                          type="button"
+                          onClick={() => {
+                            const parsed = parseProposedEdits(distillInputText);
+                            const checkedParsed = parsed.map(p => ({ ...p, checked: true }));
+                            setProposedEdits(checkedParsed);
+                            setStatus(`Extracted ${checkedParsed.length} proposed edit(s).`);
+                          }}
+                        >
+                          Propose Wiki Edits
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="distillChatArea">
+                      <div className="chatHeader">
+                        <h3>LLM Copilot Chat</h3>
+                        <div className="chatHeaderActions">
+                          <button
+                            type="button"
+                            className="textButton"
+                            onClick={() => setShowLlmSettings(!showLlmSettings)}
+                          >
+                            ⚙️ {showLlmSettings ? "Close Settings" : "LLM Settings"}
+                          </button>
+                          <button
+                            type="button"
+                            className="textButton"
+                            onClick={clearChatHistory}
+                            disabled={chatMessages.length === 0}
+                          >
+                            🗑️ Clear Chat
+                          </button>
+                        </div>
+                      </div>
+
+                      {showLlmSettings && (
+                        <div className="llmSettingsPanel">
+                          <h4>LLM Configuration</h4>
+                          <div className="formGroup">
+                            <label>Provider</label>
+                            <select
+                              value={llmConfig.provider}
+                              onChange={(e) => {
+                                const prov = e.target.value as LlmProvider;
+                                const defaultModels: Record<LlmProvider, string> = {
+                                  openai: "gpt-4o",
+                                  anthropic: "claude-3-5-sonnet-20240620",
+                                  gemini: "gemini-1.5-pro",
+                                  ollama: "llama3",
+                                  custom: "gpt-4o"
+                                };
+                                const defaultBases: Record<LlmProvider, string> = {
+                                  openai: "",
+                                  anthropic: "",
+                                  gemini: "",
+                                  ollama: "http://localhost:11434",
+                                  custom: "http://localhost:1234/v1"
+                                };
+                                setLlmConfig(prev => ({
+                                  ...prev,
+                                  provider: prov,
+                                  model: defaultModels[prov],
+                                  baseUrl: defaultBases[prov] || undefined
+                                }));
+                              }}
+                            >
+                              <option value="openai">OpenAI</option>
+                              <option value="anthropic">Anthropic</option>
+                              <option value="gemini">Google Gemini</option>
+                              <option value="ollama">Ollama (Local)</option>
+                              <option value="custom">Custom (OpenAI-compatible)</option>
+                            </select>
+                          </div>
+
+                          <div className="formGroup">
+                            <label>Model</label>
+                            <input
+                              type="text"
+                              value={llmConfig.model}
+                              onChange={(e) => setLlmConfig(prev => ({ ...prev, model: e.target.value }))}
+                              placeholder="e.g. gpt-4o, llama3"
+                            />
+                          </div>
+
+                          {llmConfig.provider !== "ollama" && (
+                            <div className="formGroup">
+                              <label>API Key</label>
+                              <input
+                                type="password"
+                                value={llmConfig.apiKey}
+                                onChange={(e) => setLlmConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                                placeholder="Enter API Key"
+                              />
+                            </div>
+                          )}
+
+                          {(llmConfig.provider === "ollama" || llmConfig.provider === "custom") && (
+                            <div className="formGroup">
+                              <label>Base URL</label>
+                              <input
+                                type="text"
+                                value={llmConfig.baseUrl || ""}
+                                onChange={(e) => setLlmConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
+                                placeholder={llmConfig.provider === "ollama" ? "http://localhost:11434" : "http://localhost:1234/v1"}
+                              />
+                            </div>
+                          )}
+
+                          {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom") && (
+                            <div className="formGroup">
+                              <label>Embedding Model</label>
+                              <input
+                                type="text"
+                                value={llmConfig.embeddingModel || ""}
+                                onChange={(e) => setLlmConfig(prev => ({ ...prev, embeddingModel: e.target.value }))}
+                                placeholder={llmConfig.provider === "ollama" ? "all-minilm" : "text-embedding-3-small"}
+                              />
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            className="primary btnSaveSettings"
+                            onClick={() => {
+                              void updateVaultConfig({ llmConfig });
+                              setShowLlmSettings(false);
+                              setStatus("LLM settings saved to vault config");
+                            }}
+                          >
+                            Save Settings
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="chatMessagesBox">
+                        {chatMessages.length === 0 ? (
+                          <div className="chatEmptyState">
+                            <p>Ask a question or request page edits using the wiki context.</p>
+                            <p className="hint">Try asking: "Propose a new note summarizing the core features of React."</p>
+                          </div>
+                        ) : (
+                          chatMessages.map((msg, idx) => (
+                            <div key={idx} className={`chatMessageBubble ${msg.role}`}>
+                              <span className="messageSender">{msg.role === "user" ? "You" : "Copilot"}</span>
+                              <div className="messageText">{msg.content}</div>
+                            </div>
+                          ))
+                        )}
+                        {isLlmGenerating && (
+                          <div className="chatMessageBubble assistant generating">
+                            <span className="messageSender">Copilot</span>
+                            <div className="messageText">Thinking...</div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="chatInputControls">
+                        <div className="chatContextOption">
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={includeContext}
+                              onChange={(e) => setIncludeContext(e.target.checked)}
+                            />
+                            Include active context bundle ({contextBundle ? `${contextBundle.notePaths.length} note(s)` : "None"})
+                          </label>
+                        </div>
+                        <div className="chatInputRow">
+                          <textarea
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                void handleSendChatMessage();
+                              }
+                            }}
+                            placeholder="Message LLM copilot... (Press Enter to send)"
+                          />
+                          <button
+                            type="button"
+                            className="primary"
+                            disabled={!chatInput.trim() || isLlmGenerating}
+                            onClick={() => void handleSendChatMessage()}
+                          >
+                            Send
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="distillRightCol">
@@ -1699,7 +2194,10 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
             </div>
           </div>
           <div className="candidatesSectionHeader">
-            <h3>Related Candidates ({displayedCandidates.length})</h3>
+            <h3>
+              Related Candidates ({displayedCandidates.length})
+              {embeddingStatus && <span className="embeddingStatusText"> ({embeddingStatus})</span>}
+            </h3>
             <div className="candidatesFilterControls">
               <div className="filterGroup">
                 <label htmlFor="candidates-sort">Sort</label>
