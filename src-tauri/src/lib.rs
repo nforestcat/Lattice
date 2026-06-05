@@ -161,6 +161,13 @@ struct InboxCaptureBlock {
     markdown: String,
 }
 
+#[derive(Debug, Clone)]
+struct InboxCaptureSpan {
+    capture: InboxCaptureBlock,
+    start: usize,
+    end: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromoteInboxCaptureInput {
@@ -747,24 +754,33 @@ fn is_title_mentioned(content: &str, title: &str) -> bool {
     
     let lower_body = body.to_lowercase();
     let lower_title = title.to_lowercase();
-    
-    if let Some(idx) = lower_body.find(&lower_title) {
+
+    if lower_title.is_empty() {
+        return false;
+    }
+
+    let mut search_from = 0;
+    while let Some(relative_idx) = lower_body[search_from..].find(&lower_title) {
+        let idx = search_from + relative_idx;
         let chars_before: Vec<char> = body[..idx].chars().collect();
         if let Some(&last_char) = chars_before.last() {
             if last_char.is_alphanumeric() {
-                return false;
+                search_from = idx + lower_title.len();
+                continue;
             }
         }
         let chars_after: Vec<char> = body[idx + title.len()..].chars().collect();
         if let Some(&first_char) = chars_after.first() {
             if first_char.is_alphanumeric() {
-                return false;
+                search_from = idx + lower_title.len();
+                continue;
             }
         }
-        true
-    } else {
-        false
+
+        return true;
     }
+
+    false
 }
 
 fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<ContextBundleCandidate>, String> {
@@ -812,9 +828,10 @@ fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Resu
         }
 
         let has_shared_tags = note.meta.tags.iter().any(|tag| focus_tags.contains(tag.as_str()));
-        let is_mentioned = is_title_mentioned(&focus_note.content, &note.meta.title);
+        let focus_mentions_candidate = is_title_mentioned(&focus_note.content, &note.meta.title);
+        let candidate_mentions_focus = is_title_mentioned(&note.content, &focus_note.meta.title);
 
-        if has_shared_tags || is_mentioned {
+        if has_shared_tags || focus_mentions_candidate || candidate_mentions_focus {
             included.push((note.clone(), "Recommended"));
         }
     }
@@ -971,9 +988,17 @@ fn format_inbox_capture(content: &str, related_title: Option<&str>, captured_at:
 }
 
 fn parse_inbox_captures(markdown: &str) -> Vec<InboxCaptureBlock> {
+    parse_inbox_capture_spans(markdown)
+        .into_iter()
+        .map(|span| span.capture)
+        .collect()
+}
+
+fn parse_inbox_capture_spans(markdown: &str) -> Vec<InboxCaptureSpan> {
     let unprocessed = markdown.split("\n## Processed").next().unwrap_or("");
     let heading = Regex::new(r"(?m)^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$").expect("valid inbox heading regex");
     let matches: Vec<_> = heading.find_iter(unprocessed).collect();
+    let mut seen_titles: HashMap<String, usize> = HashMap::new();
     matches
         .iter()
         .enumerate()
@@ -981,6 +1006,12 @@ fn parse_inbox_captures(markdown: &str) -> Vec<InboxCaptureBlock> {
             let end = matches.get(index + 1).map(|next| next.start()).unwrap_or(unprocessed.len());
             let block = unprocessed[matched.start()..end].trim();
             let title = heading.captures(block).and_then(|captures| captures.get(1)).map(|value| value.as_str()).unwrap_or("").to_string();
+            let count = seen_titles.entry(title.clone()).and_modify(|value| *value += 1).or_insert(1);
+            let id = if *count == 1 {
+                title.clone()
+            } else {
+                format!("{}#{}", title, count)
+            };
             let related_title = Regex::new(r"(?m)^Related:\s*\[\[([^\]]+)]]\s*$")
                 .expect("valid related regex")
                 .captures(block)
@@ -997,31 +1028,34 @@ fn parse_inbox_captures(markdown: &str) -> Vec<InboxCaptureBlock> {
                 .join("\n")
                 .trim()
                 .to_string();
-            InboxCaptureBlock {
-                id: title.clone(),
-                title,
-                related_title,
-                body,
-                markdown: format!("{}\n", block),
+            InboxCaptureSpan {
+                capture: InboxCaptureBlock {
+                    id,
+                    title,
+                    related_title,
+                    body,
+                    markdown: format!("{}\n", block),
+                },
+                start: matched.start(),
+                end,
             }
         })
         .collect()
 }
 
 fn move_inbox_capture_to_processed(markdown: &str, capture_id: &str) -> Result<String, String> {
-    let capture = parse_inbox_captures(markdown)
+    let span = parse_inbox_capture_spans(markdown)
         .into_iter()
-        .find(|candidate| candidate.id == capture_id)
+        .find(|candidate| candidate.capture.id == capture_id)
         .ok_or_else(|| format!("Capture not found: {}", capture_id))?;
-    let without_capture = markdown
-        .replace(capture.markdown.trim(), "")
+    let without_capture = format!("{}{}", &markdown[..span.start], &markdown[span.end..])
         .replace("\n\n\n", "\n\n")
         .trim_end()
         .to_string();
     if without_capture.lines().any(|line| line.trim() == "## Processed") {
-        Ok(format!("{}\n\n{}", without_capture, capture.markdown))
+        Ok(format!("{}\n\n{}", without_capture, span.capture.markdown))
     } else {
-        Ok(format!("{}\n\n## Processed\n\n{}", without_capture, capture.markdown))
+        Ok(format!("{}\n\n## Processed\n\n{}", without_capture, span.capture.markdown))
     }
 }
 
@@ -1413,6 +1447,21 @@ mod tests {
     }
 
     #[test]
+    fn inbox_capture_assigns_unique_duplicate_ids_and_moves_selected_block() {
+        let markdown = "# 2026-06-04\n\n## 2026-06-04 06:30\n\n#inbox\n\nFirst captured idea.\n\n## 2026-06-04 06:30\n\n#inbox\n\nSecond captured idea.\n";
+
+        let captures = parse_inbox_captures(markdown);
+        assert_eq!(captures.iter().map(|capture| capture.id.as_str()).collect::<Vec<_>>(), vec!["2026-06-04 06:30", "2026-06-04 06:30#2"]);
+
+        let processed = move_inbox_capture_to_processed(markdown, "2026-06-04 06:30#2").unwrap();
+        let remaining = parse_inbox_captures(&processed);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].body, "First captured idea.");
+        assert!(processed.contains("## Processed"));
+        assert!(processed.contains("Second captured idea."));
+    }
+
+    #[test]
     fn test_append_inbox_capture_formatting() {
         let target_content_no_newline = "# Target Note";
         let target_content_with_newline = "# Target Note\n";
@@ -1441,6 +1490,7 @@ mod tests {
     fn test_is_title_mentioned() {
         assert!(is_title_mentioned("Hello, this is a Project note.", "Project"));
         assert!(!is_title_mentioned("Hello, this is a ProjectNote.", "Project"));
+        assert!(is_title_mentioned("AIM is not a title mention, but AI is.", "AI"));
         assert!(is_title_mentioned("프로젝트 노트를 확인합니다.", "프로젝트"));
         assert!(!is_title_mentioned("프로젝트노트를 확인합니다.", "프로젝트"));
     }
@@ -1462,5 +1512,18 @@ mod tests {
         assert!(!home_candidate.selected);
         
         assert!(candidates.iter().find(|c| c.path == "Unrelated.md").is_none());
+    }
+
+    #[test]
+    fn test_recommends_notes_that_mention_focus_title() {
+        let p = parsed("Project.md", "Project");
+        let mut meeting = parsed("Meeting.md", "Meeting");
+        meeting.content = "# Meeting\n\nWe discussed Project in plain text.".to_string();
+
+        let notes = vec![p, meeting, parsed("Other.md", "Other")];
+        let candidates = context_bundle_candidates(&notes, "Project.md").unwrap();
+
+        assert!(candidates.iter().any(|candidate| candidate.path == "Meeting.md" && candidate.reason == "Recommended"));
+        assert!(candidates.iter().all(|candidate| candidate.path != "Other.md"));
     }
 }

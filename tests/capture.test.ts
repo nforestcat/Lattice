@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMockVaultApi } from "../src/api/mockVault";
-import { formatInboxCapture, parseInboxCaptures } from "../src/core/capture";
+import { formatInboxCapture, moveInboxCaptureToProcessed, parseInboxCaptures } from "../src/core/capture";
 
 describe("formatInboxCapture", () => {
   it("formats captured text with timestamp, related note, inbox tag, and body", () => {
@@ -86,6 +86,58 @@ describe("parseInboxCaptures", () => {
         body: "Second captured idea."
       })
     ]);
+  });
+
+  it("assigns stable unique ids when multiple captures share the same minute", () => {
+    const captures = parseInboxCaptures([
+      "# 2026-06-04",
+      "",
+      "## 2026-06-04 06:30",
+      "",
+      "#inbox",
+      "",
+      "First captured idea.",
+      "",
+      "## 2026-06-04 06:30",
+      "",
+      "#inbox",
+      "",
+      "Second captured idea."
+    ].join("\n"));
+
+    expect(captures.map((capture) => capture.id)).toEqual([
+      "2026-06-04 06:30",
+      "2026-06-04 06:30#2"
+    ]);
+  });
+
+  it("moves the selected duplicate capture without processing the earlier capture", () => {
+    const markdown = [
+      "# 2026-06-04",
+      "",
+      "## 2026-06-04 06:30",
+      "",
+      "#inbox",
+      "",
+      "First captured idea.",
+      "",
+      "## 2026-06-04 06:30",
+      "",
+      "#inbox",
+      "",
+      "Second captured idea."
+    ].join("\n");
+
+    const processed = moveInboxCaptureToProcessed(markdown, "2026-06-04 06:30#2");
+
+    expect(parseInboxCaptures(processed)).toEqual([
+      expect.objectContaining({
+        id: "2026-06-04 06:30",
+        body: "First captured idea."
+      })
+    ]);
+    expect(processed).toContain("## Processed");
+    expect(processed).toContain("Second captured idea.");
   });
 
   it("promotes a capture into a new note and moves it to processed", async () => {

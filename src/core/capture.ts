@@ -12,6 +12,12 @@ export type InboxCaptureBlock = {
   markdown: string;
 };
 
+type InboxCaptureSpan = {
+  capture: InboxCaptureBlock;
+  start: number;
+  end: number;
+};
+
 export function formatInboxCapture(input: InboxCaptureInput): string {
   const content = input.content.trim();
   if (!content) {
@@ -36,13 +42,20 @@ export function inboxPathForDate(date: Date): string {
 }
 
 export function parseInboxCaptures(markdown: string): InboxCaptureBlock[] {
+  return parseInboxCaptureSpans(markdown).map((span) => span.capture);
+}
+
+function parseInboxCaptureSpans(markdown: string): InboxCaptureSpan[] {
   const unprocessed = markdown.split(/\n## Processed\b/i)[0] ?? "";
   const matches = Array.from(unprocessed.matchAll(/^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$/gm));
+  const seenTitles = new Map<string, number>();
   return matches.map((match, index) => {
     const start = match.index ?? 0;
     const end = matches[index + 1]?.index ?? unprocessed.length;
     const block = unprocessed.slice(start, end).trim();
     const title = match[1];
+    const count = (seenTitles.get(title) ?? 0) + 1;
+    seenTitles.set(title, count);
     const relatedTitle = block.match(/^Related:\s*\[\[([^\]]+)]]\s*$/m)?.[1] ?? null;
     const body = block
       .replace(/^## .+$/m, "")
@@ -50,27 +63,30 @@ export function parseInboxCaptures(markdown: string): InboxCaptureBlock[] {
       .replace(/^#inbox\s*$/m, "")
       .trim();
     return {
-      id: title,
-      title,
-      relatedTitle,
-      body,
-      markdown: `${block}\n`
+      capture: {
+        id: count === 1 ? title : `${title}#${count}`,
+        title,
+        relatedTitle,
+        body,
+        markdown: `${block}\n`
+      },
+      start,
+      end
     };
   });
 }
 
 export function moveInboxCaptureToProcessed(markdown: string, captureId: string): string {
-  const captures = parseInboxCaptures(markdown);
-  const capture = captures.find((candidate) => candidate.id === captureId);
-  if (!capture) {
+  const span = parseInboxCaptureSpans(markdown).find((candidate) => candidate.capture.id === captureId);
+  if (!span) {
     throw new Error(`Capture not found: ${captureId}`);
   }
 
-  const withoutCapture = markdown.replace(capture.markdown.trim(), "").replace(/\n{3,}/g, "\n\n").trimEnd();
+  const withoutCapture = `${markdown.slice(0, span.start)}${markdown.slice(span.end)}`.replace(/\n{3,}/g, "\n\n").trimEnd();
   if (/^## Processed\s*$/m.test(withoutCapture)) {
-    return `${withoutCapture}\n\n${capture.markdown}`;
+    return `${withoutCapture}\n\n${span.capture.markdown}`;
   }
-  return `${withoutCapture}\n\n## Processed\n\n${capture.markdown}`;
+  return `${withoutCapture}\n\n## Processed\n\n${span.capture.markdown}`;
 }
 
 function formatCaptureTimestamp(date: Date): string {

@@ -89,27 +89,29 @@ function stripFrontmatter(content: string): string {
 
 export function isTitleMentioned(content: string, title: string): boolean {
   const stripped = stripFrontmatter(content);
-  const index = stripped.toLowerCase().indexOf(title.toLowerCase());
-  if (index === -1) {
+  const lowerContent = stripped.toLowerCase();
+  const lowerTitle = title.toLowerCase();
+
+  if (!lowerTitle) {
     return false;
   }
-  
-  // Check char before
-  if (index > 0) {
-    const charBefore = stripped.charAt(index - 1);
-    if (/[\p{L}\p{N}]/u.test(charBefore)) {
-      return false;
+
+  let index = lowerContent.indexOf(lowerTitle);
+  while (index !== -1) {
+    const charBefore = index > 0 ? stripped.charAt(index - 1) : "";
+    const afterIndex = index + title.length;
+    const charAfter = afterIndex < stripped.length ? stripped.charAt(afterIndex) : "";
+    const hasValidBefore = !charBefore || !/[\p{L}\p{N}]/u.test(charBefore);
+    const hasValidAfter = !charAfter || !/[\p{L}\p{N}]/u.test(charAfter);
+
+    if (hasValidBefore && hasValidAfter) {
+      return true;
     }
+
+    index = lowerContent.indexOf(lowerTitle, index + lowerTitle.length);
   }
-  // Check char after
-  const afterIndex = index + title.length;
-  if (afterIndex < stripped.length) {
-    const charAfter = stripped.charAt(afterIndex);
-    if (/[\p{L}\p{N}]/u.test(charAfter)) {
-      return false;
-    }
-  }
-  return true;
+
+  return false;
 }
 
 function getIncludedNotes(index: VaultIndex, focusPath: string): IncludedNote[] {
@@ -142,9 +144,10 @@ function getIncludedNotes(index: VaultIndex, focusPath: string): IncludedNote[] 
     }
 
     const hasSharedTags = note.tags.some(tag => focusTags.has(tag));
-    const isMentioned = isTitleMentioned(focusNote.content, note.title);
+    const focusMentionsCandidate = isTitleMentioned(focusNote.content, note.title);
+    const candidateMentionsFocus = isTitleMentioned(note.content, focusNote.title);
 
-    if (hasSharedTags || isMentioned) {
+    if (hasSharedTags || focusMentionsCandidate || candidateMentionsFocus) {
       included.set(note.path, { note, reason: "Recommended" });
     }
   }

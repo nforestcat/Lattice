@@ -148,4 +148,30 @@ describe("createContextBundle", () => {
     ]);
     expect(candidates.find((candidate) => candidate.path === "Unrelated.md")).toBeUndefined();
   });
+
+  it("recommends notes that mention the focus title even when the focus does not mention them", () => {
+    const index = buildVaultIndex([
+      { path: "Project.md", content: "# Project\n\nFocus note without outgoing links." },
+      { path: "Meeting.md", content: "# Meeting\n\nWe discussed Project in plain text." },
+      { path: "Other.md", content: "# Other\n\nNo mention here." }
+    ]);
+
+    const candidates = getContextBundleCandidates(index, "Project.md");
+
+    expect(candidates).toEqual([
+      expect.objectContaining({ path: "Project.md", reason: "Focus", selected: true }),
+      expect.objectContaining({ path: "Meeting.md", reason: "Recommended", selected: false })
+    ]);
+  });
+
+  it("detects a later valid title mention even if an earlier occurrence is inside another word", () => {
+    const index = buildVaultIndex([
+      { path: "AI.md", content: "# AI\n\nFocus note." },
+      { path: "Research.md", content: "# Research\n\nAIM is not a title mention, but AI is." }
+    ]);
+
+    const candidates = getContextBundleCandidates(index, "AI.md");
+
+    expect(candidates.map((candidate) => candidate.path)).toEqual(["AI.md", "Research.md"]);
+  });
 });
