@@ -174,4 +174,34 @@ describe("createContextBundle", () => {
 
     expect(candidates.map((candidate) => candidate.path)).toEqual(["AI.md", "Research.md"]);
   });
+
+  it("populates detailed scores, reasonDetails, and snippets (excerpts) for candidates", () => {
+    const index = buildVaultIndex([
+      { path: "Project.md", content: "# Project\n\nTesting candidates. [[Research]] #llm" },
+      { path: "Research.md", content: "# Research\n\nBackground information for project." },
+      { path: "Home.md", content: "# Home\n\nLinked to Project. #llm" }
+    ]);
+
+    const candidates = getContextBundleCandidates(index, "Project.md");
+
+    // Focus candidate
+    const focus = candidates.find(c => c.path === "Project.md");
+    expect(focus).toBeDefined();
+    expect(focus!.score).toBe(10.0);
+    expect(focus!.reasonDetail).toBe("Focus note");
+    expect(focus!.excerpt).toContain("Testing candidates.");
+
+    // Outgoing candidate
+    const outgoing = candidates.find(c => c.path === "Research.md");
+    expect(outgoing).toBeDefined();
+    expect(outgoing!.score).toBe(8.0);
+    expect(outgoing!.reasonDetail).toBe("Direct link inside the focus note");
+    expect(outgoing!.excerpt).toContain("Background information");
+
+    // Recommended candidate (shares tag #llm & mentions focus)
+    const recommended = candidates.find(c => c.path === "Home.md");
+    expect(recommended).toBeDefined();
+    expect(recommended!.score).toBe(6.0); // Max of tagScore (4.5) and mentionScore (6.0)
+    expect(recommended!.reasonDetail).toBe("Shares tags: #llm; mentions focus 1 time(s)");
+  });
 });

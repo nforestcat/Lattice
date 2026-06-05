@@ -448,6 +448,167 @@ summary:hover .treeActions {
   width: 100%;
 }
 
+.candidateList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  max-height: 45vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.candidateRow {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.candidateRow:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  transform: translateY(-1px);
+}
+
+.candidateTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.candidateLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.candidateLabel input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #1f6feb;
+}
+
+.candidateLabel strong {
+  font-size: 13px;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidateBadges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Reason Badge */
+.reason-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.reason-focus {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.reason-outgoing {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.reason-backlink {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.reason-recommended {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+/* Score Badge */
+.score-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 10px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.score-high {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.score-medium {
+  background: #6366f1;
+  color: #ffffff;
+}
+
+.score-low {
+  background: #f59e0b;
+  color: #ffffff;
+}
+
+/* Details Section */
+.candidateDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 6px;
+}
+
+.reasonDetail {
+  font-size: 11px;
+  color: #64748b;
+  margin: 0;
+  font-style: italic;
+  text-align: left;
+}
+
+.candidateExcerpt {
+  font-size: 11px;
+  color: #475569;
+  margin: 2px 0 0 0;
+  line-height: 1.4;
+  background: #f8fafc;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border-left: 2px solid #cbd5e1;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-align: left;
+}
+
+.candidateMeta {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+  text-align: left;
+}
 
 .modalOverlay {
   position: fixed;

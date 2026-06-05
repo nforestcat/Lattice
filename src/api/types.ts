@@ -91,6 +91,9 @@ export type ContextBundleCandidate = {
   path: string;
   title: string;
   reason: "Focus" | "Outgoing" | "Backlink" | "Recommended";
+  reasonDetail: string;
+  score: number;
+  excerpt: string;
   selected: boolean;
   characterCount: number;
 };

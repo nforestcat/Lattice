@@ -207,6 +207,9 @@ struct ContextBundleCandidate {
     path: String,
     title: String,
     reason: String,
+    reason_detail: String,
+    score: f64,
+    excerpt: String,
     selected: bool,
     character_count: usize,
 }
@@ -724,6 +727,14 @@ fn extract_excerpt(content: &str, length: usize) -> String {
     }
 }
 
+#[derive(Debug, Clone)]
+struct IncludedNoteInfo {
+    reason: String,
+    reason_detail: String,
+    score: f64,
+    excerpt: String,
+}
+
 fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: ContextBundleOptions) -> Result<ContextBundle, String> {
     let focus = notes.iter().find(|note| note.meta.path == focus_path).ok_or("Note not found")?;
     let mut included = context_bundle_included_notes(notes, focus_path)?;
@@ -744,7 +755,7 @@ fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: Contex
     })
 }
 
-fn is_title_mentioned(content: &str, title: &str) -> bool {
+fn count_title_mentions(content: &str, title: &str) -> usize {
     let mut body = content;
     if content.starts_with("---\n") {
         if let Some(end) = content[4..].find("\n---") {
@@ -756,55 +767,83 @@ fn is_title_mentioned(content: &str, title: &str) -> bool {
     let lower_title = title.to_lowercase();
 
     if lower_title.is_empty() {
-        return false;
+        return 0;
     }
 
+    let mut count = 0;
     let mut search_from = 0;
     while let Some(relative_idx) = lower_body[search_from..].find(&lower_title) {
         let idx = search_from + relative_idx;
+        let mut valid = true;
+
         let chars_before: Vec<char> = body[..idx].chars().collect();
         if let Some(&last_char) = chars_before.last() {
             if last_char.is_alphanumeric() {
-                search_from = idx + lower_title.len();
-                continue;
+                valid = false;
             }
         }
         let chars_after: Vec<char> = body[idx + title.len()..].chars().collect();
         if let Some(&first_char) = chars_after.first() {
             if first_char.is_alphanumeric() {
-                search_from = idx + lower_title.len();
-                continue;
+                valid = false;
             }
         }
 
-        return true;
+        if valid {
+            count += 1;
+        }
+
+        search_from = idx + lower_title.len();
     }
 
-    false
+    count
 }
+
 
 fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<ContextBundleCandidate>, String> {
     Ok(context_bundle_included_notes(notes, focus_path)?
         .into_iter()
-        .map(|(note, reason)| ContextBundleCandidate {
-            path: note.meta.path.clone(),
-            title: note.meta.title.clone(),
-            reason: reason.to_string(),
-            selected: reason != "Recommended",
-            character_count: note.content.len(),
+        .map(|(note, info)| {
+            let selected = info.reason != "Recommended";
+            ContextBundleCandidate {
+                path: note.meta.path.clone(),
+                title: note.meta.title.clone(),
+                reason: info.reason,
+                reason_detail: info.reason_detail,
+                score: info.score,
+                excerpt: info.excerpt,
+                selected,
+                character_count: note.content.len(),
+            }
         })
         .collect())
 }
 
-fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<(ParsedNote, &'static str)>, String> {
+fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<(ParsedNote, IncludedNoteInfo)>, String> {
     let context = note_context(notes, focus_path)?;
-    let mut included: Vec<(ParsedNote, &'static str)> = vec![(context.note.clone(), "Focus")];
+    let mut included: Vec<(ParsedNote, IncludedNoteInfo)> = vec![(
+        context.note.clone(),
+        IncludedNoteInfo {
+            reason: "Focus".to_string(),
+            reason_detail: "Focus note".to_string(),
+            score: 10.0,
+            excerpt: extract_excerpt(&context.note.content, 100),
+        },
+    )];
 
     for link in &context.outgoing_links {
         if let Some(resolved_path) = &link.resolved_path {
             if !included.iter().any(|(note, _)| note.meta.path == *resolved_path) {
                 if let Some(note) = notes.iter().find(|note| note.meta.path == *resolved_path) {
-                    included.push((note.clone(), "Outgoing"));
+                    included.push((
+                        note.clone(),
+                        IncludedNoteInfo {
+                            reason: "Outgoing".to_string(),
+                            reason_detail: "Direct link inside the focus note".to_string(),
+                            score: 8.0,
+                            excerpt: extract_excerpt(&note.content, 100),
+                        },
+                    ));
                 }
             }
         }
@@ -813,7 +852,15 @@ fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Resu
     for link in &context.backlinks {
         if !included.iter().any(|(note, _)| note.meta.path == link.source_path) {
             if let Some(note) = notes.iter().find(|note| note.meta.path == link.source_path) {
-                included.push((note.clone(), "Backlink"));
+                included.push((
+                    note.clone(),
+                    IncludedNoteInfo {
+                        reason: "Backlink".to_string(),
+                        reason_detail: format!("Linked to this note from [[{}]]", note.meta.title),
+                        score: 7.0,
+                        excerpt: extract_excerpt(&note.content, 100),
+                    },
+                ));
             }
         }
     }
@@ -827,12 +874,58 @@ fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Resu
             continue;
         }
 
-        let has_shared_tags = note.meta.tags.iter().any(|tag| focus_tags.contains(tag.as_str()));
-        let focus_mentions_candidate = is_title_mentioned(&focus_note.content, &note.meta.title);
-        let candidate_mentions_focus = is_title_mentioned(&note.content, &focus_note.meta.title);
+        let shared: Vec<&str> = note
+            .meta
+            .tags
+            .iter()
+            .map(String::as_str)
+            .filter(|tag| focus_tags.contains(tag))
+            .collect();
+            
+        let focus_mentions = count_title_mentions(&focus_note.content, &note.meta.title);
+        let candidate_mentions = count_title_mentions(&note.content, &focus_note.meta.title);
+        let total_mentions = focus_mentions + candidate_mentions;
 
-        if has_shared_tags || focus_mentions_candidate || candidate_mentions_focus {
-            included.push((note.clone(), "Recommended"));
+        if !shared.is_empty() || total_mentions > 0 {
+            let mut tag_score = 0.0;
+            let mut mention_score = 0.0;
+            let mut reasons = Vec::new();
+
+            if !shared.is_empty() {
+                tag_score = 3.0 + (shared.len() as f64) * 1.5;
+                let formatted_tags = shared
+                    .iter()
+                    .map(|t| format!("#{}", t))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                reasons.push(format!("Shares tags: {}", formatted_tags));
+            }
+
+            if total_mentions > 0 {
+                mention_score = 4.0 + (total_mentions as f64) * 2.0;
+                let mut detail_parts = Vec::new();
+                if focus_mentions > 0 {
+                    detail_parts.push(format!("mentioned {} time(s) in focus", focus_mentions));
+                }
+                if candidate_mentions > 0 {
+                    detail_parts.push(format!("mentions focus {} time(s)", candidate_mentions));
+                }
+                reasons.push(detail_parts.join(", "));
+            }
+
+            let max_score = if tag_score > mention_score { tag_score } else { mention_score };
+            let score = if max_score > 9.5 { 9.5 } else { max_score };
+            let reason_detail = reasons.join("; ");
+
+            included.push((
+                note.clone(),
+                IncludedNoteInfo {
+                    reason: "Recommended".to_string(),
+                    reason_detail,
+                    score,
+                    excerpt: extract_excerpt(&note.content, 100),
+                },
+            ));
         }
     }
 
@@ -841,7 +934,7 @@ fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Resu
 
 fn render_context_bundle(
     title: &str,
-    included: &[(ParsedNote, &'static str)],
+    included: &[(ParsedNote, IncludedNoteInfo)],
     purpose: Option<&str>,
     mode: &str,
     notes: &[ParsedNote],
@@ -877,8 +970,8 @@ fn render_context_bundle(
         "## Included Notes".to_string(),
     ]);
 
-    for (note, reason) in included {
-        lines.push(format!("- {}: [[{}]] (`{}`)", reason, note.meta.title, note.meta.path));
+    for (note, info) in included {
+        lines.push(format!("- {}: [[{}]] (`{}`)", info.reason, note.meta.title, note.meta.path));
     }
     lines.push(String::new());
 
@@ -1488,11 +1581,11 @@ mod tests {
 
     #[test]
     fn test_is_title_mentioned() {
-        assert!(is_title_mentioned("Hello, this is a Project note.", "Project"));
-        assert!(!is_title_mentioned("Hello, this is a ProjectNote.", "Project"));
-        assert!(is_title_mentioned("AIM is not a title mention, but AI is.", "AI"));
-        assert!(is_title_mentioned("프로젝트 노트를 확인합니다.", "프로젝트"));
-        assert!(!is_title_mentioned("프로젝트노트를 확인합니다.", "프로젝트"));
+        assert!(count_title_mentions("Hello, this is a Project note.", "Project") > 0);
+        assert_eq!(count_title_mentions("Hello, this is a ProjectNote.", "Project"), 0);
+        assert!(count_title_mentions("AIM is not a title mention, but AI is.", "AI") > 0);
+        assert!(count_title_mentions("프로젝트 노트를 확인합니다.", "프로젝트") > 0);
+        assert_eq!(count_title_mentions("프로젝트노트를 확인합니다.", "프로젝트"), 0);
     }
 
     #[test]
@@ -1509,6 +1602,9 @@ mod tests {
         
         let home_candidate = candidates.iter().find(|c| c.path == "Home.md").unwrap();
         assert_eq!(home_candidate.reason, "Recommended");
+        assert_eq!(home_candidate.reason_detail, "Shares tags: #general; mentions focus 1 time(s)");
+        assert_eq!(home_candidate.score, 6.0);
+        assert!(home_candidate.excerpt.contains("Mentions Project"));
         assert!(!home_candidate.selected);
         
         assert!(candidates.iter().find(|c| c.path == "Unrelated.md").is_none());

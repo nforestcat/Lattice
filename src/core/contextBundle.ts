@@ -18,6 +18,9 @@ export type ContextBundleCandidate = {
   path: string;
   title: string;
   reason: "Focus" | "Outgoing" | "Backlink" | "Recommended";
+  reasonDetail: string;
+  score: number;
+  excerpt: string;
   selected: boolean;
   characterCount: number;
 };
@@ -25,6 +28,9 @@ export type ContextBundleCandidate = {
 type IncludedNote = {
   note: ParsedNote;
   reason: "Focus" | "Outgoing" | "Backlink" | "Recommended";
+  reasonDetail: string;
+  score: number;
+  excerpt: string;
 };
 
 export function extractExcerpt(content: string, length = 150): string {
@@ -68,10 +74,13 @@ export function createContextBundle(index: VaultIndex, focusPath: string, option
 }
 
 export function getContextBundleCandidates(index: VaultIndex, focusPath: string): ContextBundleCandidate[] {
-  return getIncludedNotes(index, focusPath).map(({ note, reason }) => ({
+  return getIncludedNotes(index, focusPath).map(({ note, reason, reasonDetail, score, excerpt }) => ({
     path: note.path,
     title: note.title,
     reason,
+    reasonDetail,
+    score,
+    excerpt,
     selected: reason !== "Recommended",
     characterCount: note.content.length
   }));
@@ -87,15 +96,16 @@ function stripFrontmatter(content: string): string {
   return content;
 }
 
-export function isTitleMentioned(content: string, title: string): boolean {
+export function countTitleMentions(content: string, title: string): number {
   const stripped = stripFrontmatter(content);
   const lowerContent = stripped.toLowerCase();
   const lowerTitle = title.toLowerCase();
 
   if (!lowerTitle) {
-    return false;
+    return 0;
   }
 
+  let count = 0;
   let index = lowerContent.indexOf(lowerTitle);
   while (index !== -1) {
     const charBefore = index > 0 ? stripped.charAt(index - 1) : "";
@@ -105,36 +115,61 @@ export function isTitleMentioned(content: string, title: string): boolean {
     const hasValidAfter = !charAfter || !/[\p{L}\p{N}]/u.test(charAfter);
 
     if (hasValidBefore && hasValidAfter) {
-      return true;
+      count++;
     }
 
     index = lowerContent.indexOf(lowerTitle, index + lowerTitle.length);
   }
 
-  return false;
+  return count;
+}
+
+export function isTitleMentioned(content: string, title: string): boolean {
+  return countTitleMentions(content, title) > 0;
 }
 
 function getIncludedNotes(index: VaultIndex, focusPath: string): IncludedNote[] {
   const context = getNoteContext(index, focusPath);
   const included = new Map<string, IncludedNote>();
 
-  included.set(context.note.path, { note: context.note, reason: "Focus" });
+  // 1. Focus Note
+  included.set(context.note.path, {
+    note: context.note,
+    reason: "Focus",
+    reasonDetail: "Focus note",
+    score: 10.0,
+    excerpt: extractExcerpt(context.note.content, 100)
+  });
 
+  // 2. Outgoing Links
   for (const link of context.outgoingLinks) {
     const note = link.resolvedPath ? findNote(index, link.resolvedPath) : null;
     if (note && !included.has(note.path)) {
-      included.set(note.path, { note, reason: "Outgoing" });
+      included.set(note.path, {
+        note,
+        reason: "Outgoing",
+        reasonDetail: "Direct link inside the focus note",
+        score: 8.0,
+        excerpt: extractExcerpt(note.content, 100)
+      });
     }
   }
 
+  // 3. Backlinks
   for (const link of context.backlinks) {
     const note = findNote(index, link.sourcePath);
     if (note && !included.has(note.path)) {
-      included.set(note.path, { note, reason: "Backlink" });
+      included.set(note.path, {
+        note,
+        reason: "Backlink",
+        reasonDetail: `Linked to this note from [[${note.title}]]`,
+        score: 7.0,
+        excerpt: extractExcerpt(note.content, 100)
+      });
     }
   }
 
-  // Recommended related notes
+  // 4. Recommended Related Notes
   const focusNote = context.note;
   const focusTags = new Set(focusNote.tags);
 
@@ -143,12 +178,43 @@ function getIncludedNotes(index: VaultIndex, focusPath: string): IncludedNote[] 
       continue;
     }
 
-    const hasSharedTags = note.tags.some(tag => focusTags.has(tag));
-    const focusMentionsCandidate = isTitleMentioned(focusNote.content, note.title);
-    const candidateMentionsFocus = isTitleMentioned(note.content, focusNote.title);
+    const shared = note.tags.filter(tag => focusTags.has(tag));
+    const focusMentions = countTitleMentions(focusNote.content, note.title);
+    const candidateMentions = countTitleMentions(note.content, focusNote.title);
+    const totalMentions = focusMentions + candidateMentions;
 
-    if (hasSharedTags || focusMentionsCandidate || candidateMentionsFocus) {
-      included.set(note.path, { note, reason: "Recommended" });
+    if (shared.length > 0 || totalMentions > 0) {
+      let tagScore = 0;
+      let mentionScore = 0;
+      const reasons: string[] = [];
+
+      if (shared.length > 0) {
+        tagScore = 3.0 + shared.length * 1.5;
+        reasons.push(`Shares tags: ${shared.map(t => '#' + t).join(', ')}`);
+      }
+      if (totalMentions > 0) {
+        mentionScore = 4.0 + totalMentions * 2.0;
+        const detailParts: string[] = [];
+        if (focusMentions > 0) {
+          detailParts.push(`mentioned ${focusMentions} time(s) in focus`);
+        }
+        if (candidateMentions > 0) {
+          detailParts.push(`mentions focus ${candidateMentions} time(s)`);
+        }
+        reasons.push(detailParts.join(', '));
+      }
+
+      // Final dynamic score & reason detail (cap below Focus & Outgoing, i.e., max 9.5)
+      const score = Math.min(9.5, Math.max(tagScore, mentionScore));
+      const reasonDetail = reasons.join('; ');
+
+      included.set(note.path, {
+        note,
+        reason: "Recommended",
+        reasonDetail,
+        score,
+        excerpt: extractExcerpt(note.content, 100)
+      });
     }
   }
 

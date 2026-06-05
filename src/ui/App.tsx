@@ -113,7 +113,20 @@ export function App() {
     setContextBundle(null);
     const candidates = await vaultApi.getContextBundleCandidates(path);
     setContextCandidates(candidates);
-    setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
+    
+    // Load persisted selections if any, otherwise default to logic-derived selections
+    const saved = localStorage.getItem(`lattice:selected_paths:${path}`);
+    if (saved) {
+      try {
+        const paths = JSON.parse(saved) as string[];
+        setSelectedContextPaths(new Set(paths));
+      } catch (e) {
+        setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
+      }
+    } else {
+      setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
+    }
+
     setInboxCaptures(isInboxPath(path) ? await vaultApi.getInboxCaptures(path) : []);
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
@@ -287,6 +300,9 @@ export function App() {
         next.delete(path);
       } else {
         next.add(path);
+      }
+      if (activePath) {
+        localStorage.setItem(`lattice:selected_paths:${activePath}`, JSON.stringify(Array.from(next)));
       }
       return next;
     });
@@ -536,19 +552,36 @@ export function App() {
             </div>
           </div>
           <div className="candidateList">
-            {contextCandidates.map((candidate) => (
-              <label key={candidate.path} className="candidateRow">
-                <input
-                  type="checkbox"
-                  checked={selectedContextPaths.has(candidate.path)}
-                  onChange={() => toggleContextCandidate(candidate.path)}
-                />
-                <span>
-                  <strong>{candidate.title}</strong>
-                  <small>{candidate.reason} · {candidate.characterCount} chars · {candidate.path}</small>
-                </span>
-              </label>
-            ))}
+            {contextCandidates.map((candidate) => {
+              const scoreColorClass = 
+                candidate.score >= 9.0 ? "score-high" :
+                candidate.score >= 7.0 ? "score-medium" : "score-low";
+              const reasonClass = `reason-badge reason-${candidate.reason.toLowerCase()}`;
+
+              return (
+                <div key={candidate.path} className="candidateRow">
+                  <div className="candidateTop">
+                    <label className="candidateLabel">
+                      <input
+                        type="checkbox"
+                        checked={selectedContextPaths.has(candidate.path)}
+                        onChange={() => toggleContextCandidate(candidate.path)}
+                      />
+                      <strong>{candidate.title}</strong>
+                    </label>
+                    <div className="candidateBadges">
+                      <span className={reasonClass}>{candidate.reason}</span>
+                      <span className={`score-badge ${scoreColorClass}`}>{candidate.score.toFixed(1)}</span>
+                    </div>
+                  </div>
+                  <div className="candidateDetails">
+                    <p className="reasonDetail">{candidate.reasonDetail}</p>
+                    {candidate.excerpt && <p className="candidateExcerpt">{candidate.excerpt}</p>}
+                    <span className="candidateMeta">{candidate.characterCount} chars · {candidate.path}</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
           <button onClick={() => void generateContextBundle()} disabled={!activePath || selectedContextCount === 0}>Generate bundle</button>
           {contextBundle && (
