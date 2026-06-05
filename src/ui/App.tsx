@@ -4,13 +4,14 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit } from "../api/types";
+import { parseProposedEdits } from "../core/distillParser";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
-type ViewMode = "split" | "edit" | "preview" | "graph";
+type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 
 export type PresetType = "custom" | "ask" | "refactor" | "summarize" | "plan" | "debug";
 
@@ -308,6 +309,8 @@ export function App() {
   const [diffRunId, setDiffRunId] = useState<string | null>(null);
   const [diffResult, setDiffResult] = useState<{ lines: DiffLine[]; regenerating: boolean; error?: string } | null>(null);
   const [currentPromptHash, setCurrentPromptHash] = useState<string | null>(null);
+  const [distillInputText, setDistillInputText] = useState("");
+  const [proposedEdits, setProposedEdits] = useState<ProposedEdit[]>([]);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -1000,6 +1003,76 @@ export function App() {
     }
   }
 
+  async function applyCheckedEdits() {
+    let appliedCount = 0;
+    const nextEdits = [...proposedEdits];
+
+    for (let i = 0; i < nextEdits.length; i++) {
+      const edit = nextEdits[i];
+      if (edit.applied || !edit.checked) {
+        continue;
+      }
+
+      try {
+        if (edit.type === "create") {
+          const pathParts = edit.path.split("/");
+          const title = pathParts.pop()?.replace(/\.md$/, "") || "";
+          const parent = pathParts.length > 0 ? pathParts.join("/") : null;
+
+          const result = await vaultApi.createNote(parent, title);
+          await vaultApi.saveNote(result.selectedPath || edit.path, edit.content || "", "");
+          appliedCount++;
+          nextEdits[i] = { ...edit, applied: true, path: result.selectedPath || edit.path };
+        } else if (edit.type === "update") {
+          const doc = await vaultApi.readNote(edit.path);
+          const target = edit.targetContent || "";
+          const replacement = edit.replacementContent || "";
+
+          if (!doc.content.includes(target)) {
+            throw new Error(`Target content not found in ${edit.path}`);
+          }
+
+          const updatedContent = doc.content.replace(target, replacement);
+          await vaultApi.saveNote(edit.path, updatedContent, doc.revision);
+          appliedCount++;
+          nextEdits[i] = { ...edit, applied: true };
+        } else if (edit.type === "delete") {
+          await vaultApi.deleteEntry(edit.path);
+          appliedCount++;
+          nextEdits[i] = { ...edit, applied: true };
+        } else if (edit.type === "merge") {
+          await vaultApi.deleteEntry(edit.path);
+
+          let targetPath = edit.newPath || "";
+          let existingRevision = "";
+          try {
+            const doc = await vaultApi.readNote(targetPath);
+            existingRevision = doc.revision;
+          } catch (_) {
+            const pathParts = targetPath.split("/");
+            const title = pathParts.pop()?.replace(/\.md$/, "") || "";
+            const parent = pathParts.length > 0 ? pathParts.join("/") : null;
+            const result = await vaultApi.createNote(parent, title);
+            targetPath = result.selectedPath || targetPath;
+          }
+
+          await vaultApi.saveNote(targetPath, edit.content || "", existingRevision);
+          appliedCount++;
+          nextEdits[i] = { ...edit, applied: true };
+        }
+      } catch (err) {
+        console.error("Failed to apply proposed edit", edit, err);
+        setStatus(`Error applying edit to ${edit.path}: ${errorMessage(err)}`);
+        setProposedEdits(nextEdits);
+        return;
+      }
+    }
+
+    setProposedEdits(nextEdits);
+    setStatus(`Successfully applied ${appliedCount} wiki edit(s).`);
+    await refreshVault(activePath);
+  }
+
   function compileTemplate(templateText: string): string {
     const activeNoteTitle = activePath 
       ? (vault?.notes.find(n => n.path === activePath)?.title || activePath.split('/').pop()?.replace(/\.md$/, "") || "")
@@ -1250,16 +1323,17 @@ export function App() {
       <section className="editorPane">
         <header className="topbar">
           <div>
-            <strong>{context?.note.title ?? "Select a note"}</strong>
-            <span>{activePath}</span>
+            <strong>{viewMode === "distill" ? "LLM Distill Workspace" : (context?.note.title ?? "Select a note")}</strong>
+            <span>{viewMode === "distill" ? "Compounding Memory Pipeline" : activePath}</span>
           </div>
           <div className="segmented">
             <button className={viewMode === "split" ? "active" : ""} onClick={() => setViewMode("split")}>Split</button>
             <button className={viewMode === "edit" ? "active" : ""} onClick={() => setViewMode("edit")}>Edit</button>
             <button className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>Preview</button>
             <button className={viewMode === "graph" ? "active" : ""} onClick={() => setViewMode("graph")}>Graph</button>
+            <button className={viewMode === "distill" ? "active" : ""} onClick={() => setViewMode("distill")}>Distill</button>
           </div>
-          <button className="primary" onClick={() => void saveActiveNote()}>Save</button>
+          {viewMode !== "distill" && <button className="primary" onClick={() => void saveActiveNote()}>Save</button>}
         </header>
 
         <div className={`editorWorkspace ${viewMode === "split" ? "split" : "single"}`}>
@@ -1290,6 +1364,191 @@ export function App() {
                 onCreateLink={(targetPath) => activePath && void createGraphLink(activePath, targetPath)}
                 onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
               />
+            </section>
+          )}
+          {viewMode === "distill" && (
+            <section className="distillSurface">
+              <div className="distillWorkspaceLayout">
+                <div className="distillLeftCol">
+                  <div className="distillInputArea">
+                    <h3>Raw Input Context</h3>
+                    <textarea
+                      className="distillTextarea"
+                      value={distillInputText}
+                      onChange={(e) => setDistillInputText(e.target.value)}
+                      placeholder="Paste raw conversation logs, inbox captures, or meeting notes here to distill into structured wiki page proposed edits..."
+                    />
+                    <div className="distillActions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const mockPrompt = `<propose_edit type="create" path="Research/Compounding Memory.md">
+  <reason>Documenting the core mechanism of LLM wiki maintenance.</reason>
+  <content># Compounding Memory
+
+Persistent synthesis allows LLMs to read and write directly to the wiki rather than searching raw chunks.
+- **Persistent synthesis**: Continually updating a core wiki page.
+- **LLM-editable Markdown**: Simple structure.
+- **Maintenance loop**: Compounding knowledge over time.</content>
+</propose_edit>
+
+<propose_edit type="update" path="Home.md">
+  <reason>Link the new Compounding Memory research note.</reason>
+  <target_content>Welcome to the local wiki workspace!</target_content>
+  <replacement_content>Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note.</replacement_content>
+</propose_edit>
+
+<propose_edit type="delete" path="TempDraft.md">
+  <reason>Clean up old draft note.</reason>
+</propose_edit>
+
+<propose_edit type="merge" path="StaleNotes.md" new_path="Home.md">
+  <reason>Merge outdated stale notes into Home wiki page.</reason>
+  <content>Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note. Also merging relevant guidelines here.</content>
+</propose_edit>`;
+                          setDistillInputText(mockPrompt);
+                        }}
+                      >
+                        Load Mock Proposal
+                      </button>
+                      <button
+                        className="primary"
+                        type="button"
+                        onClick={() => {
+                          const parsed = parseProposedEdits(distillInputText);
+                          // Mark all parsed proposed edits as checked by default
+                          const checkedParsed = parsed.map(p => ({ ...p, checked: true }));
+                          setProposedEdits(checkedParsed);
+                          setStatus(`Extracted ${checkedParsed.length} proposed edit(s).`);
+                        }}
+                      >
+                        Propose Wiki Edits
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="distillRightCol">
+                  <div className="proposedEditsHeader">
+                    <h3>Proposed Edits ({proposedEdits.filter(p => !p.applied).length} pending)</h3>
+                    <button
+                      className="primary"
+                      disabled={proposedEdits.filter(p => p.checked && !p.applied).length === 0}
+                      onClick={() => void applyCheckedEdits()}
+                    >
+                      Apply Checked Edits
+                    </button>
+                  </div>
+
+                  {proposedEdits.length === 0 ? (
+                    <div className="noProposalsBox">
+                      <span style={{ color: "#64748b" }}>No proposed edits extracted yet. Paste context and click "Propose Wiki Edits".</span>
+                    </div>
+                  ) : (
+                    <div className="proposalsList">
+                      {proposedEdits.map((edit) => (
+                        <div
+                          key={edit.id}
+                          className={`proposalCard ${edit.applied ? "applied" : ""}`}
+                        >
+                          <div className="proposalCardHeader">
+                            <label className="proposalCheckboxLabel">
+                              <input
+                                type="checkbox"
+                                checked={!!edit.checked}
+                                disabled={edit.applied}
+                                onChange={(e) => {
+                                  setProposedEdits(prev =>
+                                    prev.map(p => p.id === edit.id ? { ...p, checked: e.target.checked } : p)
+                                  );
+                                }}
+                              />
+                              <span className="proposalPath">{edit.path}</span>
+                            </label>
+                            <span className={`proposalBadge ${edit.type}`}>{edit.type}</span>
+                            {edit.applied && <span className="appliedBadge">✓ Applied</span>}
+                          </div>
+
+                          {edit.reason && (
+                            <div className="proposalReason">
+                              <strong>Reason:</strong> {edit.reason}
+                            </div>
+                          )}
+
+                          <div className="proposalBody">
+                            {edit.type === "create" && (
+                              <div className="proposalEditor">
+                                <label>Proposed Content:</label>
+                                <textarea
+                                  className="proposalTextarea"
+                                  value={edit.content || ""}
+                                  disabled={edit.applied}
+                                  onChange={(e) => {
+                                    setProposedEdits(prev =>
+                                      prev.map(p => p.id === edit.id ? { ...p, content: e.target.value } : p)
+                                    );
+                                  }}
+                                />
+                              </div>
+                            )}
+
+                            {edit.type === "update" && (
+                              <div className="proposalDiffView">
+                                <div className="diffOriginal">
+                                  <span className="diffLabel">Target Segment (Search):</span>
+                                  <pre>{edit.targetContent}</pre>
+                                </div>
+                                <div className="diffReplacement">
+                                  <span className="diffLabel">Replacement Segment:</span>
+                                  <div className="proposalEditor">
+                                    <textarea
+                                      className="proposalTextarea"
+                                      value={edit.replacementContent || ""}
+                                      disabled={edit.applied}
+                                      onChange={(e) => {
+                                        setProposedEdits(prev =>
+                                          prev.map(p => p.id === edit.id ? { ...p, replacementContent: e.target.value } : p)
+                                        );
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {edit.type === "delete" && (
+                              <div className="proposalDeleteNotice">
+                                This action will delete the note at <strong>{edit.path}</strong>.
+                              </div>
+                            )}
+
+                            {edit.type === "merge" && (
+                              <div className="proposalMergeFields">
+                                <div>
+                                  <strong>Target Destination:</strong> <code className="proposalPath">{edit.newPath}</code>
+                                </div>
+                                <div className="proposalEditor" style={{ marginTop: 8 }}>
+                                  <label>Merged Content:</label>
+                                  <textarea
+                                    className="proposalTextarea"
+                                    value={edit.content || ""}
+                                    disabled={edit.applied}
+                                    onChange={(e) => {
+                                      setProposedEdits(prev =>
+                                        prev.map(p => p.id === edit.id ? { ...p, content: e.target.value } : p)
+                                      );
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </section>
           )}
         </div>

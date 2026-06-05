@@ -1804,3 +1804,246 @@ summary:hover .treeActions {
 .diffContent {
   flex: 1;
 }
+
+/* Distill Workspace Layout */
+.distillSurface {
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  background: #f8fafc;
+}
+
+.distillWorkspaceLayout {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 20px;
+  height: 100%;
+  min-height: 500px;
+}
+
+.distillLeftCol, .distillRightCol {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.distillInputArea {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+.distillInputArea h3, .proposedEditsHeader h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.distillTextarea {
+  flex: 1;
+  min-height: 350px;
+  font-family: monospace;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 12px;
+  resize: vertical;
+  background: #f8fafc;
+}
+
+.distillActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.proposedEditsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.noProposalsBox {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #cbd5e1;
+  border-radius: 6px;
+  padding: 40px;
+}
+
+.proposalsList {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 600px;
+  padding-right: 4px;
+}
+
+.proposalCard {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 16px;
+  background: #ffffff;
+  transition: all 0.2s ease;
+}
+
+.proposalCard.applied {
+  opacity: 0.65;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.proposalCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.proposalCheckboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+}
+
+.proposalCheckboxLabel input {
+  cursor: pointer;
+}
+
+.proposalBadge {
+  font-size: 9px;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.proposalBadge.create {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.proposalBadge.update {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.proposalBadge.delete {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.proposalBadge.merge {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.proposalPath {
+  font-family: monospace;
+  font-size: 13px;
+  color: #475569;
+}
+
+.appliedBadge {
+  font-size: 11px;
+  color: #10b981;
+  font-weight: 600;
+}
+
+.proposalReason {
+  font-size: 12px;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  border-left: 3px solid #64748b;
+}
+
+.proposalBody {
+  margin-top: 10px;
+}
+
+.proposalEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proposalEditor label, .proposalMergeFields label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.proposalTextarea {
+  width: 100%;
+  min-height: 120px;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.proposalDeleteNotice {
+  font-size: 12px;
+  color: #991b1b;
+  background: #fef2f2;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.proposalMergeFields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.proposalDiffView {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diffOriginal pre {
+  margin: 0;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 8px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid #fca5a5;
+}
+
+.diffOriginal .diffLabel, .diffReplacement .diffLabel {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #64748b;
+}

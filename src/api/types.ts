@@ -178,3 +178,16 @@ export type VaultConfig = {
   promptRuns?: PromptRun[];
   promptTemplates?: PromptTemplate[];
 };
+
+export type ProposedEdit = {
+  id: string;
+  type: "create" | "update" | "merge" | "delete";
+  path: string;
+  newPath?: string;
+  content?: string;
+  targetContent?: string;
+  replacementContent?: string;
+  reason?: string;
+  applied: boolean;
+  checked?: boolean;
+};

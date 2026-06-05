@@ -1074,11 +1074,93 @@ describe("App layout", () => {
     fireEvent.click(deleteBtn);
     expect(confirmSpy).toHaveBeenCalledWith("Delete this prompt history entry and its archived prompt?");
     expect(deletePromptSpy).not.toHaveBeenCalled();
-
     confirmSpy.mockRestore();
     statusSpy.mockRestore();
     deletePromptSpy.mockRestore();
     pruneSpy.mockRestore();
     getVaultConfigSpy.mockRestore();
+  });
+
+  it("allows navigating to Distill workspace, loading mock proposal, inline editing, and applying checked edits", async () => {
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockResolvedValue({
+      vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+      selectedPath: "Research/Compounding Memory.md"
+    });
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
+      saved: true,
+      revision: "rev-new",
+      conflict: false,
+      snapshotId: null,
+      gitCommit: null
+    });
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Welcome to the local wiki workspace!",
+      revision: "rev-home"
+    });
+    const deleteEntrySpy = vi.spyOn(vaultApi, "deleteEntry").mockResolvedValue({
+      vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+      selectedPath: null
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // 1. Go to Distill Workspace
+    const distillTabBtn = screen.getByRole("button", { name: "Distill" });
+    fireEvent.click(distillTabBtn);
+    expect(screen.getByText("LLM Distill Workspace")).toBeTruthy();
+
+    // 2. Load Mock Proposal
+    const loadMockBtn = screen.getByText("Load Mock Proposal");
+    fireEvent.click(loadMockBtn);
+    
+    // Distill textarea should populate
+    const textarea = document.querySelector(".distillTextarea") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("<propose_edit");
+
+    // 3. Click "Propose Wiki Edits"
+    const proposeBtn = screen.getByText("Propose Wiki Edits");
+    fireEvent.click(proposeBtn);
+
+    // Cards should render
+    await waitFor(() => expect(screen.getByText("Research/Compounding Memory.md")).toBeTruthy());
+    expect(screen.getAllByText("Home.md").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("TempDraft.md").length).toBeGreaterThanOrEqual(1);
+
+    // Verify badges
+    expect(screen.getAllByText("create").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("update").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("delete").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("merge").length).toBeGreaterThanOrEqual(1);
+
+    // Inline edit create proposal
+    const textareas = screen.getAllByRole("textbox") as HTMLTextAreaElement[];
+    const createTextarea = textareas.find((ta) => ta.classList.contains("proposalTextarea") && ta.value.includes("Persistent synthesis"));
+    expect(createTextarea).toBeTruthy();
+    fireEvent.change(createTextarea!, { target: { value: "# Compounding Memory - Updated" } });
+
+    // Apply checked edits
+    const applyBtn = screen.getByText("Apply Checked Edits");
+    fireEvent.click(applyBtn);
+
+    await waitFor(() => {
+      expect(createNoteSpy).toHaveBeenCalledWith("Research", "Compounding Memory");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Research/Compounding Memory.md", "# Compounding Memory - Updated", "");
+      expect(readNoteSpy).toHaveBeenCalledWith("Home.md");
+      expect(saveNoteSpy).toHaveBeenCalledWith(
+        "Home.md",
+        "Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note.",
+        "rev-home"
+      );
+      expect(deleteEntrySpy).toHaveBeenCalledWith("TempDraft.md");
+      expect(deleteEntrySpy).toHaveBeenCalledWith("StaleNotes.md");
+    });
+
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    deleteEntrySpy.mockRestore();
   });
 });
