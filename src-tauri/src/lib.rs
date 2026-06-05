@@ -931,6 +931,174 @@ fn save_embeddings_cache(content: String, state: tauri::State<AppState>) -> Resu
     fs::write(path, content).map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnresolvedLinkSource {
+    path: String,
+    title: String,
+    excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnresolvedLinkGroup {
+    target: String,
+    sources: Vec<UnresolvedLinkSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProposedEdit {
+    id: String,
+    #[serde(rename = "type")]
+    edit_type: String,
+    path: String,
+    new_path: Option<String>,
+    content: Option<String>,
+    target_content: Option<String>,
+    replacement_content: Option<String>,
+    reason: Option<String>,
+    applied: bool,
+}
+
+#[tauri::command]
+fn get_unresolved_links(state: tauri::State<AppState>) -> Result<Vec<UnresolvedLinkGroup>, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let notes = &guard.notes;
+
+    let mut unresolved_map: HashMap<String, Vec<UnresolvedLinkSource>> = HashMap::new();
+
+    for note in notes {
+        let lines: Vec<&str> = note.content.lines().collect();
+        for link in &note.links {
+            if link.resolved_path.is_none() {
+                let target = link.target_ref.clone();
+                let line_idx = if link.line > 0 { link.line - 1 } else { 0 };
+                let excerpt = if line_idx < lines.len() {
+                    let start = line_idx.saturating_sub(2);
+                    let end = std::cmp::min(lines.len(), line_idx + 3);
+                    lines[start..end].join("\n")
+                } else {
+                    note.content.chars().take(300).collect::<String>()
+                };
+
+                let sources = unresolved_map.entry(target).or_default();
+                if !sources.iter().any(|s| s.path == note.meta.path) {
+                    sources.push(UnresolvedLinkSource {
+                        path: note.meta.path.clone(),
+                        title: note.meta.title.clone(),
+                        excerpt,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut result: Vec<UnresolvedLinkGroup> = unresolved_map
+        .into_iter()
+        .map(|(target, sources)| UnresolvedLinkGroup { target, sources })
+        .collect();
+
+    result.sort_by(|a, b| a.target.to_lowercase().cmp(&b.target.to_lowercase()));
+    Ok(result)
+}
+
+fn get_attribute_value(attrs_str: &str, name: &str) -> Option<String> {
+    let pattern = format!(r#"(?i){}\s*=\s*["']([^"']*)["']"#, regex::escape(name));
+    let re = Regex::new(&pattern).ok()?;
+    re.captures(attrs_str)
+        .map(|cap| cap.get(1).unwrap().as_str().to_string())
+}
+
+fn get_tag_content(inner_content: &str, tag_name: &str) -> Option<String> {
+    let open_pattern = format!(r#"(?i)<{}\s*>"#, tag_name);
+    let open_re = Regex::new(&open_pattern).ok()?;
+    let open_cap = open_re.captures(inner_content)?;
+    let open_match = open_cap.get(0).unwrap();
+    let content_start = open_match.end();
+
+    let close_pattern = format!(r#"(?i)</{}>"#, tag_name);
+    let close_re = Regex::new(&close_pattern).ok()?;
+    let remainder = &inner_content[content_start..];
+    let close_cap = close_re.captures(remainder)?;
+    let close_match = close_cap.get(0).unwrap();
+    let content_end = content_start + close_match.start();
+
+    let mut val = inner_content[content_start..content_end].to_string();
+
+    if val.starts_with("<![CDATA[") {
+        val = val["<![CDATA[".len()..].to_string();
+        if val.ends_with("]]>") {
+            val = val[..val.len() - "]]>".len()].to_string();
+        }
+    }
+    Some(val)
+}
+
+#[tauri::command]
+fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>, String> {
+    let mut edits = Vec::new();
+    let mut start_idx = 0;
+
+    let tag_re = Regex::new(r"(?i)<propose_edit\s+([^>]+)>").unwrap();
+    let close_tag = "</propose_edit>";
+
+    while let Some(cap) = tag_re.captures(&raw_text[start_idx..]) {
+        let matched = cap.get(0).unwrap();
+        let tag_end = start_idx + matched.end();
+
+        let slice_after_tag = &raw_text[tag_end..];
+        let Some(close_idx) = slice_after_tag.find(close_tag) else {
+            break;
+        };
+
+        let closing_tag_start = tag_end + close_idx;
+        let inner_content = &raw_text[tag_end..closing_tag_start];
+        start_idx = closing_tag_start + close_tag.len();
+
+        let attrs_str = cap.get(1).unwrap().as_str();
+        let edit_type_val = get_attribute_value(attrs_str, "type");
+        let path = get_attribute_value(attrs_str, "path").unwrap_or_default();
+        let new_path = get_attribute_value(attrs_str, "new_path")
+            .or_else(|| get_attribute_value(attrs_str, "newPath"));
+
+        if edit_type_val.is_none() || path.is_empty() {
+            continue;
+        }
+
+        let edit_type = edit_type_val.unwrap().to_lowercase();
+        if edit_type != "create" && edit_type != "update" && edit_type != "merge" && edit_type != "delete" {
+            continue;
+        }
+
+        let reason = get_tag_content(inner_content, "reason");
+        let content = get_tag_content(inner_content, "content");
+        let target_content = get_tag_content(inner_content, "target_content")
+            .or_else(|| get_tag_content(inner_content, "targetContent"));
+        let replacement_content = get_tag_content(inner_content, "replacement_content")
+            .or_else(|| get_tag_content(inner_content, "replacementContent"));
+
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{}{}{}", path, edit_type, start_idx).as_bytes());
+        let hash_bytes = hasher.finalize();
+        let id = format!("{:x}", hash_bytes)[..12].to_string();
+
+        edits.push(ProposedEdit {
+            id,
+            edit_type,
+            path,
+            new_path,
+            content,
+            target_content,
+            replacement_content,
+            reason,
+            applied: false,
+        });
+    }
+
+    Ok(edits)
+}
+
 fn mutate_graph_link(source_path: String, target_path: String, add: bool, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
@@ -1810,7 +1978,9 @@ pub fn run() {
             delete_archived_prompt,
             prune_archived_prompts,
             load_embeddings_cache,
-            save_embeddings_cache
+            save_embeddings_cache,
+            get_unresolved_links,
+            parse_proposed_edits
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lattice");

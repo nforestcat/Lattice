@@ -1235,6 +1235,15 @@ describe("App layout", () => {
       gitCommit: null
     });
 
+    const getUnresolvedLinksSpy = vi.spyOn(vaultApi, "getUnresolvedLinks").mockResolvedValue([
+      {
+        target: "Missing Target",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing Target]] dead link." }
+        ]
+      }
+    ]);
+
     render(<App />);
 
     await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
@@ -1278,5 +1287,6 @@ describe("App layout", () => {
     sendChatMessageSpy.mockRestore();
     createNoteSpy.mockRestore();
     saveNoteSpy.mockRestore();
+    getUnresolvedLinksSpy.mockRestore();
   });
 });

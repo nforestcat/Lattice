@@ -15,7 +15,9 @@ import type {
   Snapshot,
   VaultApi,
   VaultSnapshot,
-  VaultConfig
+  VaultConfig,
+  UnresolvedLinkGroup,
+  ProposedEdit
 } from "./types";
 
 export function createTauriVaultApi(): VaultApi {
@@ -62,6 +64,8 @@ export function createTauriVaultApi(): VaultApi {
     pruneArchivedPrompts: (activeRunIds: string[]) => invoke<void>("prune_archived_prompts", { activeRunIds }),
     getArchiveStatus: () => invoke<{ fileCount: number; totalBytes: number }>("get_archive_status"),
     loadEmbeddingsCache: () => invoke<string>("load_embeddings_cache"),
-    saveEmbeddingsCache: (content: string) => invoke<void>("save_embeddings_cache", { content })
+    saveEmbeddingsCache: (content: string) => invoke<void>("save_embeddings_cache", { content }),
+    getUnresolvedLinks: () => invoke<UnresolvedLinkGroup[]>("get_unresolved_links"),
+    parseProposedEdits: (rawText: string) => invoke<ProposedEdit[]>("parse_proposed_edits", { rawText })
   };
 }

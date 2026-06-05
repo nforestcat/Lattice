@@ -1,6 +1,7 @@
 import { addManagedLink, removeManagedLink } from "../core/markdown";
 import { buildVaultIndex, getNoteContext, searchNotes } from "../core/indexer";
 import type { SearchFilters, VaultFile, VaultIndex } from "../core/types";
+import { parseProposedEdits } from "../core/distillParser";
 import type {
   CaptureInput,
   FileTreeNode,
@@ -18,7 +19,9 @@ import type {
   Snapshot,
   VaultApi,
   VaultSnapshot,
-  VaultConfig
+  VaultConfig,
+  UnresolvedLinkGroup,
+  ProposedEdit
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
@@ -424,6 +427,51 @@ export function createMockVaultApi(): VaultApi {
     },
     async saveEmbeddingsCache(content: string): Promise<void> {
       localStorage.setItem(`lattice:mock_embeddings:${openRoot}`, content);
+    },
+    async getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]> {
+      const index = buildVaultIndex(files);
+      const unresolvedMap = new Map<string, { path: string; title: string; excerpt: string }[]>();
+
+      for (const note of index.notes) {
+        const lines = note.content.split(/\r?\n/);
+        for (const link of note.links) {
+          if (!link.resolvedPath) {
+            const target = link.targetRef.trim();
+            if (!target) continue;
+
+            const lineIdx = link.line > 0 ? link.line - 1 : 0;
+            let excerpt = "";
+            if (lineIdx < lines.length) {
+              const start = Math.max(0, lineIdx - 2);
+              const end = Math.min(lines.length, lineIdx + 3);
+              excerpt = lines.slice(start, end).join("\n");
+            } else {
+              excerpt = note.content.slice(0, 300);
+            }
+
+            const sources = unresolvedMap.get(target) || [];
+            if (!sources.some((s) => s.path === note.path)) {
+              sources.push({
+                path: note.path,
+                title: note.title,
+                excerpt
+              });
+              unresolvedMap.set(target, sources);
+            }
+          }
+        }
+      }
+
+      const list = Array.from(unresolvedMap.entries()).map(([target, sources]) => ({
+        target,
+        sources
+      }));
+
+      list.sort((a, b) => a.target.toLowerCase().localeCompare(b.target.toLowerCase()));
+      return list;
+    },
+    async parseProposedEdits(rawText: string): Promise<ProposedEdit[]> {
+      return parseProposedEdits(rawText);
     }
   };
 }

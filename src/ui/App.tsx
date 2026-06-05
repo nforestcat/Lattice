@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider } from "../api/types";
-import { parseProposedEdits } from "../core/distillParser";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -608,7 +607,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       const updatedMessages: ChatMessage[] = [...newMessages, { role: "assistant" as const, content: response }];
       setChatMessages(updatedMessages);
 
-      const edits = parseProposedEdits(response);
+      const edits = await vaultApi.parseProposedEdits(response);
       if (edits.length > 0) {
         setProposedEdits((prev) => {
           const filteredPrev = prev.filter(p => !edits.some(e => e.path === p.path && e.type === p.type));
@@ -1537,62 +1536,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     setDraftingTarget(null);
     setDraftedContent(null);
     try {
-      const notesList = vault?.notes || [];
-      const validTargets = new Set<string>();
-      for (const note of notesList) {
-        validTargets.add(note.title.toLowerCase().trim());
-        validTargets.add(note.path.replace(/\.md$/i, "").toLowerCase().trim());
-        validTargets.add(note.path.toLowerCase().trim());
-      }
-
-      const unresolvedMap = new Map<string, { path: string; title: string; excerpt: string }[]>();
-
-      for (const note of notesList) {
-        try {
-          const doc = await vaultApi.readNote(note.path);
-          const regex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-          let match: RegExpExecArray | null;
-          const lines = doc.content.split(/\r?\n/);
-
-          while ((match = regex.exec(doc.content)) !== null) {
-            const currentMatch = match;
-            const targetTitle = currentMatch[1].trim();
-            if (!targetTitle) continue;
-
-            const targetLower = targetTitle.toLowerCase();
-            if (!validTargets.has(targetLower)) {
-              const lineIdx = lines.findIndex(l => l.includes(currentMatch[0]));
-              let excerpt = "";
-              if (lineIdx !== -1) {
-                const start = Math.max(0, lineIdx - 2);
-                const end = Math.min(lines.length, lineIdx + 3);
-                excerpt = lines.slice(start, end).join("\n");
-              } else {
-                excerpt = doc.content.slice(0, 300);
-              }
-
-              const sources = unresolvedMap.get(targetTitle) || [];
-              if (!sources.some(s => s.path === note.path)) {
-                sources.push({
-                  path: note.path,
-                  title: note.title,
-                  excerpt
-                });
-                unresolvedMap.set(targetTitle, sources);
-              }
-            }
-          }
-        } catch (err) {
-          console.error(`Failed to read note ${note.path} for unresolved link scan:`, err);
-        }
-      }
-
-      const list = Array.from(unresolvedMap.entries()).map(([target, sources]) => ({
-        target,
-        sources
-      }));
-
-      list.sort((a, b) => a.target.localeCompare(b.target));
+      const list = await vaultApi.getUnresolvedLinks();
       setUnresolvedLinks(list);
       setStatus(`Scan complete: found ${list.length} unresolved link(s)`);
     } catch (err) {
@@ -2200,8 +2144,8 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                         <button
                           className="primary"
                           type="button"
-                          onClick={() => {
-                            const parsed = parseProposedEdits(distillInputText);
+                          onClick={async () => {
+                            const parsed = await vaultApi.parseProposedEdits(distillInputText);
                             const checkedParsed = parsed.map(p => ({ ...p, checked: true }));
                             setProposedEdits(checkedParsed);
                             setStatus(`Extracted ${checkedParsed.length} proposed edit(s).`);

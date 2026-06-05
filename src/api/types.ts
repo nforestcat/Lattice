@@ -113,6 +113,17 @@ export type ContextBundleCandidate = {
   characterCount: number;
 };
 
+export type UnresolvedLinkSource = {
+  path: string;
+  title: string;
+  excerpt: string;
+};
+
+export type UnresolvedLinkGroup = {
+  target: string;
+  sources: UnresolvedLinkSource[];
+};
+
 export type VaultApi = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;
@@ -146,6 +157,8 @@ export type VaultApi = {
   getArchiveStatus(): Promise<{ fileCount: number; totalBytes: number }>;
   loadEmbeddingsCache(): Promise<string>;
   saveEmbeddingsCache(content: string): Promise<void>;
+  getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]>;
+  parseProposedEdits(rawText: string): Promise<ProposedEdit[]>;
 };
 
 export type PromptRun = {
