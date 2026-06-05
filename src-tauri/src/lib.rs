@@ -667,17 +667,70 @@ fn set_auto_git(enabled: bool, state: tauri::State<AppState>) -> Result<GitSetti
     Ok(GitSettings { auto_git_enabled: enabled })
 }
 
+fn migrate_config(mut config: VaultConfig) -> VaultConfig {
+    if config.version.is_none() || config.version.unwrap() < 1 {
+        config.version = Some(1);
+    }
+    if config.context_limit.is_none() {
+        config.context_limit = Some(8000);
+    }
+    if config.bundle_preset.is_none() {
+        config.bundle_preset = Some("ask".to_string());
+    }
+    if config.bundle_mode.is_none() {
+        config.bundle_mode = Some("standard".to_string());
+    }
+    if config.selected_paths.is_none() {
+        config.selected_paths = Some(HashMap::new());
+    }
+    if config.prompt_instructions.is_none() {
+        config.prompt_instructions = Some(HashMap::new());
+    }
+    if config.prompt_runs.is_none() {
+        config.prompt_runs = Some(Vec::new());
+    }
+    if config.prompt_templates.is_none() {
+        config.prompt_templates = Some(Vec::new());
+    }
+    config
+}
+
 #[tauri::command]
 fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
     let config_path = root.join(".lattice").join("config.json");
-    if config_path.exists() {
+    let config = if config_path.exists() {
         let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-        let val: VaultConfig = serde_json::from_str(&content).unwrap_or_default();
-        Ok(val)
+        serde_json::from_str(&content).unwrap_or_default()
     } else {
-        Ok(VaultConfig::default())
+        VaultConfig::default()
+    };
+    Ok(migrate_config(config))
+}
+
+#[tauri::command]
+fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let runs_dir = root.join(".lattice").join("runs");
+    if !runs_dir.exists() {
+        fs::create_dir_all(&runs_dir).map_err(|e| e.to_string())?;
+    }
+    let run_path = runs_dir.join(format!("{}.md", run_id));
+    fs::write(&run_path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_archived_prompt(run_id: String, state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let run_path = root.join(".lattice").join("runs").join(format!("{}.md", run_id));
+    if run_path.exists() {
+        fs::read_to_string(&run_path).map_err(|e| e.to_string())
+    } else {
+        Err("Archived prompt not found".to_string())
     }
 }
 
@@ -1564,7 +1617,9 @@ pub fn run() {
             get_git_status,
             set_auto_git,
             get_vault_config,
-            save_vault_config
+            save_vault_config,
+            archive_prompt_run,
+            get_archived_prompt
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local Vault Notes");
@@ -1629,6 +1684,32 @@ mod tests {
         ];
 
         assert_eq!(unique_note_path("Projects", "New Note", &existing), "Projects/New Note 3.md");
+    }
+
+    #[test]
+    fn test_config_migration() {
+        let old_json = r#"{}"#;
+        let config: VaultConfig = serde_json::from_str(old_json).unwrap();
+        let migrated = migrate_config(config);
+        assert_eq!(migrated.version, Some(1));
+        assert_eq!(migrated.context_limit, Some(8000));
+        assert_eq!(migrated.bundle_preset, Some("ask".to_string()));
+        assert_eq!(migrated.bundle_mode, Some("standard".to_string()));
+        assert!(migrated.selected_paths.is_some());
+        assert!(migrated.prompt_runs.is_some());
+        assert!(migrated.prompt_templates.is_some());
+
+        let partial_json = r#"{
+            "version": 0,
+            "contextLimit": 32000,
+            "bundlePreset": "refactor"
+        }"#;
+        let config2: VaultConfig = serde_json::from_str(partial_json).unwrap();
+        let migrated2 = migrate_config(config2);
+        assert_eq!(migrated2.version, Some(1));
+        assert_eq!(migrated2.context_limit, Some(32000));
+        assert_eq!(migrated2.bundle_preset, Some("refactor".to_string()));
+        assert_eq!(migrated2.bundle_mode, Some("standard".to_string()));
     }
 
     #[test]

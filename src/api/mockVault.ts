@@ -371,6 +371,12 @@ export function createMockVaultApi(): VaultApi {
     },
     async saveVaultConfig(config: VaultConfig): Promise<void> {
       localStorage.setItem(`lattice:mock_config:${openRoot}`, JSON.stringify(config));
+    },
+    async archivePromptRun(runId: string, content: string): Promise<void> {
+      localStorage.setItem(`lattice:mock_archive:${openRoot}:${runId}`, content);
+    },
+    async getArchivedPrompt(runId: string): Promise<string> {
+      return localStorage.getItem(`lattice:mock_archive:${openRoot}:${runId}`) || "";
     }
   };
 }

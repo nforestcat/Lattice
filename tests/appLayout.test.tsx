@@ -841,4 +841,92 @@ describe("App layout", () => {
     getVaultConfigSpy.mockRestore();
     bundleSpy.mockRestore();
   });
+
+  it("archives prompts and compares them in the history diff view", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: writeTextMock
+      },
+      writable: true,
+      configurable: true
+    });
+
+    const archiveSpy = vi.spyOn(vaultApi, "archivePromptRun").mockResolvedValue();
+    const getArchiveSpy = vi.spyOn(vaultApi, "getArchivedPrompt").mockResolvedValue("Exact archived content here");
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePreset: "ask",
+      promptRuns: [
+        {
+          id: "run-archive-test",
+          question: "Stored run instruction",
+          selectedNotes: ["Home.md"],
+          preset: "ask",
+          purpose: "Summarize this vault.",
+          mode: "standard",
+          tokenCount: 150,
+          createdAt: "2026-06-05T14:00:00.000Z",
+          activePath: "Home.md",
+          promptHash: "abc12345",
+          preview: "Preview of archived run"
+        }
+      ]
+    });
+
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 }
+    ]);
+
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md", "Project.md"],
+      markdown: "Home and Project Bundle Content",
+      estimatedTokens: 90
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Prompt History")).toBeTruthy());
+
+    // 1. Generate bundle to have a current context bundle
+    fireEvent.click(screen.getByRole("button", { name: "Generate bundle" }));
+    await waitFor(() => expect(screen.getByText("Prompt Workspace")).toBeTruthy());
+
+    // Set current question to differ
+    const promptTextarea = screen.getByPlaceholderText("Ask a question or specify the task for the LLM...") as HTMLTextAreaElement;
+    fireEvent.change(promptTextarea, { target: { value: "Current session instruction" } });
+
+    // 2. Expand card
+    const card = document.querySelector(".promptRunCard") as HTMLElement;
+    expect(card).toBeTruthy();
+    fireEvent.click(card);
+
+    // 3. Diff should show up
+    await waitFor(() => {
+      expect(screen.getByText("🔍 Session Comparison")).toBeTruthy();
+      expect(screen.getByText("🟡 Modified")).toBeTruthy();
+      expect(screen.getByText("+Project.md")).toBeTruthy();
+      expect(screen.getByText("- Stored run instruction")).toBeTruthy();
+      expect(screen.getByText("+ Current session instruction")).toBeTruthy();
+    });
+
+    // 4. Copy Full Prompt should use archived content
+    const copyFullBtn = Array.from(card.querySelectorAll("button")).find(btn => btn.textContent === "Copy Full Prompt")!;
+    fireEvent.click(copyFullBtn);
+
+    await waitFor(() => {
+      expect(getArchiveSpy).toHaveBeenCalledWith("run-archive-test");
+      expect(writeTextMock).toHaveBeenCalledWith("Exact archived content here");
+    });
+
+    archiveSpy.mockRestore();
+    getArchiveSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
 });

@@ -11,6 +11,29 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"]
     }
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("@xyflow")) {
+              return "xyflow";
+            }
+            if (id.includes("codemirror") || id.includes("@codemirror") || id.includes("@uiw/react-codemirror")) {
+              return "codemirror";
+            }
+            if (id.includes("highlight.js")) {
+              return "highlightjs";
+            }
+            if (id.includes("marked")) {
+              return "marked";
+            }
+            return "vendor";
+          }
+        }
+      }
+    }
+  },
   test: {
     environment: "jsdom",
     globals: true

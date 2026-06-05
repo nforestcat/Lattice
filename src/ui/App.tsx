@@ -684,8 +684,17 @@ export function App() {
       const promptHash = Math.abs(hVal).toString(16);
       const preview = combined.slice(0, 1500) + (combined.length > 1500 ? "..." : "");
 
+      const newId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11);
+
+      // Archive the exact prompt content
+      try {
+        await vaultApi.archivePromptRun(newId, combined);
+      } catch (archiveErr) {
+        console.error("Failed to archive prompt run", archiveErr);
+      }
+
       const newRun: PromptRun = {
-        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+        id: newId,
         question: promptInstruction.trim(),
         selectedNotes: contextBundle.notePaths,
         preset: bundlePreset,
@@ -766,18 +775,31 @@ export function App() {
 
   async function copyFullPromptFromHistory(run: PromptRun) {
     try {
-      setStatus("Regenerating historical prompt...");
-      const bundle = await vaultApi.getContextBundle(run.activePath, {
-        selectedPaths: run.selectedNotes,
-        purpose: run.purpose ?? "",
-        mode: run.mode,
-        preset: run.preset
-      });
-      const combined = run.question.trim()
-        ? `${run.question.trim()}\n\n---\n\n${bundle.markdown}`
-        : bundle.markdown;
-      await navigator.clipboard.writeText(combined);
-      setStatus(`Copied full prompt for ${run.activePath.split('/').pop() || run.activePath} from history!`);
+      setStatus("Retrieving archived prompt...");
+      let promptContent = "";
+      try {
+        promptContent = await vaultApi.getArchivedPrompt(run.id);
+      } catch (e) {
+        console.warn("Archived prompt not found, falling back to regeneration", e);
+      }
+
+      if (promptContent) {
+        await navigator.clipboard.writeText(promptContent);
+        setStatus(`Copied archived prompt for ${run.activePath.split('/').pop() || run.activePath} from history!`);
+      } else {
+        setStatus("Regenerating historical prompt...");
+        const bundle = await vaultApi.getContextBundle(run.activePath, {
+          selectedPaths: run.selectedNotes,
+          purpose: run.purpose ?? "",
+          mode: run.mode,
+          preset: run.preset
+        });
+        const combined = run.question.trim()
+          ? `${run.question.trim()}\n\n---\n\n${bundle.markdown}`
+          : bundle.markdown;
+        await navigator.clipboard.writeText(combined);
+        setStatus(`Copied regenerated prompt for ${run.activePath.split('/').pop() || run.activePath} from history!`);
+      }
     } catch (err) {
       setStatus(errorMessage(err));
     }
@@ -1593,6 +1615,92 @@ export function App() {
                               <div className="expandedPreviewWrapper">
                                 <strong>Prompt Preview (First 1.5 KB):</strong>
                                 <textarea readOnly value={run.preview} className="expandedPreviewTextarea" />
+                              </div>
+                            )}
+                            {contextBundle ? (() => {
+                              const currentCombined = promptInstruction.trim()
+                                ? `${promptInstruction.trim()}\n\n---\n\n${contextBundle.markdown}`
+                                : contextBundle.markdown;
+                              let curHVal = 0;
+                              for (let i = 0; i < currentCombined.length; i++) {
+                                curHVal = (Math.imul(31, curHVal) + currentCombined.charCodeAt(i)) | 0;
+                              }
+                              const currentHash = Math.abs(curHVal).toString(16);
+                              const hashesMatch = currentHash === run.promptHash;
+                              
+                              const addedNotes = contextBundle.notePaths.filter(p => !new Set(run.selectedNotes).has(p));
+                              const removedNotes = run.selectedNotes.filter(p => !new Set(contextBundle.notePaths).has(p));
+                              
+                              const instructionDiffers = promptInstruction.trim() !== run.question.trim();
+                              
+                              return (
+                                <div className="historyDiffContainer">
+                                  <div className="diffHeader">
+                                    <strong>🔍 Session Comparison</strong>
+                                    {hashesMatch ? (
+                                      <span className="diffStatusBadge match">🟢 Exact Match</span>
+                                    ) : (
+                                      <span className="diffStatusBadge modified">🟡 Modified</span>
+                                    )}
+                                  </div>
+                                  
+                                  {!hashesMatch && (
+                                    <div className="diffDetails">
+                                      <div className="diffRow">
+                                        <span className="diffLabel">Prompt Hash:</span>
+                                        <div className="diffValue">
+                                          <span className="hashStored">{run.promptHash || "none"}</span>
+                                          <span className="hashArrow">➔</span>
+                                          <span className="hashCurrent">{currentHash}</span>
+                                        </div>
+                                      </div>
+
+                                      {instructionDiffers && (
+                                        <div className="diffRow instructionDiff">
+                                          <span className="diffLabel">Instruction Text:</span>
+                                          <div className="diffValueText">
+                                            <div className="diffTextRemoved">- {run.question || "(empty)"}</div>
+                                            <div className="diffTextAdded">+ {promptInstruction || "(empty)"}</div>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {(addedNotes.length > 0 || removedNotes.length > 0) && (
+                                        <div className="diffRow notesDiff">
+                                          <span className="diffLabel">Notes Changes:</span>
+                                          <div className="diffNotesDelta">
+                                            {removedNotes.map(n => (
+                                              <span key={n} className="diffNoteBadge removed">-{n.split('/').pop() || n}</span>
+                                            ))}
+                                            {addedNotes.map(n => (
+                                              <span key={n} className="diffNoteBadge added">+{n.split('/').pop() || n}</span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {run.preview && (
+                                        <div className="diffRow previewDiff">
+                                          <span className="diffLabel">Preview Comparison (Stored vs Current):</span>
+                                          <div className="diffPreviewsSplit">
+                                            <div className="diffPreviewBox stored">
+                                              <div className="boxTitle">Stored Run</div>
+                                              <pre>{run.preview}</pre>
+                                            </div>
+                                            <div className="diffPreviewBox current">
+                                              <div className="boxTitle">Current Session</div>
+                                              <pre>{currentCombined.slice(0, 1500) + (currentCombined.length > 1500 ? "..." : "")}</pre>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })() : (
+                              <div className="historyDiffContainer muted italic">
+                                Generate a bundle in the current workspace to compare with this historical run.
                               </div>
                             )}
                           </div>

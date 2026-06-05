@@ -55,6 +55,8 @@ export function createTauriVaultApi(): VaultApi {
     getGitStatus: () => invoke("get_git_status"),
     setAutoGit: (enabled: boolean) => invoke<GitSettings>("set_auto_git", { enabled }),
     getVaultConfig: () => invoke<VaultConfig>("get_vault_config"),
-    saveVaultConfig: (config: VaultConfig) => invoke<void>("save_vault_config", { config })
+    saveVaultConfig: (config: VaultConfig) => invoke<void>("save_vault_config", { config }),
+    archivePromptRun: (runId: string, content: string) => invoke<void>("archive_prompt_run", { runId, content }),
+    getArchivedPrompt: (runId: string) => invoke<string>("get_archived_prompt", { runId })
   };
 }

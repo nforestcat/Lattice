@@ -139,6 +139,8 @@ export type VaultApi = {
   setAutoGit(enabled: boolean): Promise<GitSettings>;
   getVaultConfig(): Promise<VaultConfig>;
   saveVaultConfig(config: VaultConfig): Promise<void>;
+  archivePromptRun(runId: string, content: string): Promise<void>;
+  getArchivedPrompt(runId: string): Promise<string>;
 };
 
 export type PromptRun = {
