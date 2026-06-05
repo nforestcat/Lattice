@@ -187,6 +187,33 @@ function presetForSettings(purpose: string, mode: "short" | "standard" | "full")
   return matched ? matched[0] as PresetType : "custom";
 }
 
+function buildCombinedPrompt(instruction: string, bundleMarkdown: string): string {
+  return instruction.trim()
+    ? `${instruction.trim()}\n\n---\n\n${bundleMarkdown}`
+    : bundleMarkdown;
+}
+
+async function hashPromptContent(content: string): Promise<string> {
+  if (globalThis.crypto?.subtle) {
+    try {
+      const bytes = new TextEncoder().encode(content);
+      const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(hashBuffer)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    } catch {
+      return simplePromptHash(content);
+    }
+  }
+  return simplePromptHash(content);
+}
+
+function simplePromptHash(content: string): string {
+  let hash = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    hash = (Math.imul(31, hash) + content.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(16);
+}
+
 interface DiffLine {
   type: "added" | "removed" | "normal";
   value: string;
@@ -280,6 +307,7 @@ export function App() {
   const [archiveStatus, setArchiveStatus] = useState<{ fileCount: number; totalBytes: number } | null>(null);
   const [diffRunId, setDiffRunId] = useState<string | null>(null);
   const [diffResult, setDiffResult] = useState<{ lines: DiffLine[]; regenerating: boolean; error?: string } | null>(null);
+  const [currentPromptHash, setCurrentPromptHash] = useState<string | null>(null);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -325,6 +353,25 @@ export function App() {
   useEffect(() => {
     void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!contextBundle) {
+      setCurrentPromptHash(null);
+      return;
+    }
+
+    const combined = buildCombinedPrompt(promptInstruction, contextBundle.markdown);
+    void hashPromptContent(combined).then((hash) => {
+      if (!cancelled) {
+        setCurrentPromptHash(hash);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contextBundle, promptInstruction]);
 
   async function openVault(path: string) {
     const nextVault = await vaultApi.openVault(path);
@@ -736,9 +783,7 @@ export function App() {
     if (!contextBundle) {
       return;
     }
-    const combined = promptInstruction.trim()
-      ? `${promptInstruction.trim()}\n\n---\n\n${contextBundle.markdown}`
-      : contextBundle.markdown;
+    const combined = buildCombinedPrompt(promptInstruction, contextBundle.markdown);
     try {
       await navigator.clipboard.writeText(combined);
       setStatus("Combined prompt copied");
@@ -753,11 +798,7 @@ export function App() {
         void refreshArchiveStatus();
       } catch (archiveErr) {
         console.error("Failed to archive prompt run", archiveErr);
-        let hVal = 0;
-        for (let i = 0; i < combined.length; i++) {
-          hVal = (Math.imul(31, hVal) + combined.charCodeAt(i)) | 0;
-        }
-        promptHash = Math.abs(hVal).toString(16);
+        promptHash = simplePromptHash(combined);
       }
 
       const newRun: PromptRun = {
@@ -874,6 +915,10 @@ export function App() {
 
   async function deletePromptRun(runId: string, e: React.MouseEvent) {
     e.stopPropagation();
+    if (!(await askConfirm("Delete this prompt history entry and its archived prompt?", "Delete Prompt Run"))) {
+      return;
+    }
+
     try {
       await vaultApi.deleteArchivedPrompt(runId);
       const nextRuns = (vaultConfig.promptRuns ?? []).filter((r) => r.id !== runId);
@@ -893,6 +938,10 @@ export function App() {
   }
 
   async function pruneArchivedPrompts() {
+    if (!(await askConfirm("Prune archived prompt files that no longer have history entries?", "Prune Prompt Archives"))) {
+      return;
+    }
+
     try {
       const activeRunIds = (vaultConfig.promptRuns ?? []).map((r) => r.id);
       await vaultApi.pruneArchivedPrompts(activeRunIds);
@@ -922,9 +971,7 @@ export function App() {
         });
         return;
       }
-      const currentCombined = promptInstruction.trim()
-        ? `${promptInstruction.trim()}\n\n---\n\n${contextBundle.markdown}`
-        : contextBundle.markdown;
+      const currentCombined = buildCombinedPrompt(promptInstruction, contextBundle.markdown);
 
       let oldPrompt = "";
       try {
@@ -1783,15 +1830,9 @@ export function App() {
                               </div>
                             )}
                             {contextBundle ? (() => {
-                              const currentCombined = promptInstruction.trim()
-                                ? `${promptInstruction.trim()}\n\n---\n\n${contextBundle.markdown}`
-                                : contextBundle.markdown;
-                              let curHVal = 0;
-                              for (let i = 0; i < currentCombined.length; i++) {
-                                curHVal = (Math.imul(31, curHVal) + currentCombined.charCodeAt(i)) | 0;
-                              }
-                              const currentHash = Math.abs(curHVal).toString(16);
-                              const hashesMatch = currentHash === run.promptHash;
+                              const currentCombined = buildCombinedPrompt(promptInstruction, contextBundle.markdown);
+                              const currentHash = currentPromptHash ?? "calculating";
+                              const hashesMatch = Boolean(currentPromptHash && run.promptHash && currentPromptHash === run.promptHash);
                               
                               const addedNotes = contextBundle.notePaths.filter(p => !new Set(run.selectedNotes).has(p));
                               const removedNotes = run.selectedNotes.filter(p => !new Set(contextBundle.notePaths).has(p));

@@ -931,6 +931,7 @@ describe("App layout", () => {
   });
 
   it("supports delete, prune, and unified line-by-line diffing for archived prompt runs", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const statusSpy = vi.spyOn(vaultApi, "getArchiveStatus").mockResolvedValue({ fileCount: 5, totalBytes: 20480 });
     const deletePromptSpy = vi.spyOn(vaultApi, "deleteArchivedPrompt").mockResolvedValue();
     const pruneSpy = vi.spyOn(vaultApi, "pruneArchivedPrompts").mockResolvedValue();
@@ -1034,5 +1035,50 @@ describe("App layout", () => {
     getVaultConfigSpy.mockRestore();
     candidatesSpy.mockRestore();
     bundleSpy.mockRestore();
+    confirmSpy.mockRestore();
+  });
+
+  it("asks for confirmation before deleting or pruning prompt archives", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const statusSpy = vi.spyOn(vaultApi, "getArchiveStatus").mockResolvedValue({ fileCount: 2, totalBytes: 1024 });
+    const deletePromptSpy = vi.spyOn(vaultApi, "deleteArchivedPrompt").mockResolvedValue();
+    const pruneSpy = vi.spyOn(vaultApi, "pruneArchivedPrompts").mockResolvedValue();
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      promptRuns: [
+        {
+          id: "run-confirm-test",
+          question: "Confirm test",
+          selectedNotes: ["Home.md"],
+          preset: "ask",
+          purpose: "Ask",
+          mode: "standard",
+          tokenCount: 100,
+          createdAt: "2026-06-05T14:00:00.000Z",
+          activePath: "Home.md",
+          promptHash: "hash",
+          preview: "Preview"
+        }
+      ]
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Prompt History")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Prune Orphaned"));
+    expect(confirmSpy).toHaveBeenCalledWith("Prune archived prompt files that no longer have history entries?");
+    expect(pruneSpy).not.toHaveBeenCalled();
+
+    const deleteBtn = document.querySelector(".smallButton.dangerButton") as HTMLButtonElement;
+    expect(deleteBtn).toBeTruthy();
+    fireEvent.click(deleteBtn);
+    expect(confirmSpy).toHaveBeenCalledWith("Delete this prompt history entry and its archived prompt?");
+    expect(deletePromptSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+    statusSpy.mockRestore();
+    deletePromptSpy.mockRestore();
+    pruneSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
   });
 });

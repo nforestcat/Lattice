@@ -12,7 +12,7 @@ Implemented so far:
 
 - Open a local Markdown vault folder
 - Browse notes in a folder tree
-- Create, rename, and delete notes/folders
+- Create, rename, and delete notes/folders with desktop-safe confirmation dialogs
 - Edit Markdown with CodeMirror
 - View rendered Markdown preview beside the editor, including styled inline code and fenced code blocks with language badges and premium syntax highlighting (powered by `highlight.js`)
 - Parse wiki links, backlinks, outgoing links, tags, and frontmatter
@@ -21,7 +21,7 @@ Implemented so far:
 - Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions), with options to sort and filter candidates in the UI by score, title, or connection type
 - Persist custom context bundle selections, presets, purposes, modes, and limits across note visits using a type-safe, versioned vault-local configuration file (`.lattice/config.json`) with an automated config migration layer in both TypeScript and Rust to normalize and upgrade legacy files while preserving valid fields from partially malformed configs
 - Estimate token consumption, track context window budget with model-agnostic size presets (Small 8K, Medium 32K, Large 128K, Huge 200K, or Custom), display the final bundle actual token count with a visual progress bar, and offer automated pruning of recommended candidates (sorted by score) matching the actual generated bundle token limit
-- Draft, preview, copy, and log final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note, prompt copy events recorded in a local-first **Prompt History** timeline featuring text search, active note toggles, preset dropdown filters, collapsible card previews displaying hash/included notes details, and an interactive **History Diff** view comparing stored vs current prompt configurations, with prompt copies retrieved from a dedicated **Full Prompt Archive** folder `.lattice/runs/<run_id>.md` that is excluded from vault note scanning, and built-in/custom **Prompt Templates** with placeholders like `{active_note}`, `{selected_notes}`, `{date}`, and `{vault_name}` resolving dynamically on selection)
+- Draft, preview, copy, and log final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note, prompt copy events recorded in a local-first **Prompt History** timeline featuring text search, active note toggles, preset dropdown filters, collapsible card previews displaying SHA-256 hash/included notes details, and an interactive **History Diff** view comparing stored vs current prompt configurations, with prompt copies retrieved from a dedicated **Full Prompt Archive** folder `.lattice/runs/<run_id>.md` that is excluded from vault note scanning, archive status/delete/prune controls, and built-in/custom **Prompt Templates** with placeholders like `{active_note}`, `{selected_notes}`, `{date}`, and `{vault_name}` resolving dynamically on selection)
 - Audit context bundles via the **Bundle Audit & Diff** view to inspect exactly why each note was included (connection reason), view heuristic quality badges (Useful, Redundant, Too Large, Stale), and trace differences (added/removed notes, token size delta) from the previous generation
 - Fast and optimized production bundling using Vite code-splitting manual chunks, isolating heavy dependencies (React Flow, CodeMirror, highlight.js, marked) to minimize main JS entry bundle size below 62 KB
 - Detect selected Obsidian vault metadata from `.obsidian` settings and import compatible appearance/readability hints such as readable line length, theme, accent color, enabled core plugin names, attachment folder path, enabled CSS snippets list, and custom hotkeys
@@ -98,6 +98,7 @@ Markdown files are the source of truth. Generated indexes, graph data, and conte
 ## Next Ideas
 
 - Add export/import controls for archived prompt runs before direct LLM API integration
+- Add deeper archive retention settings for automatically pruning old prompt runs
 
 ## License
 
