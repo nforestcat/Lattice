@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
-import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
+import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate } from "../api/types";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
@@ -488,7 +488,7 @@ export function App() {
   }
 
   async function deleteGraphLink(sourcePath: string, targetPath: string) {
-    if (!window.confirm(`Remove managed graph link to "${targetPath}"?`)) {
+    if (!(await askConfirm(`Remove managed graph link to "${targetPath}"?`, "Delete Link"))) {
       return;
     }
 
@@ -560,7 +560,7 @@ export function App() {
     const message = kind === "folder"
       ? `Delete empty folder "${path}"? Non-empty folders are refused.`
       : `Delete note "${path}"?`;
-    if (!window.confirm(message)) {
+    if (!(await askConfirm(message, kind === "folder" ? "Delete Folder" : "Delete Note"))) {
       return;
     }
     try {
@@ -1002,7 +1002,7 @@ export function App() {
 
   async function deleteTemplate(id: string, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this custom template?")) {
+    if (!(await askConfirm("Are you sure you want to delete this custom template?", "Delete Template"))) {
       return;
     }
     try {

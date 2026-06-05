@@ -1,4 +1,4 @@
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 
 declare global {
   interface Window {
@@ -22,4 +22,14 @@ export async function pickVaultFolder(): Promise<string | null> {
   });
 
   return typeof selected === "string" ? selected : null;
+}
+
+export async function askConfirm(message: string, title?: string): Promise<boolean> {
+  if (isDesktopRuntime()) {
+    return confirm(message, {
+      title: title || "Confirm Action",
+      kind: "warning"
+    });
+  }
+  return window.confirm(message);
 }
