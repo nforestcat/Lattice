@@ -9,7 +9,6 @@ import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, No
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
-import { estimateTokens } from "../core/contextBundle";
 
 type ViewMode = "split" | "edit" | "preview" | "graph";
 
@@ -431,9 +430,7 @@ export function App() {
 
   const selectedContextTokens = useMemo(() => {
     const selectedNotes = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path));
-    return selectedNotes.reduce((total, candidate) => {
-      return total + Math.ceil(candidate.characterCount * 0.6);
-    }, 0);
+    return selectedNotes.reduce((total, candidate) => total + candidate.tokenEstimate, 0);
   }, [contextCandidates, selectedContextPaths]);
 
   return (
@@ -658,7 +655,7 @@ export function App() {
                   <div className="candidateDetails">
                     <p className="reasonDetail">{candidate.reasonDetail}</p>
                     {candidate.excerpt && <p className="candidateExcerpt">{candidate.excerpt}</p>}
-                    <span className="candidateMeta">{candidate.characterCount} chars · {candidate.path}</span>
+                    <span className="candidateMeta">{candidate.characterCount} chars · ~{candidate.tokenEstimate.toLocaleString()} tokens · {candidate.path}</span>
                   </div>
                 </div>
               );

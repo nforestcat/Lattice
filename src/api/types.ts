@@ -94,6 +94,7 @@ export type ContextBundleCandidate = {
   reasonDetail: string;
   score: number;
   excerpt: string;
+  tokenEstimate: number;
   selected: boolean;
   characterCount: number;
 };

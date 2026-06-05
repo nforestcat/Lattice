@@ -21,6 +21,7 @@ export type ContextBundleCandidate = {
   reasonDetail: string;
   score: number;
   excerpt: string;
+  tokenEstimate: number;
   selected: boolean;
   characterCount: number;
 };
@@ -81,6 +82,7 @@ export function getContextBundleCandidates(index: VaultIndex, focusPath: string)
     reasonDetail,
     score,
     excerpt,
+    tokenEstimate: estimateTokens(note.content),
     selected: reason !== "Recommended",
     characterCount: note.content.length
   }));

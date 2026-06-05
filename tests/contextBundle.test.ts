@@ -190,6 +190,7 @@ describe("createContextBundle", () => {
     expect(focus!.score).toBe(10.0);
     expect(focus!.reasonDetail).toBe("Focus note");
     expect(focus!.excerpt).toContain("Testing candidates.");
+    expect(focus!.tokenEstimate).toBe(estimateTokens("# Project\n\nTesting candidates. [[Research]] #llm"));
 
     // Outgoing candidate
     const outgoing = candidates.find(c => c.path === "Research.md");

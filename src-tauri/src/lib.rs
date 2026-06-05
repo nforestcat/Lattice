@@ -210,6 +210,7 @@ struct ContextBundleCandidate {
     reason_detail: String,
     score: f64,
     excerpt: String,
+    token_estimate: usize,
     selected: bool,
     character_count: usize,
 }
@@ -799,7 +800,6 @@ fn count_title_mentions(content: &str, title: &str) -> usize {
     count
 }
 
-#[cfg(test)]
 fn estimate_tokens(text: &str) -> usize {
     let mut english_chars: f64 = 0.0;
     let mut cjk_chars: f64 = 0.0;
@@ -827,6 +827,7 @@ fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<V
                 reason_detail: info.reason_detail,
                 score: info.score,
                 excerpt: info.excerpt,
+                token_estimate: estimate_tokens(&note.content),
                 selected,
                 character_count: note.content.len(),
             }
