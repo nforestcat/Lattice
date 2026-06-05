@@ -14,6 +14,9 @@ export type ObsidianSettings = {
   theme?: string | null;
   accentColor?: string | null;
   enabledCorePlugins?: string[];
+  attachmentFolderPath?: string | null;
+  cssSnippets?: string[];
+  hotkeys?: Record<string, any> | null;
 };
 
 export type FileTreeNode = {
@@ -149,7 +152,15 @@ export type PromptRun = {
   activePath: string;
 };
 
+export type PromptTemplate = {
+  id: string;
+  name: string;
+  template: string;
+  isSystem?: boolean;
+};
+
 export type VaultConfig = {
+  version?: number;
   contextLimit?: number;
   bundlePreset?: string;
   bundlePurpose?: string;
@@ -157,4 +168,5 @@ export type VaultConfig = {
   selectedPaths?: Record<string, string[]>;
   promptInstructions?: Record<string, string>;
   promptRuns?: PromptRun[];
+  promptTemplates?: PromptTemplate[];
 };

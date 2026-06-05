@@ -79,6 +79,9 @@ struct ObsidianSettings {
     theme: Option<String>,
     accent_color: Option<String>,
     enabled_core_plugins: Vec<String>,
+    attachment_folder_path: Option<String>,
+    css_snippets: Vec<String>,
+    hotkeys: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,9 +268,20 @@ struct PromptRun {
     active_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptTemplate {
+    id: String,
+    name: String,
+    template: String,
+    is_system: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct VaultConfig {
+    #[serde(default)]
+    version: Option<usize>,
     #[serde(default)]
     context_limit: Option<usize>,
     #[serde(default)]
@@ -282,6 +296,8 @@ struct VaultConfig {
     prompt_instructions: Option<HashMap<String, String>>,
     #[serde(default)]
     prompt_runs: Option<Vec<PromptRun>>,
+    #[serde(default)]
+    prompt_templates: Option<Vec<PromptTemplate>>,
 }
 
 #[tauri::command]
@@ -738,6 +754,25 @@ fn read_obsidian_settings(root: &Path) -> Option<ObsidianSettings> {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string),
         enabled_core_plugins: read_core_plugins(core_plugins.as_ref()),
+        attachment_folder_path: app
+            .as_ref()
+            .and_then(|value| value.get("attachmentFolderPath"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        css_snippets: appearance
+            .as_ref()
+            .and_then(|value| value.get("cssSnippets"))
+            .and_then(|val| match val {
+                serde_json::Value::Array(arr) => Some(
+                    arr.iter()
+                       .filter_map(serde_json::Value::as_str)
+                       .map(str::to_string)
+                       .collect()
+                ),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        hotkeys: read_json_file(&obsidian_dir.join("hotkeys.json")),
     })
 }
 
@@ -1824,9 +1859,10 @@ mod tests {
         let root = temp_test_dir("obsidian-settings");
         let obsidian = root.join(".obsidian");
         fs::create_dir_all(&obsidian).unwrap();
-        fs::write(obsidian.join("app.json"), r#"{"readableLineLength":true}"#).unwrap();
-        fs::write(obsidian.join("appearance.json"), r##"{"theme":"obsidian","accentColor":"#7c3aed"}"##).unwrap();
+        fs::write(obsidian.join("app.json"), r#"{"readableLineLength":true,"attachmentFolderPath":"assets"}"#).unwrap();
+        fs::write(obsidian.join("appearance.json"), r##"{"theme":"obsidian","accentColor":"#7c3aed","cssSnippets":["custom-font","dark-mode"]}"##).unwrap();
         fs::write(obsidian.join("core-plugins.json"), r#"{"backlink":true,"graph":true,"canvas":false}"#).unwrap();
+        fs::write(obsidian.join("hotkeys.json"), r#"{"editor:toggle-source":[{"modifiers":["Mod","Shift"],"key":"I"}]}"#).unwrap();
 
         let settings = read_obsidian_settings(&root).unwrap();
 
@@ -1835,6 +1871,9 @@ mod tests {
         assert_eq!(settings.theme.as_deref(), Some("obsidian"));
         assert_eq!(settings.accent_color.as_deref(), Some("#7c3aed"));
         assert_eq!(settings.enabled_core_plugins, vec!["backlink".to_string(), "graph".to_string()]);
+        assert_eq!(settings.attachment_folder_path.as_deref(), Some("assets"));
+        assert_eq!(settings.css_snippets, vec!["custom-font".to_string(), "dark-mode".to_string()]);
+        assert!(settings.hotkeys.is_some());
 
         let _ = fs::remove_dir_all(root);
     }

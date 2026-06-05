@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate } from "../api/types";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { renderMarkdownPreview } from "./markdownPreview";
@@ -47,6 +47,39 @@ export const PRESETS: Record<PresetType, { label: string; purpose: string; mode:
   }
 };
 
+export const BUILTIN_TEMPLATES: PromptTemplate[] = [
+  {
+    id: "summarize",
+    name: "Summarize",
+    template: "Provide a clear and concise summary of the key concepts, main ideas, and critical details from the provided context. Structure the response with bullet points for readability.",
+    isSystem: true
+  },
+  {
+    id: "code-review",
+    name: "Code Review",
+    template: "Perform a detailed code review of the source code in the context. Analyze code quality, potential bugs, performance bottlenecks, and adherence to clean coding best practices. Propose concrete improvements.",
+    isSystem: true
+  },
+  {
+    id: "critique",
+    name: "Design Critique",
+    template: "Critically analyze the design, architecture, or approach described in the context. Point out structural weaknesses, hidden assumptions, scalability concerns, and trade-offs. Recommend alternative solutions.",
+    isSystem: true
+  },
+  {
+    id: "todo",
+    name: "Extract TODOs",
+    template: "Scan the provided context and extract all explicit and implicit action items, TODOs, bugs to fix, or future extension ideas. Organize them by priority or component.",
+    isSystem: true
+  },
+  {
+    id: "document",
+    name: "Documentation",
+    template: "Generate comprehensive documentation for the concepts, components, or APIs present in the context. Use clear markdown headers, code block examples, and explanations of inputs and outputs.",
+    isSystem: true
+  }
+];
+
 function normalizePreset(value: unknown): PresetType {
   return typeof value === "string" && value in PRESETS ? value as PresetType : "ask";
 }
@@ -77,6 +110,7 @@ export function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
+  const [prevContextBundle, setPrevContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
   const [bundlePreset, setBundlePreset] = useState<PresetType>("ask");
@@ -94,6 +128,7 @@ export function App() {
   const [vaultConfig, setVaultConfig] = useState<VaultConfig>({});
   const vaultConfigRef = useRef<VaultConfig>({});
   const [promptInstruction, setPromptInstruction] = useState("");
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -398,6 +433,7 @@ export function App() {
         mode,
         preset: overridePreset ?? bundlePreset
       });
+      setPrevContextBundle(contextBundle);
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
     } catch (error) {
@@ -595,6 +631,7 @@ export function App() {
         mode: run.mode,
         preset: run.preset
       });
+      setPrevContextBundle(contextBundle);
       setContextBundle(bundle);
       setStatus(`Loaded history prompt from ${new Date(run.createdAt).toLocaleString()}`);
     } catch (e) {
@@ -612,6 +649,46 @@ export function App() {
       setStatus("Question copied to clipboard");
     } catch (error) {
       setStatus(errorMessage(error));
+    }
+  }
+
+  async function saveAsTemplate() {
+    if (!promptInstruction.trim()) {
+      setStatus("No instruction text to save as template");
+      return;
+    }
+    const name = window.prompt("Enter a name for this prompt template:");
+    if (!name || !name.trim()) {
+      return;
+    }
+    try {
+      const newTemplate: PromptTemplate = {
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+        name: name.trim(),
+        template: promptInstruction.trim(),
+        isSystem: false
+      };
+      const currentTemplates = vaultConfigRef.current.promptTemplates ?? [];
+      const nextTemplates = [...currentTemplates, newTemplate];
+      await updateVaultConfig({ promptTemplates: nextTemplates });
+      setStatus(`Saved prompt template "${name.trim()}"`);
+    } catch (err) {
+      setStatus(errorMessage(err));
+    }
+  }
+
+  async function deleteTemplate(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this custom template?")) {
+      return;
+    }
+    try {
+      const currentTemplates = vaultConfigRef.current.promptTemplates ?? [];
+      const nextTemplates = currentTemplates.filter(t => t.id !== id);
+      await updateVaultConfig({ promptTemplates: nextTemplates });
+      setStatus("Deleted custom template");
+    } catch (err) {
+      setStatus(errorMessage(err));
     }
   }
 
@@ -1069,10 +1146,135 @@ export function App() {
                   </div>
                 </div>
               )}
+              <details className="bundleAuditDetails">
+                <summary>🔍 Context Bundle Audit & Diff</summary>
+                <div className="bundleAuditContent">
+                  {prevContextBundle && (
+                    <div className="bundleDiffSection">
+                      <h4>Changes from Previous Bundle</h4>
+                      <div className="bundleDiffMetrics">
+                        <span className={`tokenDeltaBadge ${contextBundle.estimatedTokens - prevContextBundle.estimatedTokens > 0 ? "positive" : contextBundle.estimatedTokens - prevContextBundle.estimatedTokens < 0 ? "negative" : "zero"}`}>
+                          {contextBundle.estimatedTokens - prevContextBundle.estimatedTokens > 0 ? `+${(contextBundle.estimatedTokens - prevContextBundle.estimatedTokens).toLocaleString()}` : (contextBundle.estimatedTokens - prevContextBundle.estimatedTokens).toLocaleString()} tokens
+                        </span>
+                        {contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).length === 0 &&
+                         prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).length === 0 && (
+                          <span className="muted italic" style={{ marginLeft: "8px" }}>No note list changes</span>
+                        )}
+                      </div>
+                      
+                      {contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).length > 0 && (
+                        <div className="diffGroup">
+                          <span className="diffLabel added">Added ({contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).length}):</span>
+                          <div className="diffNotesList">
+                            {contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).map(p => (
+                              <span key={p} className="diffNoteName added">+{p.split('/').pop() || p}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).length > 0 && (
+                        <div className="diffGroup">
+                          <span className="diffLabel removed">Removed ({prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).length}):</span>
+                          <div className="diffNotesList">
+                            {prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).map(p => (
+                              <span key={p} className="diffNoteName removed">-{p.split('/').pop() || p}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="bundleBreakdownSection">
+                    <h4>Included Notes Breakdown</h4>
+                    <div className="auditBreakdownList">
+                      {contextBundle.notePaths.map(path => {
+                        const isFocus = path === activePath;
+                        const cand = contextCandidates.find(c => c.path === path);
+                        const title = cand?.title || path.split('/').pop() || path;
+                        const reason = isFocus ? "Focus" : (cand?.reason || "Linked");
+                        const reasonDetail = isFocus ? "This is the active note of your workspace." : (cand?.reasonDetail || "Referenced note");
+                        
+                        return (
+                          <div key={path} className="auditNoteRow">
+                            <div className="auditNoteHeader">
+                              <span className="auditNoteTitle" title={path}>{title}</span>
+                              <span className={`reason-badge reason-${reason.toLowerCase()}`}>{reason}</span>
+                            </div>
+                            <div className="auditNoteDetail">{reasonDetail}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </details>
+
               <div className="promptWorkspace">
                 <h3>Prompt Workspace</h3>
                 <div className="optionGroup" style={{ marginTop: "4px" }}>
-                  <label htmlFor="prompt-instruction">Question / Instructions</label>
+                  <div className="promptWorkspaceHeader">
+                    <label htmlFor="prompt-instruction">Question / Instructions</label>
+                    <div className="templateSelectorContainer">
+                      <button 
+                        className="smallButton" 
+                        onClick={() => setShowTemplates(!showTemplates)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+                      >
+                        Templates ▾
+                      </button>
+                      <button 
+                        className="smallButton" 
+                        onClick={() => void saveAsTemplate()} 
+                        disabled={!promptInstruction.trim()}
+                        title="Save current instructions as template"
+                      >
+                        Save as Template
+                      </button>
+
+                      {showTemplates && (
+                        <div className="templatesDropdownMenu">
+                          <div className="templatesDropdownHeader">System Templates</div>
+                          {BUILTIN_TEMPLATES.map((tmpl) => (
+                            <div 
+                              key={tmpl.id} 
+                              className="templatesDropdownItem"
+                              onClick={() => {
+                                handlePromptInstructionChange(tmpl.template);
+                                setShowTemplates(false);
+                              }}
+                            >
+                              <span>{tmpl.name}</span>
+                            </div>
+                          ))}
+                          {vaultConfig.promptTemplates && vaultConfig.promptTemplates.length > 0 && (
+                            <>
+                              <div className="templatesDropdownHeader">Custom Templates</div>
+                              {vaultConfig.promptTemplates.map((tmpl) => (
+                                <div 
+                                  key={tmpl.id} 
+                                  className="templatesDropdownItem customTemplateItem"
+                                  onClick={() => {
+                                    handlePromptInstructionChange(tmpl.template);
+                                    setShowTemplates(false);
+                                  }}
+                                >
+                                  <span>{tmpl.name}</span>
+                                  <button 
+                                    className="deleteTemplateBtn"
+                                    onClick={(e) => void deleteTemplate(tmpl.id, e)}
+                                    title="Delete custom template"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <textarea
                     id="prompt-instruction"
                     placeholder="Ask a question or specify the task for the LLM..."
@@ -1147,6 +1349,15 @@ export function App() {
             <p className="property">Readable line length: {vault.obsidianSettings.readableLineLength ? "On" : "Off"}</p>
             {vault.obsidianSettings.theme && <p className="property">Theme: {vault.obsidianSettings.theme}</p>}
             {vault.obsidianSettings.accentColor && <p className="property">Accent: {vault.obsidianSettings.accentColor}</p>}
+            {vault.obsidianSettings.attachmentFolderPath && (
+              <p className="property">Attachments: <code>{vault.obsidianSettings.attachmentFolderPath}</code></p>
+            )}
+            {!!vault.obsidianSettings.cssSnippets?.length && (
+              <p className="property">Snippets: {vault.obsidianSettings.cssSnippets.join(", ")}</p>
+            )}
+            {vault.obsidianSettings.hotkeys && (
+              <p className="property">Hotkeys: {Object.keys(vault.obsidianSettings.hotkeys).length} custom hotkeys</p>
+            )}
             {!!vault.obsidianSettings.enabledCorePlugins?.length && (
               <p className="muted">{vault.obsidianSettings.enabledCorePlugins.length} core plugins detected</p>
             )}

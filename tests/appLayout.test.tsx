@@ -492,4 +492,78 @@ describe("App layout", () => {
     candidatesSpy.mockRestore();
     bundleSpy.mockRestore();
   });
+
+  it("manages prompt templates and shows bundle audit breakdown and changes diff", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePreset: "ask",
+      promptTemplates: [
+        { id: "custom-1", name: "Custom Tmpl", template: "My custom instructions", isSystem: false }
+      ]
+    });
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },
+      { path: "Project.md", title: "Project", reason: "Recommended", reasonDetail: "Mentions focus", score: 8, excerpt: "Project details", tokenEstimate: 40, selected: true, characterCount: 80 }
+    ]);
+    
+    let callCount = 0;
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          title: "Context Bundle: Home",
+          focusPath: "Home.md",
+          notePaths: ["Home.md"],
+          markdown: "Bundle Content 1",
+          estimatedTokens: 50
+        };
+      } else {
+        return {
+          title: "Context Bundle: Home",
+          focusPath: "Home.md",
+          notePaths: ["Home.md", "Project.md"],
+          markdown: "Bundle Content 2",
+          estimatedTokens: 90
+        };
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    
+    const generateBtn = screen.getByRole("button", { name: "Generate bundle" });
+    fireEvent.click(generateBtn);
+
+    await waitFor(() => expect(screen.getByText("Prompt Workspace")).toBeTruthy());
+
+    expect(screen.getByText("Templates ▾")).toBeTruthy();
+    
+    fireEvent.click(screen.getByText("Templates ▾"));
+    expect(screen.getByText("System Templates")).toBeTruthy();
+    expect(screen.getByText("Custom Templates")).toBeTruthy();
+    expect(screen.getByText("Custom Tmpl")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Custom Tmpl"));
+    const promptTextarea = screen.getByPlaceholderText("Ask a question or specify the task for the LLM...") as HTMLTextAreaElement;
+    expect(promptTextarea.value).toBe("My custom instructions");
+
+    expect(screen.getByText("🔍 Context Bundle Audit & Diff")).toBeTruthy();
+    fireEvent.click(screen.getByText("🔍 Context Bundle Audit & Diff"));
+    
+    expect(screen.getAllByText("Focus").length).toBeGreaterThan(0);
+    expect(screen.getByText("This is the active note of your workspace.")).toBeTruthy();
+
+    fireEvent.click(generateBtn);
+
+    await waitFor(() => expect(screen.getByText("+40 tokens")).toBeTruthy());
+    expect(screen.getByText("+Project.md")).toBeTruthy();
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
 });
