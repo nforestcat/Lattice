@@ -68,6 +68,17 @@ struct VaultSnapshot {
     root_path: String,
     notes: Vec<NoteMeta>,
     tree: Vec<FileTreeNode>,
+    obsidian_settings: Option<ObsidianSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ObsidianSettings {
+    detected: bool,
+    readable_line_length: Option<bool>,
+    theme: Option<String>,
+    accent_color: Option<String>,
+    enabled_core_plugins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,6 +282,7 @@ fn open_vault(path: String, state: tauri::State<AppState>) -> Result<VaultSnapsh
         root_path: root.to_string_lossy().to_string(),
         notes: metas,
         tree,
+        obsidian_settings: read_obsidian_settings(&root),
     })
 }
 
@@ -680,6 +692,61 @@ fn vault_snapshot(root: &Path, notes: &[ParsedNote]) -> VaultSnapshot {
         root_path: root.to_string_lossy().to_string(),
         notes: notes.iter().map(|note| note.meta.clone()).collect(),
         tree: build_tree(notes),
+        obsidian_settings: read_obsidian_settings(root),
+    }
+}
+
+fn read_obsidian_settings(root: &Path) -> Option<ObsidianSettings> {
+    let obsidian_dir = root.join(".obsidian");
+    if !obsidian_dir.is_dir() {
+        return None;
+    }
+
+    let app = read_json_file(&obsidian_dir.join("app.json"));
+    let appearance = read_json_file(&obsidian_dir.join("appearance.json"));
+    let core_plugins = read_json_file(&obsidian_dir.join("core-plugins.json"));
+
+    Some(ObsidianSettings {
+        detected: true,
+        readable_line_length: app
+            .as_ref()
+            .and_then(|value| value.get("readableLineLength"))
+            .and_then(serde_json::Value::as_bool),
+        theme: appearance
+            .as_ref()
+            .and_then(|value| value.get("theme"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        accent_color: appearance
+            .as_ref()
+            .and_then(|value| value.get("accentColor"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        enabled_core_plugins: read_core_plugins(core_plugins.as_ref()),
+    })
+}
+
+fn read_json_file(path: &Path) -> Option<serde_json::Value> {
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn read_core_plugins(value: Option<&serde_json::Value>) -> Vec<String> {
+    match value {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        Some(serde_json::Value::Object(map)) => {
+            let mut plugins = map
+            .iter()
+            .filter_map(|(key, enabled)| enabled.as_bool().unwrap_or(false).then(|| key.clone()))
+            .collect::<Vec<_>>();
+            plugins.sort();
+            plugins
+        },
+        _ => Vec::new(),
     }
 }
 
@@ -1453,6 +1520,12 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lattice-{}-{}", name, Utc::now().timestamp_nanos_opt().unwrap_or_default()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     fn parsed(path: &str, title: &str) -> ParsedNote {
         ParsedNote {
             meta: NoteMeta {
@@ -1729,5 +1802,25 @@ mod tests {
         assert_eq!(estimate_tokens("Hello World"), 3); // 11 English chars / 4 = 2.75 -> ceil -> 3
         assert_eq!(estimate_tokens("한글"), 3); // 2 CJK chars * 1.2 = 2.4 -> ceil -> 3
         assert_eq!(estimate_tokens("Hello 한글"), 4); // 6 English / 4 = 1.5, 2 CJK * 1.2 = 2.4. Sum = 3.9 -> ceil -> 4
+    }
+
+    #[test]
+    fn reads_obsidian_settings_from_vault_metadata() {
+        let root = temp_test_dir("obsidian-settings");
+        let obsidian = root.join(".obsidian");
+        fs::create_dir_all(&obsidian).unwrap();
+        fs::write(obsidian.join("app.json"), r#"{"readableLineLength":true}"#).unwrap();
+        fs::write(obsidian.join("appearance.json"), r##"{"theme":"obsidian","accentColor":"#7c3aed"}"##).unwrap();
+        fs::write(obsidian.join("core-plugins.json"), r#"{"backlink":true,"graph":true,"canvas":false}"#).unwrap();
+
+        let settings = read_obsidian_settings(&root).unwrap();
+
+        assert!(settings.detected);
+        assert_eq!(settings.readable_line_length, Some(true));
+        assert_eq!(settings.theme.as_deref(), Some("obsidian"));
+        assert_eq!(settings.accent_color.as_deref(), Some("#7c3aed"));
+        assert_eq!(settings.enabled_core_plugins, vec!["backlink".to_string(), "graph".to_string()]);
+
+        let _ = fs::remove_dir_all(root);
     }
 }

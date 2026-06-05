@@ -14,6 +14,39 @@ describe("App layout", () => {
     expect(document.querySelector(".previewSurface")?.textContent).toContain("Welcome to the local vault.");
   });
 
+  it("uses model-agnostic context limit labels", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    expect(screen.getByRole("option", { name: "Small - 8K" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Medium - 32K" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Large - 128K" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Huge - 200K" })).toBeTruthy();
+    expect(screen.queryByText(/GPT|Claude|Ollama/)).toBeNull();
+  });
+
+  it("shows imported Obsidian settings when the opened vault has them", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [],
+      tree: [],
+      obsidianSettings: {
+        detected: true,
+        readableLineLength: true,
+        theme: "obsidian",
+        accentColor: "#7c3aed",
+        enabledCorePlugins: ["backlink", "graph"]
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Imported Obsidian settings")).toBeTruthy());
+
+    openVaultSpy.mockRestore();
+  });
+
   it("handles token limit config overflows and auto-prunes lowest score recommended notes", async () => {
     // Stub getContextBundleCandidates to return controlled focus and recommended notes
     const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([

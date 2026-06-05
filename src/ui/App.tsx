@@ -1,13 +1,13 @@
 import { markdown } from "@codemirror/lang-markdown";
 import CodeMirror from "@uiw/react-codemirror";
 import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "@xyflow/react";
-import { marked } from "marked";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig } from "../api/types";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
+import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
 type ViewMode = "split" | "edit" | "preview" | "graph";
@@ -141,6 +141,7 @@ export function App() {
     setContextCandidates([]);
     setSelectedContextPaths(new Set());
     setInboxCaptures([]);
+    setStatus(`Opened ${nextVault.rootPath}`);
 
     let loadedConfig: VaultConfig = {};
     try {
@@ -150,7 +151,7 @@ export function App() {
 
       const limit = loadedConfig.contextLimit ?? 8000;
       setContextLimit(limit);
-      setIsCustomLimit(limit !== 8000 && limit !== 32000 && limit !== 128000);
+      setIsCustomLimit(limit !== 8000 && limit !== 32000 && limit !== 128000 && limit !== 200000);
 
       const preset = normalizePreset(loadedConfig.bundlePreset);
       setBundlePreset(preset);
@@ -164,7 +165,9 @@ export function App() {
       console.error("Failed to load vault config", e);
     }
 
-    setStatus(`Opened ${nextVault.rootPath}`);
+    if (nextVault.obsidianSettings?.detected) {
+      setStatus("Imported Obsidian settings");
+    }
     if (nextVault.notes[0]) {
       await selectNote(nextVault.notes[0].path, loadedConfig);
     }
@@ -625,7 +628,7 @@ export function App() {
     }
   }
 
-  const html = useMemo(() => ({ __html: marked.parse(draft) as string }), [draft]);
+  const html = useMemo(() => ({ __html: renderMarkdownPreview(draft) }), [draft]);
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
   const selectedContextCount = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).length;
   const selectedContextCharacters = contextCandidates
@@ -754,7 +757,10 @@ export function App() {
             </section>
           )}
           {(viewMode === "split" || viewMode === "preview") && (
-            <article className="preview previewSurface" dangerouslySetInnerHTML={html} />
+            <article
+              className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""}`}
+              dangerouslySetInnerHTML={html}
+            />
           )}
           {viewMode === "graph" && graph && (
             <section className="graphSurface">
@@ -827,9 +833,10 @@ export function App() {
                     }
                   }}
                 >
-                  <option value={8000}>8K (GPT-3.5/Ollama)</option>
-                  <option value={32000}>32K (Claude 3 Haiku)</option>
-                  <option value={128000}>128K (GPT-4o/Claude 3.5)</option>
+                  <option value={8000}>Small - 8K</option>
+                  <option value={32000}>Medium - 32K</option>
+                  <option value={128000}>Large - 128K</option>
+                  <option value={200000}>Huge - 200K</option>
                   <option value="custom">Custom...</option>
                 </select>
 
@@ -1026,6 +1033,17 @@ export function App() {
           <p className="muted">{context ? `Related to [[${context.note.title}]]` : "No related note selected"}</p>
           <button onClick={() => void captureToInbox()} disabled={!vault || !captureDraft.trim()}>Capture to Inbox</button>
         </section>
+        {vault?.obsidianSettings?.detected && (
+          <section>
+            <h2>Obsidian</h2>
+            <p className="property">Readable line length: {vault.obsidianSettings.readableLineLength ? "On" : "Off"}</p>
+            {vault.obsidianSettings.theme && <p className="property">Theme: {vault.obsidianSettings.theme}</p>}
+            {vault.obsidianSettings.accentColor && <p className="property">Accent: {vault.obsidianSettings.accentColor}</p>}
+            {!!vault.obsidianSettings.enabledCorePlugins?.length && (
+              <p className="muted">{vault.obsidianSettings.enabledCorePlugins.length} core plugins detected</p>
+            )}
+          </section>
+        )}
         {activePath && isInboxPath(activePath) && (
           <section>
             <h2>Inbox Triage</h2>

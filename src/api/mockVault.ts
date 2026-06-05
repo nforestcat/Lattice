@@ -122,7 +122,8 @@ export function createMockVaultApi(): VaultApi {
       return {
         rootPath: openRoot,
         notes: index.notes,
-        tree: buildFileTree(files)
+        tree: buildFileTree(files),
+        obsidianSettings: null
       };
     },
     async readNote(path: string): Promise<NoteDocument> {

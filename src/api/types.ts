@@ -5,6 +5,15 @@ export type VaultSnapshot = {
   rootPath: string;
   notes: NoteMeta[];
   tree: FileTreeNode[];
+  obsidianSettings?: ObsidianSettings | null;
+};
+
+export type ObsidianSettings = {
+  detected: boolean;
+  readableLineLength?: boolean | null;
+  theme?: string | null;
+  accentColor?: string | null;
+  enabledCorePlugins?: string[];
 };
 
 export type FileTreeNode = {
