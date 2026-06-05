@@ -346,6 +346,9 @@ export function App() {
   const [draftingTarget, setDraftingTarget] = useState<string | null>(null);
   const [draftedContent, setDraftedContent] = useState<string | null>(null);
   const [isDraftingStub, setIsDraftingStub] = useState(false);
+  const [selectedUnresolvedTargets, setSelectedUnresolvedTargets] = useState<Set<string>>(new Set());
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, { content: string; status: "drafting" | "done" | "error" }>>({});
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -1554,9 +1557,16 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       return;
     }
 
-    setDraftingTarget(targetTitle);
-    setDraftedContent(null);
-    setIsDraftingStub(true);
+    setBulkDrafts(prev => ({
+      ...prev,
+      [targetTitle]: { content: "", status: "drafting" }
+    }));
+    setSelectedUnresolvedTargets(prev => {
+      const next = new Set(prev);
+      next.add(targetTitle);
+      return next;
+    });
+
     try {
       const sourceInfo = sources.map(s => `Note: "${s.title}"\nContext Excerpt:\n${s.excerpt}`).join("\n\n");
       const systemPrompt = "You are an expert wiki editor. Please write a short, concise, and high-quality stub note (in Markdown) defining the term. Do not include a heading for the title, just write the body text with appropriate formatting.";
@@ -1568,13 +1578,18 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       ];
 
       const response = await sendChatMessage(config, payload);
-      setDraftedContent(response);
+      setBulkDrafts(prev => ({
+        ...prev,
+        [targetTitle]: { content: response, status: "done" }
+      }));
       setStatus(`Drafted AI stub for "${targetTitle}"`);
     } catch (err) {
       console.error(err);
+      setBulkDrafts(prev => ({
+        ...prev,
+        [targetTitle]: { content: "", status: "error" }
+      }));
       setStatus("Failed to draft AI stub");
-    } finally {
-      setIsDraftingStub(false);
     }
   }
 
@@ -1598,6 +1613,98 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     } catch (err) {
       console.error(err);
       setStatus(`Failed to create stub note: ${errorMessage(err)}`);
+    }
+  }
+
+  async function runBulkDrafting() {
+    const targets = Array.from(selectedUnresolvedTargets);
+    if (targets.length === 0) return;
+
+    setIsBulkProcessing(true);
+    setStatus(`Bulk drafting ${targets.length} stub(s)...`);
+
+    const nextDrafts = { ...bulkDrafts };
+    for (const t of targets) {
+      nextDrafts[t] = { content: "", status: "drafting" };
+    }
+    setBulkDrafts(nextDrafts);
+
+    const config = vaultConfigRef.current.llmConfig || llmConfig;
+
+    for (const target of targets) {
+      const item = unresolvedLinks.find(x => x.target === target);
+      if (!item) continue;
+
+      try {
+        const sourceInfo = item.sources.map(s => `Note: "${s.title}"\nContext Excerpt:\n${s.excerpt}`).join("\n\n");
+        const systemPrompt = "You are an expert wiki editor. Please write a short, concise, and high-quality stub note (in Markdown) defining the term. Do not include a heading for the title, just write the body text with appropriate formatting.";
+        const userPrompt = `We have an unresolved wiki link to the note "${target}". It is referenced in the following contexts:\n\n${sourceInfo}\n\nPlease write a concise defining stub note (in Markdown) for "${target}" based on this context.`;
+        
+        const payload: ChatMessage[] = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ];
+
+        const response = await sendChatMessage(config, payload);
+        setBulkDrafts(prev => ({
+          ...prev,
+          [target]: { content: response, status: "done" }
+        }));
+      } catch (err) {
+        console.error(err);
+        setBulkDrafts(prev => ({
+          ...prev,
+          [target]: { content: "", status: "error" }
+        }));
+      }
+    }
+
+    setIsBulkProcessing(false);
+    setStatus("Finished bulk drafting stubs");
+  }
+
+  async function createSelectedStubs() {
+    const targets = Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done");
+    if (targets.length === 0) return;
+
+    setStatus(`Creating ${targets.length} note(s)...`);
+    let successCount = 0;
+    try {
+      for (const target of targets) {
+        const draft = bulkDrafts[target];
+        if (!draft || draft.status !== "done") continue;
+
+        try {
+          const result = await vaultApi.createNote(null, target);
+          const newPath = result.selectedPath;
+          if (newPath) {
+            await vaultApi.saveNote(newPath, draft.content, "");
+            successCount++;
+          }
+        } catch (err) {
+          console.error(`Failed to create stub for ${target}:`, err);
+        }
+      }
+
+      setStatus(`Successfully created ${successCount} stub note(s).`);
+      setSelectedUnresolvedTargets(new Set());
+      setBulkDrafts({});
+      
+      if (vault) {
+        await refreshVault(activePath);
+      }
+      void runUnresolvedLinksScan();
+    } catch (err) {
+      console.error(err);
+      setStatus("Failed to create selected stub notes");
+    }
+  }
+
+  function handleSelectAllToggle() {
+    if (selectedUnresolvedTargets.size === unresolvedLinks.length) {
+      setSelectedUnresolvedTargets(new Set());
+    } else {
+      setSelectedUnresolvedTargets(new Set(unresolvedLinks.map(item => item.target)));
     }
   }
 
@@ -2386,41 +2493,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                         </div>
                       )}
 
-                      {!isScanningUnresolved && draftingTarget && (
-                        <div className="stubDraftingBox">
-                          <h4>AI Stub Note Draft: <strong>{draftingTarget}</strong></h4>
-                          {isDraftingStub && (
-                            <div className="draftingLoading">
-                              <span className="spinner">⌛</span> Drafting stub note entry using LLM...
-                            </div>
-                          )}
-                          {!isDraftingStub && draftedContent !== null && (
-                            <>
-                              <pre className="stubPreview">{draftedContent}</pre>
-                              <div className="stubDraftActions">
-                                <button
-                                  type="button"
-                                  className="primary"
-                                  onClick={() => void createStubNote(draftingTarget, draftedContent)}
-                                >
-                                  Create Note
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDraftingTarget(null);
-                                    setDraftedContent(null);
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )}
-
-                      {!isScanningUnresolved && !draftingTarget && (
+                      {!isScanningUnresolved && (
                         <div className="unresolvedLinksList">
                           {unresolvedLinks.length === 0 ? (
                             <div className="auditorSuccessState">
@@ -2430,31 +2503,127 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                           ) : (
                             <>
                               <p className="hint" style={{ marginBottom: "12px" }}>
-                                The following wiki links exist in note contents but do not resolve to any existing note file. Click "Draft Stub" to generate a context-aware entry with AI.
+                                The following wiki links exist in note contents but do not resolve to any existing note file. Select links to draft and resolve stubs in bulk.
                               </p>
-                              {unresolvedLinks.map((item) => (
-                                <div key={item.target} className="unresolvedLinkCard">
-                                  <div className="unresolvedLinkHeader">
-                                    <strong>[[{item.target}]]</strong>
+
+                              <div className="bulkActionsBar">
+                                <label className="checkboxLabel">
+                                  <input
+                                    type="checkbox"
+                                    checked={unresolvedLinks.length > 0 && selectedUnresolvedTargets.size === unresolvedLinks.length}
+                                    onChange={handleSelectAllToggle}
+                                    disabled={isBulkProcessing}
+                                  />
+                                  <span>Select All ({selectedUnresolvedTargets.size} / {unresolvedLinks.length})</span>
+                                </label>
+                                <div className="bulkActionButtons">
+                                  <button
+                                    type="button"
+                                    className="smallButton primary"
+                                    disabled={selectedUnresolvedTargets.size === 0 || isBulkProcessing}
+                                    onClick={() => void runBulkDrafting()}
+                                  >
+                                    {isBulkProcessing ? "Drafting..." : `Draft Selected (${selectedUnresolvedTargets.size})`}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="smallButton successButton"
+                                    disabled={
+                                      selectedUnresolvedTargets.size === 0 ||
+                                      isBulkProcessing ||
+                                      Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done").length === 0
+                                    }
+                                    onClick={() => void createSelectedStubs()}
+                                  >
+                                    Create Selected
+                                  </button>
+                                  {Object.keys(bulkDrafts).length > 0 && (
                                     <button
                                       type="button"
-                                      className="smallButton primary"
-                                      onClick={() => void draftStubNote(item.target, item.sources)}
+                                      className="smallButton"
+                                      disabled={isBulkProcessing}
+                                      onClick={() => {
+                                        setBulkDrafts({});
+                                        setSelectedUnresolvedTargets(new Set());
+                                      }}
                                     >
-                                      Draft Stub
+                                      Clear Drafts
                                     </button>
-                                  </div>
-                                  <div className="unresolvedLinkSources">
-                                    <span>Referenced in:</span>
-                                    {item.sources.map((source) => (
-                                      <div key={source.path} className="sourceExcerptCard">
-                                        <div className="sourceTitle">{source.title} (<code>{source.path}</code>)</div>
-                                        <pre className="sourceExcerpt">{source.excerpt}</pre>
-                                      </div>
-                                    ))}
-                                  </div>
+                                  )}
                                 </div>
-                              ))}
+                              </div>
+
+                              {unresolvedLinks.map((item) => {
+                                const draftState = bulkDrafts[item.target];
+                                return (
+                                  <div key={item.target} className="unresolvedLinkCard">
+                                    <div className="unresolvedLinkHeader">
+                                      <label className="checkboxLabel">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedUnresolvedTargets.has(item.target)}
+                                          onChange={(e) => {
+                                            const next = new Set(selectedUnresolvedTargets);
+                                            if (e.target.checked) {
+                                              next.add(item.target);
+                                            } else {
+                                              next.delete(item.target);
+                                            }
+                                            setSelectedUnresolvedTargets(next);
+                                          }}
+                                          disabled={isBulkProcessing}
+                                        />
+                                        <strong>[[{item.target}]]</strong>
+                                      </label>
+
+                                      <div className="cardHeaderActions">
+                                        {draftState?.status === "drafting" && <span className="statusText drafting">⌛ Drafting...</span>}
+                                        {draftState?.status === "done" && <span className="statusText success">✓ Draft Ready</span>}
+                                        {draftState?.status === "error" && <span className="statusText error">❌ Failed</span>}
+
+                                        {!draftState && (
+                                          <button
+                                            type="button"
+                                            className="smallButton primary"
+                                            disabled={isBulkProcessing}
+                                            onClick={() => void draftStubNote(item.target, item.sources)}
+                                          >
+                                            Draft Stub
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {draftState?.status === "done" && (
+                                      <div className="cardDraftPreview">
+                                        <textarea
+                                          className="stubPreviewTextarea"
+                                          value={draftState.content}
+                                          onChange={(e) => {
+                                            setBulkDrafts(prev => ({
+                                              ...prev,
+                                              [item.target]: { ...prev[item.target], content: e.target.value }
+                                            }));
+                                          }}
+                                          placeholder="Edit drafted stub content..."
+                                        />
+                                      </div>
+                                    )}
+
+                                    <div className="unresolvedLinkSources">
+                                      <span>Referenced in:</span>
+                                      {item.sources.map((source) => (
+                                        <div key={source.path} className="sourceExcerptCard">
+                                          <div className="sourceTitle">
+                                            {source.title} (<code>{source.path}</code>)
+                                          </div>
+                                          <pre className="sourceExcerpt">{source.excerpt}</pre>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </>
                           )}
                         </div>

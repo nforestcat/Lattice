@@ -1267,12 +1267,14 @@ describe("App layout", () => {
     fireEvent.click(draftStubBtn);
 
     // Verify draft stub loading, then draft content preview shows up
-    await waitFor(() => expect(screen.getByText("AI Stub Note Draft:")).toBeTruthy());
-    await waitFor(() => expect(screen.getByText("This is the drafted AI stub note content.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("✓ Draft Ready")).toBeTruthy());
+    const textarea = document.querySelector(".stubPreviewTextarea") as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+    expect(textarea.value).toBe("This is the drafted AI stub note content.");
 
-    // Click Create Note button
-    const createNoteBtn = screen.getByRole("button", { name: "Create Note" });
-    fireEvent.click(createNoteBtn);
+    // Click Create Selected button (since single stub drafting uses bulk creation flow)
+    const createSelectedBtn = screen.getByRole("button", { name: "Create Selected" });
+    fireEvent.click(createSelectedBtn);
 
     // Verify vaultApi.createNote and saveNote were called
     await waitFor(() => {
@@ -1289,4 +1291,126 @@ describe("App layout", () => {
     saveNoteSpy.mockRestore();
     getUnresolvedLinksSpy.mockRestore();
   });
+
+  it("scans and resolves unresolved links in bulk", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" }
+      ],
+      tree: []
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links.",
+      revision: "rev-123"
+    });
+
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "test-key", model: "gpt-4o" }
+    });
+
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue("This is the drafted AI stub note content.");
+
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockImplementation(async (dir, name) => {
+      return {
+        vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+        selectedPath: `${name}.md`
+      };
+    });
+
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
+      saved: true,
+      revision: "rev-456",
+      conflict: false,
+      snapshotId: null,
+      gitCommit: null
+    });
+
+    const getUnresolvedLinksSpy = vi.spyOn(vaultApi, "getUnresolvedLinks").mockResolvedValue([
+      {
+        target: "Missing One",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links." }
+        ]
+      },
+      {
+        target: "Missing Two",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links." }
+        ]
+      }
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Switch to Distill Workspace
+    const distillTabBtn = screen.getByRole("button", { name: "Distill" });
+    fireEvent.click(distillTabBtn);
+    expect(screen.getByText("LLM Distill Workspace")).toBeTruthy();
+
+    // Click on Wiki Auditor tab
+    const auditorTabBtn = screen.getByRole("button", { name: "Wiki Auditor" });
+    fireEvent.click(auditorTabBtn);
+
+    // Verify it performs the scan and shows the unresolved link targets
+    await waitFor(() => expect(screen.getByText("[[Missing One]]")).toBeTruthy());
+    expect(screen.getByText("[[Missing Two]]")).toBeTruthy();
+
+    // Verify "Select All" checkbox behaves correctly
+    const selectAllCheckbox = document.querySelector(".bulkActionsBar input[type='checkbox']") as HTMLInputElement;
+    expect(selectAllCheckbox).toBeTruthy();
+    expect(selectAllCheckbox.checked).toBe(false);
+
+    // Click "Select All"
+    fireEvent.click(selectAllCheckbox);
+    expect(selectAllCheckbox.checked).toBe(true);
+
+    // Verify both checkboxes for targets are checked
+    const checkboxes = Array.from(document.querySelectorAll(".unresolvedLinkCard input[type='checkbox']")) as HTMLInputElement[];
+    expect(checkboxes.length).toBe(2);
+    expect(checkboxes[0].checked).toBe(true);
+    expect(checkboxes[1].checked).toBe(true);
+
+    // Click "Draft Selected (2)" button
+    const draftSelectedBtn = screen.getByRole("button", { name: "Draft Selected (2)" });
+    fireEvent.click(draftSelectedBtn);
+
+    // Verify sendChatMessage is called
+    await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalled());
+
+    // Verify both drafts are loaded and textareas appear with the draft content
+    await waitFor(() => expect(screen.getAllByText("✓ Draft Ready").length).toBe(2));
+
+    const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
+    expect(textareas.length).toBe(2);
+    expect(textareas[0].value).toBe("This is the drafted AI stub note content.");
+    expect(textareas[1].value).toBe("This is the drafted AI stub note content.");
+
+    // Click "Create Selected" button to write them to the vault
+    const createSelectedBtn = screen.getByRole("button", { name: "Create Selected" });
+    fireEvent.click(createSelectedBtn);
+
+    // Verify createNote and saveNote were called for both
+    await waitFor(() => {
+      expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing One");
+      expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing Two");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
+    });
+
+    // Cleanup spies
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
+    getUnresolvedLinksSpy.mockRestore();
+  });
 });
+
