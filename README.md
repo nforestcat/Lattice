@@ -33,6 +33,8 @@ Implemented so far:
 - Compute semantic note recommendations using vector embeddings (Ollama or OpenAI/Custom OpenAI-compatible) and store them in a persistent local cache file (`.lattice/embeddings.json`) to minimize API requests and save overhead on subsequent note selections
 - Automatically scan the active editor note for unlinked mentions of other note titles (supporting CJK languages via Unicode property boundary matching) and suggest turning them into `[[Wiki Links]]` with a one-click apply button
 - Toggle search mode in the sidebar between traditional Keyword search and AI-powered **Semantic Search** to query the entire vault using natural language and rank results by vector embedding similarity scores (with custom match percentage badges)
+- Export and import prompt history runs (including both metadata and full prompt markdown contents) as a single portable JSON archive file
+- Configure age-based prompt run retention policies (7, 30, or 90 days) inside the Settings panel to automatically prune expired history runs in the background on startup or trigger them manually on demand
 
 ## LLM Wiki Direction
 

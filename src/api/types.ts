@@ -190,6 +190,7 @@ export type VaultConfig = {
   promptRuns?: PromptRun[];
   promptTemplates?: PromptTemplate[];
   llmConfig?: LlmConfig;
+  archiveRetentionPolicy?: string;
 };
 
 export type ProposedEdit = {

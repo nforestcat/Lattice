@@ -113,7 +113,8 @@ export function normalizeVaultConfig(config: any): VaultConfig {
     promptInstructions: normalizePromptInstructions(config?.promptInstructions),
     promptRuns: normalizePromptRuns(config?.promptRuns, bundlePurpose),
     promptTemplates: normalizePromptTemplates(config?.promptTemplates),
-    llmConfig: normalizeLlmConfig(config?.llmConfig)
+    llmConfig: normalizeLlmConfig(config?.llmConfig),
+    archiveRetentionPolicy: typeof config?.archiveRetentionPolicy === "string" ? config.archiveRetentionPolicy : "none"
   };
   return normalized;
 }
@@ -446,6 +447,10 @@ export function App() {
 
       const llmCfg = loadedConfig.llmConfig || { provider: "openai", apiKey: "", model: "gpt-4o" };
       setLlmConfig(llmCfg);
+
+      if (loadedConfig.archiveRetentionPolicy && loadedConfig.archiveRetentionPolicy !== "none") {
+        void pruneExpiredPromptRuns(loadedConfig.archiveRetentionPolicy, loadedConfig, false);
+      }
     } catch (e) {
       console.error("Failed to load vault config", e);
     }
@@ -1328,6 +1333,189 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     }
   }
 
+  async function pruneExpiredPromptRuns(policy: string, currentConfig = vaultConfig, showConfirm = true) {
+    if (policy === "none" || !policy) {
+      if (showConfirm) {
+        setStatus("No retention policy selected. Select a retention period first.");
+      }
+      return;
+    }
+
+    const daysLimit = Number(policy);
+    if (!Number.isFinite(daysLimit)) return;
+
+    const runs = currentConfig.promptRuns ?? [];
+    const now = Date.now();
+    const msLimit = daysLimit * 24 * 60 * 60 * 1000;
+
+    const expired = runs.filter((run) => {
+      if (!run.createdAt) return false;
+      const age = now - new Date(run.createdAt).getTime();
+      return age > msLimit;
+    });
+
+    if (expired.length === 0) {
+      if (showConfirm) {
+        setStatus("No expired prompt runs found to prune.");
+      }
+      return;
+    }
+
+    if (showConfirm) {
+      const confirmed = await askConfirm(
+        `Prune ${expired.length} prompt run(s) older than ${policy} days? This will delete their markdown files from disk.`,
+        "Prune Expired Prompt Runs"
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      for (const run of expired) {
+        await vaultApi.deleteArchivedPrompt(run.id);
+      }
+
+      const nextRuns = runs.filter((run) => {
+        if (!run.createdAt) return true;
+        const age = now - new Date(run.createdAt).getTime();
+        return age <= msLimit;
+      });
+
+      const updated = {
+        ...currentConfig,
+        promptRuns: nextRuns
+      };
+
+      await vaultApi.saveVaultConfig(updated);
+      setVaultConfig(updated);
+      vaultConfigRef.current = updated;
+      
+      const activeRunIds = nextRuns.map((r) => r.id);
+      await vaultApi.pruneArchivedPrompts(activeRunIds);
+
+      void refreshArchiveStatus();
+      setStatus(`Pruned ${expired.length} expired prompt run(s)`);
+    } catch (err) {
+      console.error(err);
+      setStatus("Failed to prune expired prompt runs");
+    }
+  }
+
+  async function exportPromptRuns() {
+    const runs = vaultConfig.promptRuns ?? [];
+    if (runs.length === 0) {
+      setStatus("No prompt runs in history to export");
+      return;
+    }
+
+    setStatus("Exporting prompt runs...");
+    try {
+      const exportedItems = [];
+      for (const run of runs) {
+        try {
+          const content = await vaultApi.getArchivedPrompt(run.id);
+          exportedItems.push({
+            metadata: run,
+            content
+          });
+        } catch (err) {
+          console.error(`Failed to read prompt run ${run.id} content for export`, err);
+          exportedItems.push({
+            metadata: run,
+            content: ""
+          });
+        }
+      }
+
+      const payload = {
+        exportVersion: 1,
+        exportedAt: new Date().toISOString(),
+        promptRuns: exportedItems
+      };
+
+      const jsonStr = JSON.stringify(payload, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = `lattice-prompt-archive-${new Date().toISOString().split('T')[0]}.json`;
+      window.document.body.appendChild(a);
+      a.click();
+      window.document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      setStatus(`Exported ${runs.length} prompt run(s) successfully`);
+    } catch (err) {
+      console.error(err);
+      setStatus("Export failed");
+    }
+  }
+
+  async function handleImportArchiveFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setStatus("Reading archive file...");
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const data = JSON.parse(text);
+        if (!data || data.exportVersion !== 1 || !Array.isArray(data.promptRuns)) {
+          setStatus("Import failed: Invalid archive format");
+          return;
+        }
+
+        const importedItems = data.promptRuns;
+        if (importedItems.length === 0) {
+          setStatus("Archive contains no prompt runs");
+          return;
+        }
+
+        const currentRuns = vaultConfig.promptRuns ?? [];
+        const currentIds = new Set(currentRuns.map((r) => r.id));
+        
+        let newCount = 0;
+        const nextRuns = [...currentRuns];
+
+        for (const item of importedItems) {
+          const run = item.metadata;
+          if (!run || !run.id) continue;
+
+          if (!currentIds.has(run.id)) {
+            nextRuns.push(run);
+            newCount++;
+          }
+
+          if (item.content) {
+            await vaultApi.archivePromptRun(run.id, item.content);
+          }
+        }
+
+        if (newCount > 0) {
+          nextRuns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          
+          await updateVaultConfig({
+            ...vaultConfig,
+            promptRuns: nextRuns
+          });
+          setStatus(`Imported ${newCount} new prompt run(s) successfully`);
+          void refreshArchiveStatus();
+        } else {
+          setStatus("All prompt runs in the archive already exist in the history");
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus("Import failed: JSON parsing error");
+      }
+    };
+    reader.onerror = () => {
+      setStatus("Import failed: File reading error");
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  }
+
   async function loadPromptDiff(run: PromptRun) {
     if (diffRunId === run.id) {
       setDiffRunId(null);
@@ -1980,6 +2168,35 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                             </div>
                           )}
 
+                          <div className="settingsSection" style={{ marginTop: "12px", borderTop: "1px dashed #cbd5e1", paddingTop: "12px", marginBottom: "12px" }}>
+                            <h4 style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#344054" }}>Prompt Archive Settings</h4>
+                            <div className="formGroup">
+                              <label>Auto-Pruning Policy</label>
+                              <select
+                                value={vaultConfig.archiveRetentionPolicy || "none"}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  void updateVaultConfig({
+                                    archiveRetentionPolicy: val
+                                  });
+                                }}
+                              >
+                                <option value="none">Keep all history indefinitely</option>
+                                <option value="7">Prune runs older than 7 days</option>
+                                <option value="30">Prune runs older than 30 days</option>
+                                <option value="90">Prune runs older than 90 days</option>
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              className="btnPruneExpired"
+                              style={{ width: "100%", marginTop: "6px", fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => void pruneExpiredPromptRuns(vaultConfig.archiveRetentionPolicy || "none")}
+                            >
+                              Prune Expired Runs Now
+                            </button>
+                          </div>
+
                           <button
                             type="button"
                             className="primary btnSaveSettings"
@@ -2616,13 +2833,36 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                     <span className="archiveStatusText">
                       📁 Archive: <strong>{archiveStatus.fileCount}</strong> file(s) ({(archiveStatus.totalBytes / 1024).toFixed(1)} KB)
                     </span>
-                    <button
-                      className="smallButton pruneButton"
-                      onClick={() => void pruneArchivedPrompts()}
-                      title="Clean up disk files of deleted prompt runs"
-                    >
-                      Prune Orphaned
-                    </button>
+                    <div className="archiveActions">
+                      <button
+                        className="smallButton exportButton"
+                        onClick={() => void exportPromptRuns()}
+                        title="Export prompt runs as a JSON file"
+                      >
+                        Export
+                      </button>
+                      <button
+                        className="smallButton importButton"
+                        onClick={() => window.document.getElementById("promptArchiveImportInput")?.click()}
+                        title="Import prompt runs from a JSON file"
+                      >
+                        Import
+                      </button>
+                      <input
+                        id="promptArchiveImportInput"
+                        type="file"
+                        accept=".json"
+                        style={{ display: "none" }}
+                        onChange={(e) => void handleImportArchiveFile(e)}
+                      />
+                      <button
+                        className="smallButton pruneButton"
+                        onClick={() => void pruneArchivedPrompts()}
+                        title="Clean up disk files of deleted prompt runs"
+                      >
+                        Prune Orphaned
+                      </button>
+                    </div>
                   </div>
                 )}
                 <div className="historyFilters">

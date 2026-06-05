@@ -2478,3 +2478,38 @@ summary:hover .treeActions {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+/* Prompt Archive Action Controls */
+.archiveActions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.exportButton,
+.importButton {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.exportButton:hover,
+.importButton:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.btnPruneExpired {
+  background: #ffffff;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btnPruneExpired:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+}
