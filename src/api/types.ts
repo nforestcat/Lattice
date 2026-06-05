@@ -125,4 +125,6 @@ export type VaultApi = {
   restoreSnapshot(snapshotId: string): Promise<SaveResult>;
   getGitStatus(): Promise<GitStatus>;
   setAutoGit(enabled: boolean): Promise<GitSettings>;
+  getVaultConfig(): Promise<Record<string, any>>;
+  saveVaultConfig(config: Record<string, any>): Promise<void>;
 };

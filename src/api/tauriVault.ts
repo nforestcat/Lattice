@@ -52,6 +52,8 @@ export function createTauriVaultApi(): VaultApi {
     listSnapshots: (path: string) => invoke<Snapshot[]>("list_snapshots", { path }),
     restoreSnapshot: (snapshotId: string) => invoke("restore_snapshot", { snapshotId }),
     getGitStatus: () => invoke("get_git_status"),
-    setAutoGit: (enabled: boolean) => invoke<GitSettings>("set_auto_git", { enabled })
+    setAutoGit: (enabled: boolean) => invoke<GitSettings>("set_auto_git", { enabled }),
+    getVaultConfig: () => invoke<Record<string, any>>("get_vault_config"),
+    saveVaultConfig: (config: Record<string, any>) => invoke<void>("save_vault_config", { config })
   };
 }

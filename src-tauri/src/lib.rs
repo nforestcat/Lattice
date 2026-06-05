@@ -603,6 +603,34 @@ fn set_auto_git(enabled: bool, state: tauri::State<AppState>) -> Result<GitSetti
     Ok(GitSettings { auto_git_enabled: enabled })
 }
 
+#[tauri::command]
+fn get_vault_config(state: tauri::State<AppState>) -> Result<serde_json::Value, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let config_path = root.join(".lattice").join("config.json");
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        let val: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        Ok(val)
+    } else {
+        Ok(serde_json::Value::Object(serde_json::Map::new()))
+    }
+}
+
+#[tauri::command]
+fn save_vault_config(config: serde_json::Value, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let lattice_dir = root.join(".lattice");
+    if !lattice_dir.exists() {
+        fs::create_dir_all(&lattice_dir).map_err(|e| e.to_string())?;
+    }
+    let config_path = lattice_dir.join("config.json");
+    let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    fs::write(&config_path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn mutate_graph_link(source_path: String, target_path: String, add: bool, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
@@ -1396,7 +1424,9 @@ pub fn run() {
             list_snapshots,
             restore_snapshot,
             get_git_status,
-            set_auto_git
+            set_auto_git,
+            get_vault_config,
+            save_vault_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local Vault Notes");

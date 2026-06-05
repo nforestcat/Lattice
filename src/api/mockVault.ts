@@ -362,6 +362,13 @@ export function createMockVaultApi(): VaultApi {
     async setAutoGit(enabled: boolean): Promise<GitSettings> {
       autoGitEnabled = enabled;
       return { autoGitEnabled };
+    },
+    async getVaultConfig(): Promise<Record<string, any>> {
+      const saved = localStorage.getItem(`lattice:mock_config:${openRoot}`);
+      return saved ? JSON.parse(saved) : {};
+    },
+    async saveVaultConfig(config: Record<string, any>): Promise<void> {
+      localStorage.setItem(`lattice:mock_config:${openRoot}`, JSON.stringify(config));
     }
   };
 }

@@ -108,5 +108,53 @@ describe("App layout", () => {
 
     candidatesSpy.mockRestore();
   });
+
+  it("loads and saves settings (limit, mode, purpose, selected candidates) from vault config", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 120,
+      bundleMode: "short",
+      bundlePurpose: "Write a summary",
+      bundlePreset: "custom",
+      selectedPaths: {
+        "Home.md": ["Rec1.md"]
+      }
+    });
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },
+      { path: "Rec1.md", title: "Rec1", reason: "Recommended", reasonDetail: "Rec1 detail", score: 5, excerpt: "Rec1 excerpt", tokenEstimate: 30, selected: false, characterCount: 60 }
+    ]);
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Verify loaded inputs match the configured stub
+    const limitSelect = screen.getByLabelText("Limit") as HTMLSelectElement;
+    await waitFor(() => expect(limitSelect.value).toBe("custom"));
+    const customLimitInput = screen.getByPlaceholderText("Tokens...") as HTMLInputElement;
+    expect(customLimitInput.value).toBe("120");
+
+    const modeSelect = screen.getByLabelText("Mode") as HTMLSelectElement;
+    expect(modeSelect.value).toBe("short");
+
+    const purposeInput = screen.getByPlaceholderText("e.g. Summarize or refactor...") as HTMLInputElement;
+    expect(purposeInput.value).toBe("Write a summary");
+
+    // Rec1 should be checked because it's listed in getVaultConfig under selectedPaths["Home.md"]
+    const rec1Checkbox = screen.getByLabelText("Rec1") as HTMLInputElement;
+    await waitFor(() => expect(rec1Checkbox.checked).toBe(true));
+
+    // Verify toggling candidate calls saveVaultConfig
+    fireEvent.click(rec1Checkbox);
+    expect(rec1Checkbox.checked).toBe(false);
+    expect(saveVaultConfigSpy).toHaveBeenCalled();
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+  });
 });
 

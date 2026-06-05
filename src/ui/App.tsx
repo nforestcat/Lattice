@@ -2,7 +2,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import CodeMirror from "@uiw/react-codemirror";
 import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { marked } from "marked";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
@@ -64,15 +64,9 @@ export function App() {
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
-  const [bundlePreset, setBundlePreset] = useState<string>(() => {
-    return localStorage.getItem("lattice:bundle_preset") || "ask";
-  });
-  const [bundlePurpose, setBundlePurpose] = useState(() => {
-    return localStorage.getItem("lattice:bundle_purpose") ?? PRESETS["ask"].purpose;
-  });
-  const [bundleMode, setBundleMode] = useState<"short" | "standard" | "full">(() => {
-    return (localStorage.getItem("lattice:bundle_mode") as any) ?? PRESETS["ask"].mode;
-  });
+  const [bundlePreset, setBundlePreset] = useState<string>("ask");
+  const [bundlePurpose, setBundlePurpose] = useState(PRESETS["ask"].purpose);
+  const [bundleMode, setBundleMode] = useState<"short" | "standard" | "full">("standard");
   const [inboxCaptures, setInboxCaptures] = useState<InboxCaptureBlock[]>([]);
   const [triageCaptureToAppend, setTriageCaptureToAppend] = useState<{ id: string; title: string } | null>(null);
   const [noteSearchQuery, setNoteSearchQuery] = useState("");
@@ -80,20 +74,28 @@ export function App() {
   const [status, setStatus] = useState("Ready");
   const [sortBy, setSortBy] = useState<"score" | "title" | "reason">("score");
   const [filterBy, setFilterBy] = useState<string>("all");
-  const [contextLimit, setContextLimit] = useState<number>(() => {
-    const saved = localStorage.getItem("lattice:context_limit");
-    return saved ? parseInt(saved, 10) : 8000;
-  });
-  const [isCustomLimit, setIsCustomLimit] = useState<boolean>(() => {
-    const saved = localStorage.getItem("lattice:context_limit");
-    if (!saved) return false;
-    const val = parseInt(saved, 10);
-    return val !== 8000 && val !== 32000 && val !== 128000;
-  });
+  const [contextLimit, setContextLimit] = useState<number>(8000);
+  const [isCustomLimit, setIsCustomLimit] = useState<boolean>(false);
+  const [vaultConfig, setVaultConfig] = useState<Record<string, any>>({});
+  const vaultConfigRef = useRef<Record<string, any>>({});
+
+  const updateVaultConfig = async (updates: Record<string, any>) => {
+    const nextConfig = {
+      ...vaultConfigRef.current,
+      ...updates
+    };
+    vaultConfigRef.current = nextConfig;
+    setVaultConfig(nextConfig);
+    try {
+      await vaultApi.saveVaultConfig(nextConfig);
+    } catch (e) {
+      console.error("Failed to save vault config", e);
+    }
+  };
 
   const handleLimitChange = (val: number) => {
     setContextLimit(val);
-    localStorage.setItem("lattice:context_limit", val.toString());
+    void updateVaultConfig({ contextLimit: val });
   };
 
   useEffect(() => {
@@ -119,9 +121,32 @@ export function App() {
     setContextCandidates([]);
     setSelectedContextPaths(new Set());
     setInboxCaptures([]);
+
+    let loadedConfig: Record<string, any> = {};
+    try {
+      loadedConfig = await vaultApi.getVaultConfig();
+      vaultConfigRef.current = loadedConfig;
+      setVaultConfig(loadedConfig);
+
+      const limit = loadedConfig.contextLimit ?? 8000;
+      setContextLimit(limit);
+      setIsCustomLimit(limit !== 8000 && limit !== 32000 && limit !== 128000);
+
+      const preset = loadedConfig.bundlePreset ?? "ask";
+      setBundlePreset(preset);
+
+      const purpose = loadedConfig.bundlePurpose ?? (PRESETS[preset as PresetType]?.purpose ?? PRESETS["ask"].purpose);
+      setBundlePurpose(purpose);
+
+      const mode = loadedConfig.bundleMode ?? (PRESETS[preset as PresetType]?.mode ?? PRESETS["ask"].mode);
+      setBundleMode(mode as any);
+    } catch (e) {
+      console.error("Failed to load vault config", e);
+    }
+
     setStatus(`Opened ${nextVault.rootPath}`);
     if (nextVault.notes[0]) {
-      await selectNote(nextVault.notes[0].path);
+      await selectNote(nextVault.notes[0].path, loadedConfig);
     }
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
@@ -157,31 +182,26 @@ export function App() {
     }
   }
 
-  async function selectNote(path: string) {
+  async function selectNote(path: string, currentConfig?: Record<string, any>) {
     const note = await vaultApi.readNote(path);
     setActivePath(path);
     setDocument(note);
     setDraft(note.content);
     setViewMode("split");
-    await refreshContext(path);
+    await refreshContext(path, currentConfig);
   }
 
-  async function refreshContext(path: string) {
+  async function refreshContext(path: string, currentConfig?: Record<string, any>) {
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
     setContextBundle(null);
     const candidates = await vaultApi.getContextBundleCandidates(path);
     setContextCandidates(candidates);
     
-    // Load persisted selections if any, otherwise default to logic-derived selections
-    const saved = localStorage.getItem(`lattice:selected_paths:${path}`);
-    if (saved) {
-      try {
-        const paths = JSON.parse(saved) as string[];
-        setSelectedContextPaths(new Set(paths));
-      } catch (e) {
-        setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
-      }
+    const configToUse = currentConfig ?? vaultConfigRef.current;
+    const saved = configToUse.selectedPaths?.[path];
+    if (saved && Array.isArray(saved)) {
+      setSelectedContextPaths(new Set(saved));
     } else {
       setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
     }
@@ -376,7 +396,14 @@ export function App() {
     }
 
     setSelectedContextPaths(nextPaths);
-    localStorage.setItem(`lattice:selected_paths:${activePath}`, JSON.stringify(Array.from(nextPaths)));
+    if (activePath) {
+      const currentSelected = vaultConfigRef.current.selectedPaths ?? {};
+      const nextSelected = {
+        ...currentSelected,
+        [activePath]: Array.from(nextPaths)
+      };
+      void updateVaultConfig({ selectedPaths: nextSelected });
+    }
 
     if (contextBundle) {
       const pathArray = contextCandidates.filter((candidate) => nextPaths.has(candidate.path)).map((candidate) => candidate.path);
@@ -392,8 +419,8 @@ export function App() {
 
   async function switchToShortMode() {
     setBundleMode("short");
-    localStorage.setItem("lattice:bundle_mode", "short");
     updatePresetForCustomChanges(bundlePurpose, "short");
+    void updateVaultConfig({ bundleMode: "short" });
     if (contextBundle) {
       await generateContextBundle(undefined, "short");
     }
@@ -405,35 +432,43 @@ export function App() {
     });
     const nextPreset = matched ? matched[0] : "custom";
     setBundlePreset(nextPreset);
-    localStorage.setItem("lattice:bundle_preset", nextPreset);
+    void updateVaultConfig({ bundlePreset: nextPreset });
   };
 
   const handlePresetChange = (preset: string) => {
     setBundlePreset(preset);
-    localStorage.setItem("lattice:bundle_preset", preset);
     if (preset !== "custom") {
       const config = PRESETS[preset as PresetType];
       setBundlePurpose(config.purpose);
-      localStorage.setItem("lattice:bundle_purpose", config.purpose);
       setBundleMode(config.mode);
-      localStorage.setItem("lattice:bundle_mode", config.mode);
+      void updateVaultConfig({
+        bundlePreset: preset,
+        bundlePurpose: config.purpose,
+        bundleMode: config.mode
+      });
+    } else {
+      void updateVaultConfig({ bundlePreset: preset });
     }
     setContextBundle(null);
   };
 
   function toggleContextCandidate(path: string) {
-    setSelectedContextPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      if (activePath) {
-        localStorage.setItem(`lattice:selected_paths:${activePath}`, JSON.stringify(Array.from(next)));
-      }
-      return next;
-    });
+    const next = new Set(selectedContextPaths);
+    if (next.has(path)) {
+      next.delete(path);
+    } else {
+      next.add(path);
+    }
+    setSelectedContextPaths(next);
+
+    if (activePath) {
+      const currentSelected = vaultConfigRef.current.selectedPaths ?? {};
+      const nextSelected = {
+        ...currentSelected,
+        [activePath]: Array.from(next)
+      };
+      void updateVaultConfig({ selectedPaths: nextSelected });
+    }
     setContextBundle(null);
   }
 
@@ -783,8 +818,8 @@ export function App() {
                 onChange={(event) => {
                   const val = event.target.value;
                   setBundlePurpose(val);
-                  localStorage.setItem("lattice:bundle_purpose", val);
                   updatePresetForCustomChanges(val, bundleMode);
+                  void updateVaultConfig({ bundlePurpose: val });
                   setContextBundle(null);
                 }}
               />
@@ -797,8 +832,8 @@ export function App() {
                 onChange={(event) => {
                   const val = event.target.value as any;
                   setBundleMode(val);
-                  localStorage.setItem("lattice:bundle_mode", val);
                   updatePresetForCustomChanges(bundlePurpose, val);
+                  void updateVaultConfig({ bundleMode: val });
                   setContextBundle(null);
                 }}
               >
