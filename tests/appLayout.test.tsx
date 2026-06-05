@@ -69,5 +69,44 @@ describe("App layout", () => {
 
     candidatesSpy.mockRestore();
   });
+
+  it("allows sorting candidates by score/title and filtering by connection type", async () => {
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },
+      { path: "RecB.md", title: "RecB", reason: "Recommended", reasonDetail: "RecB detail", score: 8, excerpt: "RecB excerpt", tokenEstimate: 30, selected: false, characterCount: 60 },
+      { path: "RecA.md", title: "RecA", reason: "Recommended", reasonDetail: "RecA detail", score: 5, excerpt: "RecA excerpt", tokenEstimate: 40, selected: false, characterCount: 80 }
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("RecB")).toBeTruthy());
+
+    const getCandidateTitles = () => {
+      const listEl = document.querySelector(".candidateList");
+      if (!listEl) return [];
+      const labels = listEl.querySelectorAll(".candidateLabel");
+      return Array.from(labels).map(el => el.textContent?.trim() || "");
+    };
+
+    // By default, sorting is by Score (descending) -> Home (10), RecB (8), RecA (5)
+    expect(getCandidateTitles()).toEqual(["Home", "RecB", "RecA"]);
+
+    // Change filter to Recommended only
+    const filterSelect = screen.getByLabelText("Filter") as HTMLSelectElement;
+    fireEvent.change(filterSelect, { target: { value: "recommended" } });
+
+    // Verify Home is no longer rendered in candidate list, only RecB and RecA remain
+    await waitFor(() => expect(getCandidateTitles()).toEqual(["RecB", "RecA"]));
+
+    // Change sort to Title (ascending) -> RecA, RecB
+    const sortSelect = screen.getByLabelText("Sort") as HTMLSelectElement;
+    fireEvent.change(sortSelect, { target: { value: "title" } });
+
+    // Verify titles sequence is RecA, RecB
+    await waitFor(() => expect(getCandidateTitles()).toEqual(["RecA", "RecB"]));
+
+    candidatesSpy.mockRestore();
+  });
 });
 

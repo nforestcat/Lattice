@@ -78,6 +78,8 @@ export function App() {
   const [noteSearchQuery, setNoteSearchQuery] = useState("");
   const [captureDraft, setCaptureDraft] = useState("");
   const [status, setStatus] = useState("Ready");
+  const [sortBy, setSortBy] = useState<"score" | "title" | "reason">("score");
+  const [filterBy, setFilterBy] = useState<string>("all");
   const [contextLimit, setContextLimit] = useState<number>(() => {
     const saved = localStorage.getItem("lattice:context_limit");
     return saved ? parseInt(saved, 10) : 8000;
@@ -544,6 +546,38 @@ export function App() {
     return selectedNotes.reduce((total, candidate) => total + candidate.tokenEstimate, 0);
   }, [contextCandidates, selectedContextPaths]);
 
+  const displayedCandidates = useMemo(() => {
+    let list = [...contextCandidates];
+    if (filterBy === "selected") {
+      list = list.filter((c) => selectedContextPaths.has(c.path));
+    } else if (filterBy !== "all") {
+      list = list.filter((c) => c.reason.toLowerCase() === filterBy);
+    }
+
+    list.sort((a, b) => {
+      if (sortBy === "score") {
+        return b.score - a.score;
+      } else if (sortBy === "title") {
+        return a.title.localeCompare(b.title);
+      } else if (sortBy === "reason") {
+        const reasonOrder: Record<string, number> = {
+          focus: 0,
+          outgoing: 1,
+          backlink: 2,
+          recommended: 3
+        };
+        const orderA = reasonOrder[a.reason.toLowerCase()] ?? 99;
+        const orderB = reasonOrder[b.reason.toLowerCase()] ?? 99;
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+        return b.score - a.score;
+      }
+      return 0;
+    });
+    return list;
+  }, [contextCandidates, selectedContextPaths, sortBy, filterBy]);
+
   return (
     <main className="workspace">
       <aside className="sidebar">
@@ -774,8 +808,40 @@ export function App() {
               </select>
             </div>
           </div>
+          <div className="candidatesSectionHeader">
+            <h3>Related Candidates ({displayedCandidates.length})</h3>
+            <div className="candidatesFilterControls">
+              <div className="filterGroup">
+                <label htmlFor="candidates-sort">Sort</label>
+                <select
+                  id="candidates-sort"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                >
+                  <option value="score">Score</option>
+                  <option value="title">Title</option>
+                  <option value="reason">Reason</option>
+                </select>
+              </div>
+              <div className="filterGroup">
+                <label htmlFor="candidates-filter">Filter</label>
+                <select
+                  id="candidates-filter"
+                  value={filterBy}
+                  onChange={(e) => setFilterBy(e.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="selected">Selected</option>
+                  <option value="focus">Focus</option>
+                  <option value="outgoing">Outgoing</option>
+                  <option value="backlink">Backlink</option>
+                  <option value="recommended">Recommended</option>
+                </select>
+              </div>
+            </div>
+          </div>
           <div className="candidateList">
-            {contextCandidates.map((candidate) => {
+            {displayedCandidates.map((candidate) => {
               const scoreColorClass = 
                 candidate.score >= 9.0 ? "score-high" :
                 candidate.score >= 7.0 ? "score-medium" : "score-low";

@@ -18,7 +18,7 @@ Implemented so far:
 - Parse wiki links, backlinks, outgoing links, tags, and frontmatter
 - View and edit note relationships in a graph
 - Generate LLM context bundles from selected related notes (with Short/Standard/Full modes, Purpose instructions, and tailored task presets like Ask, Refactor, Summarize, Plan, Debug)
-- Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions)
+- Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions), with options to sort and filter candidates in the UI by score, title, or connection type
 - Persist custom context bundle selections across note visits using local storage
 - Estimate token consumption, track context window budget, display the final bundle actual token count with a visual progress bar, and offer automated pruning of recommended candidates (sorted by score) and Short mode suggestions on overflow
 - Capture loose ideas or LLM answers into daily Inbox notes
