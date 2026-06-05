@@ -68,6 +68,12 @@ export type PromoteInboxCaptureInput = {
   title: string;
 };
 
+export type AppendInboxCaptureInput = {
+  inboxPath: string;
+  captureId: string;
+  targetPath: string;
+};
+
 export type ContextBundle = {
   title: string;
   focusPath: string;
@@ -77,12 +83,14 @@ export type ContextBundle = {
 
 export type ContextBundleOptions = {
   selectedPaths?: string[];
+  purpose?: string;
+  mode?: "short" | "standard" | "full";
 };
 
 export type ContextBundleCandidate = {
   path: string;
   title: string;
-  reason: "Focus" | "Outgoing" | "Backlink";
+  reason: "Focus" | "Outgoing" | "Backlink" | "Recommended";
   selected: boolean;
   characterCount: number;
 };
@@ -99,6 +107,7 @@ export type VaultApi = {
   getInboxCaptures(inboxPath: string): Promise<InboxCaptureBlock[]>;
   markInboxCaptureProcessed(inboxPath: string, captureId: string): Promise<EntryMutationResult>;
   promoteInboxCapture(input: PromoteInboxCaptureInput): Promise<EntryMutationResult>;
+  appendInboxCapture(input: AppendInboxCaptureInput): Promise<EntryMutationResult>;
   getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle>;
   getContextBundleCandidates(path: string): Promise<ContextBundleCandidate[]>;
   searchNotes(filters: SearchFilters): Promise<NoteMeta[]>;

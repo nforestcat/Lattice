@@ -13,6 +13,7 @@ import type {
   LinkMutationResult,
   NoteDocument,
   PromoteInboxCaptureInput,
+  AppendInboxCaptureInput,
   SaveResult,
   Snapshot,
   VaultApi,
@@ -20,7 +21,6 @@ import type {
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
-
 const initialFiles: VaultFile[] = [
   {
     path: "Home.md",
@@ -275,6 +275,25 @@ export function createMockVaultApi(): VaultApi {
       inbox.modifiedAt = new Date().toISOString();
       rebuild();
       return { vault: vaultSnapshot(openRoot, index, files), selectedPath: path };
+    },
+    async appendInboxCapture(input: AppendInboxCaptureInput): Promise<EntryMutationResult> {
+      const inbox = findFile(input.inboxPath);
+      const capture = parseInboxCaptures(inbox.content).find((candidate) => candidate.id === input.captureId);
+      if (!capture) {
+        throw new Error(`Capture not found: ${input.captureId}`);
+      }
+
+      const target = findFile(input.targetPath);
+      const separator = target.content.endsWith("\n") ? "\n" : "\n\n";
+      const appendText = `${separator}### Appended Capture (${capture.title})\n\n${capture.body.trim()}\n`;
+
+      target.content = `${target.content}${appendText}`;
+      target.modifiedAt = new Date().toISOString();
+
+      inbox.content = moveInboxCaptureToProcessed(inbox.content, input.captureId);
+      inbox.modifiedAt = new Date().toISOString();
+      rebuild();
+      return { vault: vaultSnapshot(openRoot, index, files), selectedPath: input.targetPath };
     },
     async getContextBundle(path: string, options?: ContextBundleOptions): Promise<ContextBundle> {
       return createContextBundle(index, path, options);

@@ -171,6 +171,14 @@ struct PromoteInboxCaptureInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AppendInboxCaptureInput {
+    inbox_path: String,
+    capture_id: String,
+    target_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ContextBundle {
     title: String,
     focus_path: String,
@@ -182,6 +190,8 @@ struct ContextBundle {
 #[serde(rename_all = "camelCase")]
 struct ContextBundleOptions {
     selected_paths: Option<Vec<String>>,
+    purpose: Option<String>,
+    mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -441,6 +451,48 @@ fn promote_inbox_capture(input: PromoteInboxCaptureInput, state: tauri::State<Ap
 }
 
 #[tauri::command]
+fn append_inbox_capture(input: AppendInboxCaptureInput, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    
+    let inbox_full_path = resolve_vault_path(&root, &input.inbox_path)?;
+    let inbox_content = fs::read_to_string(&inbox_full_path).map_err(|error| error.to_string())?;
+    let capture = parse_inbox_captures(&inbox_content)
+        .into_iter()
+        .find(|capture| capture.id == input.capture_id)
+        .ok_or_else(|| format!("Capture not found: {}", input.capture_id))?;
+    
+    let target_full_path = resolve_vault_path(&root, &input.target_path)?;
+    if !target_full_path.exists() {
+        return Err(format!("Target note not found: {}", input.target_path));
+    }
+    
+    let target_content = fs::read_to_string(&target_full_path).map_err(|error| error.to_string())?;
+    let separator = if target_content.ends_with("\n\n") {
+        ""
+    } else if target_content.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    let append_text = format!("{}### Appended Capture ({})\n\n{}\n", separator, capture.title, capture.body.trim());
+    
+    fs::write(&target_full_path, format!("{}{}", target_content, append_text)).map_err(|error| error.to_string())?;
+    fs::write(&inbox_full_path, move_inbox_capture_to_processed(&inbox_content, &input.capture_id)?).map_err(|error| error.to_string())?;
+    
+    guard.notes = resolve_links(scan_vault(&root)?);
+    if guard.auto_git_enabled {
+        let _ = auto_commit(&root, &input.target_path);
+        let _ = auto_commit(&root, &input.inbox_path);
+    }
+    
+    Ok(EntryMutationResult {
+        vault: vault_snapshot(&root, &guard.notes),
+        selected_path: Some(input.target_path),
+    })
+}
+
+#[tauri::command]
 fn get_context_bundle(path: String, options: ContextBundleOptions, state: tauri::State<AppState>) -> Result<ContextBundle, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     create_context_bundle(&guard.notes, &path, options)
@@ -643,6 +695,28 @@ fn note_context(notes: &[ParsedNote], path: &str) -> Result<NoteContext, String>
     Ok(NoteContext { outgoing_links: note.links.clone(), note, backlinks })
 }
 
+fn extract_excerpt(content: &str, length: usize) -> String {
+    let mut body = content;
+    if content.starts_with("---\n") {
+        if let Some(end) = content[4..].find("\n---") {
+            body = &content[4 + end + 4..];
+        }
+    }
+    // Remove title heading (# Heading)
+    let re_heading = Regex::new(r"(?m)^#\s+.+$").unwrap();
+    let body_without_heading = re_heading.replace_all(body, "");
+    
+    // Clean up whitespace/multiple newlines
+    let text = body_without_heading.split_whitespace().collect::<Vec<_>>().join(" ");
+    let char_count = text.chars().count();
+    if char_count <= length {
+        text
+    } else {
+        let truncated: String = text.chars().take(length).collect();
+        format!("{}...", truncated)
+    }
+}
+
 fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: ContextBundleOptions) -> Result<ContextBundle, String> {
     let focus = notes.iter().find(|note| note.meta.path == focus_path).ok_or("Note not found")?;
     let mut included = context_bundle_included_notes(notes, focus_path)?;
@@ -652,12 +726,45 @@ fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: Contex
     }
 
     let title = format!("Context Bundle: {}", focus.meta.title);
+    let purpose = options.purpose;
+    let mode = options.mode.unwrap_or_else(|| "standard".to_string());
+
     Ok(ContextBundle {
         title: title.clone(),
         focus_path: focus_path.to_string(),
         note_paths: included.iter().map(|(note, _)| note.meta.path.clone()).collect(),
-        markdown: render_context_bundle(&title, &included),
+        markdown: render_context_bundle(&title, &included, purpose.as_deref(), &mode, notes),
     })
+}
+
+fn is_title_mentioned(content: &str, title: &str) -> bool {
+    let mut body = content;
+    if content.starts_with("---\n") {
+        if let Some(end) = content[4..].find("\n---") {
+            body = &content[4 + end + 4..];
+        }
+    }
+    
+    let lower_body = body.to_lowercase();
+    let lower_title = title.to_lowercase();
+    
+    if let Some(idx) = lower_body.find(&lower_title) {
+        let chars_before: Vec<char> = body[..idx].chars().collect();
+        if let Some(&last_char) = chars_before.last() {
+            if last_char.is_alphanumeric() {
+                return false;
+            }
+        }
+        let chars_after: Vec<char> = body[idx + title.len()..].chars().collect();
+        if let Some(&first_char) = chars_after.first() {
+            if first_char.is_alphanumeric() {
+                return false;
+            }
+        }
+        true
+    } else {
+        false
+    }
 }
 
 fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<ContextBundleCandidate>, String> {
@@ -667,7 +774,7 @@ fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<V
             path: note.meta.path.clone(),
             title: note.meta.title.clone(),
             reason: reason.to_string(),
-            selected: true,
+            selected: reason != "Recommended",
             character_count: note.content.len(),
         })
         .collect())
@@ -695,18 +802,53 @@ fn context_bundle_included_notes(notes: &[ParsedNote], focus_path: &str) -> Resu
         }
     }
 
+    // Recommendation logic
+    let focus_note = &context.note;
+    let focus_tags: HashSet<&str> = focus_note.meta.tags.iter().map(String::as_str).collect();
+
+    for note in notes {
+        if included.iter().any(|(n, _)| n.meta.path == note.meta.path) {
+            continue;
+        }
+
+        let has_shared_tags = note.meta.tags.iter().any(|tag| focus_tags.contains(tag.as_str()));
+        let is_mentioned = is_title_mentioned(&focus_note.content, &note.meta.title);
+
+        if has_shared_tags || is_mentioned {
+            included.push((note.clone(), "Recommended"));
+        }
+    }
+
     Ok(included)
 }
 
-fn render_context_bundle(title: &str, included: &[(ParsedNote, &'static str)]) -> String {
+fn render_context_bundle(
+    title: &str,
+    included: &[(ParsedNote, &'static str)],
+    purpose: Option<&str>,
+    mode: &str,
+    notes: &[ParsedNote],
+) -> String {
+    let mode_capitalized = if mode.is_empty() {
+        "Standard".to_string()
+    } else {
+        let mut chars = mode.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    };
+
     let mut lines = vec![
         format!("# {}", title),
         String::new(),
-        "## Included Notes".to_string(),
+        format!("**Mode**: {}", mode_capitalized),
     ];
 
-    for (note, reason) in included {
-        lines.push(format!("- {}: [[{}]] (`{}`)", reason, note.meta.title, note.meta.path));
+    if let Some(p) = purpose {
+        if !p.trim().is_empty() {
+            lines.push(format!("**Purpose**: {}", p.trim()));
+        }
     }
 
     lines.extend([
@@ -715,7 +857,13 @@ fn render_context_bundle(title: &str, included: &[(ParsedNote, &'static str)]) -
         String::new(),
         "Use this bundle as local wiki context. Prefer cited note names when answering or proposing edits.".to_string(),
         String::new(),
+        "## Included Notes".to_string(),
     ]);
+
+    for (note, reason) in included {
+        lines.push(format!("- {}: [[{}]] (`{}`)", reason, note.meta.title, note.meta.path));
+    }
+    lines.push(String::new());
 
     for (note, _) in included {
         lines.extend([
@@ -735,8 +883,57 @@ fn render_context_bundle(title: &str, included: &[(ParsedNote, &'static str)]) -
             lines.push(String::new());
         }
 
-        lines.push(note.content.trim().to_string());
-        lines.push(String::new());
+        if mode == "short" {
+            lines.push(extract_excerpt(&note.content, 150));
+            lines.push(String::new());
+        } else {
+            lines.push(note.content.trim().to_string());
+            lines.push(String::new());
+        }
+
+        if mode == "full" {
+            let context = note_context(notes, &note.meta.path).unwrap();
+            let find_note_title = |path: &str| {
+                notes.iter().find(|n| n.meta.path == path).map(|n| n.meta.title.clone()).unwrap_or_else(|| {
+                    path.split(['/', '\\']).last().unwrap_or(path).trim_end_matches(".md").to_string()
+                })
+            };
+
+            let mut outgoing_links = Vec::new();
+            for link in &context.outgoing_links {
+                let t = match &link.resolved_path {
+                    Some(res) => find_note_title(res),
+                    None => link.target_ref.clone(),
+                };
+                let formatted = match &link.resolved_path {
+                    Some(res) => format!("  - [[{}]] (`{}`)", t, res),
+                    None => format!("  - [[{}]]", t),
+                };
+                outgoing_links.push(formatted);
+            }
+
+            let mut backlinks = Vec::new();
+            for link in &context.backlinks {
+                let t = find_note_title(&link.source_path);
+                backlinks.push(format!("  - [[{}]] (`{}`)", t, link.source_path));
+            }
+
+            lines.push("### Links".to_string());
+            lines.push("- **Outgoing**:".to_string());
+            if outgoing_links.is_empty() {
+                lines.push("  - None".to_string());
+            } else {
+                lines.extend(outgoing_links);
+            }
+
+            lines.push("- **Backlinks**:".to_string());
+            if backlinks.is_empty() {
+                lines.push("  - None".to_string());
+            } else {
+                lines.extend(backlinks);
+            }
+            lines.push(String::new());
+        }
     }
 
     format!("{}\n", lines.join("\n").trim())
@@ -1026,6 +1223,7 @@ pub fn run() {
             get_inbox_captures,
             mark_inbox_capture_processed,
             promote_inbox_capture,
+            append_inbox_capture,
             get_context_bundle,
             get_context_bundle_candidates,
             search_notes,
@@ -1125,6 +1323,7 @@ mod tests {
             "Project.md",
             ContextBundleOptions {
                 selected_paths: Some(vec!["Project.md".to_string(), "Home.md".to_string()]),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1133,6 +1332,59 @@ mod tests {
         assert!(bundle.markdown.contains("## Note: Project"));
         assert!(bundle.markdown.contains("## Note: Home"));
         assert!(!bundle.markdown.contains("## Note: Research"));
+    }
+
+    #[test]
+    fn context_bundle_modes_and_purpose() {
+        let mut project = parsed("Project.md", "Project");
+        project.content = "# Project\n\nThis is a longer body text for testing.".to_string();
+        project.links = vec![NoteLink {
+            source_path: "Project.md".to_string(),
+            target_ref: "Research".to_string(),
+            resolved_path: Some("Research.md".to_string()),
+            line: 3,
+            is_managed: false,
+        }];
+        let mut home = parsed("Home.md", "Home");
+        home.links = vec![NoteLink {
+            source_path: "Home.md".to_string(),
+            target_ref: "Project".to_string(),
+            resolved_path: Some("Project.md".to_string()),
+            line: 3,
+            is_managed: false,
+        }];
+        let notes = vec![project, parsed("Research.md", "Research"), home];
+
+        // Short Mode
+        let bundle_short = create_context_bundle(
+            &notes,
+            "Project.md",
+            ContextBundleOptions {
+                selected_paths: None,
+                purpose: Some("Summarize it".to_string()),
+                mode: Some("short".to_string()),
+            },
+        )
+        .unwrap();
+        assert!(bundle_short.markdown.contains("**Mode**: Short"));
+        assert!(bundle_short.markdown.contains("**Purpose**: Summarize it"));
+        assert!(bundle_short.markdown.contains("This is a longer body text for testing."));
+
+        // Full Mode
+        let bundle_full = create_context_bundle(
+            &notes,
+            "Project.md",
+            ContextBundleOptions {
+                selected_paths: None,
+                purpose: None,
+                mode: Some("full".to_string()),
+            },
+        )
+        .unwrap();
+        assert!(bundle_full.markdown.contains("**Mode**: Full"));
+        assert!(bundle_full.markdown.contains("### Links"));
+        assert!(bundle_full.markdown.contains("- **Outgoing**:"));
+        assert!(bundle_full.markdown.contains("  - [[Research]] (`Research.md`)"));
     }
 
     #[test]
@@ -1158,5 +1410,57 @@ mod tests {
         assert!(processed.contains("## Processed"));
         assert!(processed.ends_with("## 2026-06-04 06:30\n\n#inbox\n\nKeep this answer.\n"));
         assert_eq!(parse_inbox_captures(&processed).len(), 0);
+    }
+
+    #[test]
+    fn test_append_inbox_capture_formatting() {
+        let target_content_no_newline = "# Target Note";
+        let target_content_with_newline = "# Target Note\n";
+        let target_content_with_two_newlines = "# Target Note\n\n";
+        
+        let title = "2026-06-04 06:30";
+        let body = "This is a body.";
+        
+        let fmt = |content: &str| {
+            let separator = if content.ends_with("\n\n") {
+                ""
+            } else if content.ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            format!("{}{}", content, format!("{}### Appended Capture ({})\n\n{}\n", separator, title, body.trim()))
+        };
+        
+        assert_eq!(fmt(target_content_no_newline), "# Target Note\n\n### Appended Capture (2026-06-04 06:30)\n\nThis is a body.\n");
+        assert_eq!(fmt(target_content_with_newline), "# Target Note\n\n### Appended Capture (2026-06-04 06:30)\n\nThis is a body.\n");
+        assert_eq!(fmt(target_content_with_two_newlines), "# Target Note\n\n### Appended Capture (2026-06-04 06:30)\n\nThis is a body.\n");
+    }
+
+    #[test]
+    fn test_is_title_mentioned() {
+        assert!(is_title_mentioned("Hello, this is a Project note.", "Project"));
+        assert!(!is_title_mentioned("Hello, this is a ProjectNote.", "Project"));
+        assert!(is_title_mentioned("프로젝트 노트를 확인합니다.", "프로젝트"));
+        assert!(!is_title_mentioned("프로젝트노트를 확인합니다.", "프로젝트"));
+    }
+
+    #[test]
+    fn test_recommended_candidates() {
+        let mut p = parsed("Project.md", "Project");
+        p.meta.tags = vec!["general".to_string()];
+        
+        let mut h = parsed("Home.md", "Home");
+        h.content = "# Home\n\nMentions Project in text.".to_string();
+        h.meta.tags = vec!["general".to_string()];
+        
+        let notes = vec![p, h, parsed("Unrelated.md", "Unrelated")];
+        let candidates = context_bundle_candidates(&notes, "Project.md").unwrap();
+        
+        let home_candidate = candidates.iter().find(|c| c.path == "Home.md").unwrap();
+        assert_eq!(home_candidate.reason, "Recommended");
+        assert!(!home_candidate.selected);
+        
+        assert!(candidates.iter().find(|c| c.path == "Unrelated.md").is_none());
     }
 }

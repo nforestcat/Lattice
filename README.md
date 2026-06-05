@@ -17,9 +17,10 @@ Implemented so far:
 - View rendered Markdown preview beside the editor
 - Parse wiki links, backlinks, outgoing links, tags, and frontmatter
 - View and edit note relationships in a graph
-- Generate LLM context bundles from selected related notes
+- Generate LLM context bundles from selected related notes (with Short/Standard/Full modes and Purpose instructions)
+- Recommend related notes beyond explicit wiki links (by shared tags or unlinked mentions)
 - Capture loose ideas or LLM answers into daily Inbox notes
-- Triage Inbox captures into new notes or mark them processed
+- Triage Inbox captures (into new notes, append to existing notes, or mark processed)
 - Create snapshots and optionally auto-commit saves in existing Git vaults
 
 ## LLM Wiki Direction
@@ -90,12 +91,6 @@ Markdown files are the source of truth. Generated indexes, graph data, and conte
 
 ## Next Ideas
 
-Likely next work:
-
-- Append Inbox captures to an existing target note
-- Add context bundle modes: short, standard, full
-- Add bundle purpose/instructions field
-- Recommend related notes beyond explicit wiki links
 - Add a first LLM prompt workspace before direct API integration
 
 ## License

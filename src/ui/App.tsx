@@ -29,7 +29,11 @@ export function App() {
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
+  const [bundlePurpose, setBundlePurpose] = useState("");
+  const [bundleMode, setBundleMode] = useState<"short" | "standard" | "full">("standard");
   const [inboxCaptures, setInboxCaptures] = useState<InboxCaptureBlock[]>([]);
+  const [triageCaptureToAppend, setTriageCaptureToAppend] = useState<{ id: string; title: string } | null>(null);
+  const [noteSearchQuery, setNoteSearchQuery] = useState("");
   const [captureDraft, setCaptureDraft] = useState("");
   const [status, setStatus] = useState("Ready");
 
@@ -265,7 +269,9 @@ export function App() {
     }
     try {
       const bundle = await vaultApi.getContextBundle(activePath, {
-        selectedPaths: contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).map((candidate) => candidate.path)
+        selectedPaths: contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).map((candidate) => candidate.path),
+        purpose: bundlePurpose,
+        mode: bundleMode
       });
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
@@ -356,6 +362,29 @@ export function App() {
       setResults(result.vault.notes);
       setStatus("Capture marked processed");
       await selectNote(activePath);
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function handleAppendCapture(targetPath: string) {
+    if (!activePath || !triageCaptureToAppend) {
+      return;
+    }
+    try {
+      const result = await vaultApi.appendInboxCapture({
+        inboxPath: activePath,
+        captureId: triageCaptureToAppend.id,
+        targetPath
+      });
+      setTriageCaptureToAppend(null);
+      setNoteSearchQuery("");
+      setVault(result.vault);
+      setResults(result.vault.notes);
+      setStatus(`Appended capture to ${result.selectedPath}`);
+      if (result.selectedPath) {
+        await selectNote(result.selectedPath);
+      }
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -476,6 +505,36 @@ export function App() {
             <span>{selectedContextCount}/{contextCandidates.length} notes</span>
             <span>{selectedContextCharacters} chars</span>
           </div>
+          <div className="bundleOptions">
+            <div className="optionGroup">
+              <label htmlFor="bundle-purpose">Purpose</label>
+              <input
+                id="bundle-purpose"
+                type="text"
+                placeholder="e.g. Summarize or refactor..."
+                value={bundlePurpose}
+                onChange={(event) => {
+                  setBundlePurpose(event.target.value);
+                  setContextBundle(null);
+                }}
+              />
+            </div>
+            <div className="optionGroup">
+              <label htmlFor="bundle-mode">Mode</label>
+              <select
+                id="bundle-mode"
+                value={bundleMode}
+                onChange={(event) => {
+                  setBundleMode(event.target.value as any);
+                  setContextBundle(null);
+                }}
+              >
+                <option value="short">Short (Excerpt)</option>
+                <option value="standard">Standard (Full)</option>
+                <option value="full">Full (Full + Links)</option>
+              </select>
+            </div>
+          </div>
           <div className="candidateList">
             {contextCandidates.map((candidate) => (
               <label key={candidate.path} className="candidateRow">
@@ -521,6 +580,7 @@ export function App() {
                 <p>{capture.body}</p>
                 <div className="inlineActions">
                   <button onClick={() => void promoteInboxCapture(capture.id)}>Create Note</button>
+                  <button onClick={() => setTriageCaptureToAppend({ id: capture.id, title: capture.title })}>Append to Note</button>
                   <button onClick={() => void markInboxCaptureProcessed(capture.id)}>Mark Processed</button>
                 </div>
               </div>
@@ -578,6 +638,43 @@ export function App() {
         </section>
         <p className="status">{status}</p>
       </aside>
+
+      {triageCaptureToAppend && (
+        <div className="modalOverlay" onClick={() => setTriageCaptureToAppend(null)}>
+          <div className="modalContent" onClick={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <h3>Append Capture to Note</h3>
+              <button className="closeButton" onClick={() => setTriageCaptureToAppend(null)}>&times;</button>
+            </header>
+            <div className="modalBody">
+              <input
+                type="text"
+                placeholder="Search notes..."
+                autoFocus
+                value={noteSearchQuery}
+                onChange={(event) => setNoteSearchQuery(event.target.value)}
+              />
+              <div className="noteList">
+                {vault?.notes
+                  .filter((note) => {
+                    const q = noteSearchQuery.toLowerCase();
+                    return note.title.toLowerCase().includes(q) || note.path.toLowerCase().includes(q);
+                  })
+                  .map((note) => (
+                    <button
+                      key={note.path}
+                      className="noteSelectItem"
+                      onClick={() => void handleAppendCapture(note.path)}
+                    >
+                      <strong>{note.title}</strong>
+                      <span>{note.path}</span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

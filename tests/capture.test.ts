@@ -113,4 +113,30 @@ describe("parseInboxCaptures", () => {
     });
     await expect(api.getInboxCaptures("Inbox/2026-06-04.md")).resolves.toEqual([]);
   });
+
+  it("appends a capture into an existing note and moves it to processed", async () => {
+    const api = createMockVaultApi();
+    await api.openVault("Demo Vault");
+    await api.captureToInbox({
+      content: "Add this text to the end of Home note.",
+      relatedPath: "Home.md",
+      capturedAt: "2026-06-04T06:30:00.000Z"
+    });
+
+    const captures = await api.getInboxCaptures("Inbox/2026-06-04.md");
+    const result = await api.appendInboxCapture({
+      inboxPath: "Inbox/2026-06-04.md",
+      captureId: captures[0].id,
+      targetPath: "Home.md"
+    });
+
+    expect(result.selectedPath).toBe("Home.md");
+    await expect(api.readNote("Home.md")).resolves.toMatchObject({
+      content: expect.stringContaining("### Appended Capture (2026-06-04 06:30)\n\nAdd this text to the end of Home note.")
+    });
+    await expect(api.readNote("Inbox/2026-06-04.md")).resolves.toMatchObject({
+      content: expect.stringContaining("## Processed")
+    });
+    await expect(api.getInboxCaptures("Inbox/2026-06-04.md")).resolves.toEqual([]);
+  });
 });

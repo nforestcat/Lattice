@@ -80,4 +80,72 @@ describe("createContextBundle", () => {
     ]);
     expect(candidates.map((candidate) => candidate.characterCount)).toEqual([23, 26, 29]);
   });
+
+  it("includes the mode and purpose in the bundle headers", () => {
+    const index = buildVaultIndex([
+      { path: "Home.md", content: "# Home\n\nSome body content." }
+    ]);
+
+    const bundle = createContextBundle(index, "Home.md", {
+      purpose: "Testing purpose field",
+      mode: "short"
+    });
+
+    expect(bundle.markdown).toContain("**Mode**: Short");
+    expect(bundle.markdown).toContain("**Purpose**: Testing purpose field");
+  });
+
+  it("extracts a clean excerpt for Short mode", () => {
+    const index = buildVaultIndex([
+      {
+        path: "Home.md",
+        content: "---\nstatus: active\n---\n# Home\n\nThis is a long body content that we want to verify gets truncated in short mode. It has multiple lines and we want a clean excerpt."
+      }
+    ]);
+
+    const bundle = createContextBundle(index, "Home.md", {
+      mode: "short"
+    });
+
+    expect(bundle.markdown).toContain("**Mode**: Short");
+    expect(bundle.markdown).toContain("Frontmatter:");
+    expect(bundle.markdown).toContain("status: active");
+    expect(bundle.markdown).toContain("This is a long body content that we want to verify gets truncated");
+    expect(bundle.markdown).not.toContain("# Home");
+  });
+
+  it("includes outgoing and backlinks summaries in Full mode", () => {
+    const index = buildVaultIndex([
+      { path: "Home.md", content: "# Home\n\nLinks to [[Project]]." },
+      { path: "Project.md", content: "# Project\n\n[[Research]]." },
+      { path: "Research.md", content: "# Research" }
+    ]);
+
+    const bundle = createContextBundle(index, "Project.md", {
+      mode: "full"
+    });
+
+    expect(bundle.markdown).toContain("**Mode**: Full");
+    expect(bundle.markdown).toContain("### Links");
+    expect(bundle.markdown).toContain("- **Outgoing**:");
+    expect(bundle.markdown).toContain("  - [[Research]] (`Research.md`)");
+    expect(bundle.markdown).toContain("- **Backlinks**:");
+    expect(bundle.markdown).toContain("  - [[Home]] (`Home.md`)");
+  });
+
+  it("lists recommended context bundle candidates (by shared tags or unlinked mentions) as unselected by default", () => {
+    const index = buildVaultIndex([
+      { path: "Home.md", content: "# Home\n\nNo links here. Mentions target Project in plain text. #general" },
+      { path: "Project.md", content: "# Project\n\nTesting candidates. #general" },
+      { path: "Unrelated.md", content: "# Unrelated\n\nNo tag matches, no mentions." }
+    ]);
+
+    const candidates = getContextBundleCandidates(index, "Project.md");
+
+    expect(candidates).toEqual([
+      expect.objectContaining({ path: "Project.md", title: "Project", reason: "Focus", selected: true }),
+      expect.objectContaining({ path: "Home.md", title: "Home", reason: "Recommended", selected: false })
+    ]);
+    expect(candidates.find((candidate) => candidate.path === "Unrelated.md")).toBeUndefined();
+  });
 });
