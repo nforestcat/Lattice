@@ -1768,7 +1768,7 @@ pub fn run() {
             prune_archived_prompts
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Local Vault Notes");
+        .expect("error while running Lattice");
 }
 
 #[cfg(test)]

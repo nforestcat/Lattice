@@ -1,8 +1,8 @@
 [package]
 name = "local-vault-notes"
 version = "0.1.0"
-description = "Local-first Markdown vault desktop app"
-authors = ["Local Vault Notes"]
+description = "Local-first wiki for LLM-maintained knowledge"
+authors = ["nforestcat"]
 edition = "2021"
 
 [lib]

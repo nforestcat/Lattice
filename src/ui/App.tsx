@@ -1195,7 +1195,7 @@ export function App() {
     <main className="workspace">
       <aside className="sidebar">
         <div className="brand">
-          <strong>Local Vault</strong>
+          <strong>Lattice</strong>
           <span>{vault?.rootPath ?? "No vault"}</span>
         </div>
         <button className="primary" onClick={() => void chooseVaultFolder()}>Open vault</button>

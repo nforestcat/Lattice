@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Local Vault Notes",
+  "productName": "Lattice",
   "version": "0.1.0",
   "identifier": "com.localvault.notes",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Local Vault Notes",
+        "title": "Lattice",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

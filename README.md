@@ -1,6 +1,6 @@
 # Lattice
 
-Lattice is an experimental local-first Markdown wiki for working with LLMs.
+Lattice is a local-first wiki for LLM-maintained knowledge.
 
 It started as an Obsidian-style desktop notes app, but the current goal is more specific: help a local Markdown vault become a useful, inspectable context layer for LLM work.
 
