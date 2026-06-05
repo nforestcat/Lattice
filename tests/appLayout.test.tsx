@@ -156,5 +156,45 @@ describe("App layout", () => {
     saveVaultConfigSpy.mockRestore();
     candidatesSpy.mockRestore();
   });
-});
 
+  it("saves preset, purpose, and mode changes as consistent config updates", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePurpose: "Answer questions based on the provided wiki context.",
+      bundlePreset: "ask"
+    });
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText("Preset")).toBeTruthy());
+    saveVaultConfigSpy.mockClear();
+
+    const purposeInput = screen.getByPlaceholderText("e.g. Summarize or refactor...") as HTMLInputElement;
+    fireEvent.change(purposeInput, { target: { value: "Write a Korean summary." } });
+
+    await waitFor(() => {
+      expect(saveVaultConfigSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        bundlePreset: "custom",
+        bundlePurpose: "Write a Korean summary.",
+        bundleMode: "standard"
+      }));
+    });
+
+    const modeSelect = screen.getByLabelText("Mode") as HTMLSelectElement;
+    fireEvent.change(modeSelect, { target: { value: "short" } });
+
+    await waitFor(() => {
+      expect(saveVaultConfigSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        bundlePreset: "custom",
+        bundlePurpose: "Write a Korean summary.",
+        bundleMode: "short"
+      }));
+    });
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+  });
+});

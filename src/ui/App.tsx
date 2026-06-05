@@ -47,6 +47,21 @@ export const PRESETS: Record<PresetType, { label: string; purpose: string; mode:
   }
 };
 
+function normalizePreset(value: unknown): PresetType {
+  return typeof value === "string" && value in PRESETS ? value as PresetType : "ask";
+}
+
+function normalizeBundleMode(value: unknown, fallback: "short" | "standard" | "full"): "short" | "standard" | "full" {
+  return value === "short" || value === "standard" || value === "full" ? value : fallback;
+}
+
+function presetForSettings(purpose: string, mode: "short" | "standard" | "full"): PresetType {
+  const matched = Object.entries(PRESETS).find(([key, config]) => {
+    return key !== "custom" && config.purpose === purpose && config.mode === mode;
+  });
+  return matched ? matched[0] as PresetType : "custom";
+}
+
 export function App() {
   const [vault, setVault] = useState<VaultSnapshot | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -64,7 +79,7 @@ export function App() {
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
-  const [bundlePreset, setBundlePreset] = useState<string>("ask");
+  const [bundlePreset, setBundlePreset] = useState<PresetType>("ask");
   const [bundlePurpose, setBundlePurpose] = useState(PRESETS["ask"].purpose);
   const [bundleMode, setBundleMode] = useState<"short" | "standard" | "full">("standard");
   const [inboxCaptures, setInboxCaptures] = useState<InboxCaptureBlock[]>([]);
@@ -102,14 +117,6 @@ export function App() {
     void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
   }, []);
 
-  useEffect(() => {
-    if (!activePath) {
-      return;
-    }
-
-    void refreshContext(activePath);
-  }, [activePath]);
-
   async function openVault(path: string) {
     const nextVault = await vaultApi.openVault(path);
     setVault(nextVault);
@@ -132,14 +139,14 @@ export function App() {
       setContextLimit(limit);
       setIsCustomLimit(limit !== 8000 && limit !== 32000 && limit !== 128000);
 
-      const preset = loadedConfig.bundlePreset ?? "ask";
+      const preset = normalizePreset(loadedConfig.bundlePreset);
       setBundlePreset(preset);
 
-      const purpose = loadedConfig.bundlePurpose ?? (PRESETS[preset as PresetType]?.purpose ?? PRESETS["ask"].purpose);
+      const purpose = typeof loadedConfig.bundlePurpose === "string" ? loadedConfig.bundlePurpose : PRESETS[preset].purpose;
       setBundlePurpose(purpose);
 
-      const mode = loadedConfig.bundleMode ?? (PRESETS[preset as PresetType]?.mode ?? PRESETS["ask"].mode);
-      setBundleMode(mode as any);
+      const mode = normalizeBundleMode(loadedConfig.bundleMode, PRESETS[preset].mode);
+      setBundleMode(mode);
     } catch (e) {
       console.error("Failed to load vault config", e);
     }
@@ -419,35 +426,28 @@ export function App() {
 
   async function switchToShortMode() {
     setBundleMode("short");
-    updatePresetForCustomChanges(bundlePurpose, "short");
-    void updateVaultConfig({ bundleMode: "short" });
+    const nextPreset = presetForSettings(bundlePurpose, "short");
+    setBundlePreset(nextPreset);
+    void updateVaultConfig({ bundleMode: "short", bundlePreset: nextPreset });
     if (contextBundle) {
       await generateContextBundle(undefined, "short");
     }
   }
 
-  const updatePresetForCustomChanges = (purpose: string, mode: "short" | "standard" | "full") => {
-    const matched = Object.entries(PRESETS).find(([key, config]) => {
-      return key !== "custom" && config.purpose === purpose && config.mode === mode;
-    });
-    const nextPreset = matched ? matched[0] : "custom";
-    setBundlePreset(nextPreset);
-    void updateVaultConfig({ bundlePreset: nextPreset });
-  };
-
   const handlePresetChange = (preset: string) => {
-    setBundlePreset(preset);
-    if (preset !== "custom") {
-      const config = PRESETS[preset as PresetType];
+    const nextPreset = normalizePreset(preset);
+    setBundlePreset(nextPreset);
+    if (nextPreset !== "custom") {
+      const config = PRESETS[nextPreset];
       setBundlePurpose(config.purpose);
       setBundleMode(config.mode);
       void updateVaultConfig({
-        bundlePreset: preset,
+        bundlePreset: nextPreset,
         bundlePurpose: config.purpose,
         bundleMode: config.mode
       });
     } else {
-      void updateVaultConfig({ bundlePreset: preset });
+      void updateVaultConfig({ bundlePreset: nextPreset });
     }
     setContextBundle(null);
   };
@@ -817,9 +817,10 @@ export function App() {
                 value={bundlePurpose}
                 onChange={(event) => {
                   const val = event.target.value;
+                  const nextPreset = presetForSettings(val, bundleMode);
                   setBundlePurpose(val);
-                  updatePresetForCustomChanges(val, bundleMode);
-                  void updateVaultConfig({ bundlePurpose: val });
+                  setBundlePreset(nextPreset);
+                  void updateVaultConfig({ bundlePurpose: val, bundlePreset: nextPreset });
                   setContextBundle(null);
                 }}
               />
@@ -830,10 +831,11 @@ export function App() {
                 id="bundle-mode"
                 value={bundleMode}
                 onChange={(event) => {
-                  const val = event.target.value as any;
+                  const val = normalizeBundleMode(event.target.value, bundleMode);
+                  const nextPreset = presetForSettings(bundlePurpose, val);
                   setBundleMode(val);
-                  updatePresetForCustomChanges(bundlePurpose, val);
-                  void updateVaultConfig({ bundleMode: val });
+                  setBundlePreset(nextPreset);
+                  void updateVaultConfig({ bundleMode: val, bundlePreset: nextPreset });
                   setContextBundle(null);
                 }}
               >
