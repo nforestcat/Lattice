@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App, normalizeVaultConfig } from "../src/ui/App";
 import { vaultApi } from "../src/api";
+import * as llmApi from "../src/api/llm";
 
 describe("App layout", () => {
   it("starts in split mode with editor and preview visible together", async () => {
@@ -1198,5 +1199,84 @@ describe("App layout", () => {
     createNoteSpy.mockRestore();
     saveNoteSpy.mockRestore();
     deleteEntrySpy.mockRestore();
+  });
+
+  it("scans for unresolved wiki links, drafts a stub with LLM, and creates the note", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" }
+      ],
+      tree: []
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Welcome, see the [[Missing Target]] dead link.",
+      revision: "rev-123"
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "test-key", model: "gpt-4o" }
+    });
+
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue("This is the drafted AI stub note content.");
+
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockResolvedValue({
+      vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+      selectedPath: "Missing Target.md"
+    });
+
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
+      saved: true,
+      revision: "rev-456",
+      conflict: false,
+      snapshotId: null,
+      gitCommit: null
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Switch to Distill Workspace
+    const distillTabBtn = screen.getByRole("button", { name: "Distill" });
+    fireEvent.click(distillTabBtn);
+    expect(screen.getByText("LLM Distill Workspace")).toBeTruthy();
+
+    // Click on Wiki Auditor tab
+    const auditorTabBtn = screen.getByRole("button", { name: "Wiki Auditor" });
+    fireEvent.click(auditorTabBtn);
+
+    // Verify it performs the scan and shows the unresolved link target
+    await waitFor(() => expect(screen.getByText("[[Missing Target]]")).toBeTruthy());
+    expect(screen.getByText("Referenced in:")).toBeTruthy();
+    expect(screen.getByText((_content, element) => element?.textContent === "Home (Home.md)")).toBeTruthy();
+
+    // Click Draft Stub button
+    const draftStubBtn = screen.getByRole("button", { name: "Draft Stub" });
+    fireEvent.click(draftStubBtn);
+
+    // Verify draft stub loading, then draft content preview shows up
+    await waitFor(() => expect(screen.getByText("AI Stub Note Draft:")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("This is the drafted AI stub note content.")).toBeTruthy());
+
+    // Click Create Note button
+    const createNoteBtn = screen.getByRole("button", { name: "Create Note" });
+    fireEvent.click(createNoteBtn);
+
+    // Verify vaultApi.createNote and saveNote were called
+    await waitFor(() => {
+      expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing Target");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Target.md", "This is the drafted AI stub note content.", "");
+    });
+
+    // Cleanup spies
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
   });
 });

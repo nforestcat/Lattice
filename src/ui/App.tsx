@@ -336,12 +336,17 @@ export function App() {
   const [llmConfig, setLlmConfig] = useState<LlmConfig>({ provider: "openai", apiKey: "", model: "gpt-4o" });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [distillTab, setDistillTab] = useState<"paste" | "chat">("paste");
+  const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor">("paste");
   const [isLlmGenerating, setIsLlmGenerating] = useState(false);
   const [includeContext, setIncludeContext] = useState(true);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
   const [linkSuggestions, setLinkSuggestions] = useState<{ text: string; path: string }[]>([]);
   const [embeddingStatus, setEmbeddingStatus] = useState("");
+  const [unresolvedLinks, setUnresolvedLinks] = useState<{ target: string; sources: { path: string; title: string; excerpt: string }[] }[]>([]);
+  const [isScanningUnresolved, setIsScanningUnresolved] = useState(false);
+  const [draftingTarget, setDraftingTarget] = useState<string | null>(null);
+  const [draftedContent, setDraftedContent] = useState<string | null>(null);
+  const [isDraftingStub, setIsDraftingStub] = useState(false);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -1526,6 +1531,132 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     event.target.value = "";
   }
 
+  async function runUnresolvedLinksScan() {
+    setIsScanningUnresolved(true);
+    setUnresolvedLinks([]);
+    setDraftingTarget(null);
+    setDraftedContent(null);
+    try {
+      const notesList = vault?.notes || [];
+      const validTargets = new Set<string>();
+      for (const note of notesList) {
+        validTargets.add(note.title.toLowerCase().trim());
+        validTargets.add(note.path.replace(/\.md$/i, "").toLowerCase().trim());
+        validTargets.add(note.path.toLowerCase().trim());
+      }
+
+      const unresolvedMap = new Map<string, { path: string; title: string; excerpt: string }[]>();
+
+      for (const note of notesList) {
+        try {
+          const doc = await vaultApi.readNote(note.path);
+          const regex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+          let match: RegExpExecArray | null;
+          const lines = doc.content.split(/\r?\n/);
+
+          while ((match = regex.exec(doc.content)) !== null) {
+            const currentMatch = match;
+            const targetTitle = currentMatch[1].trim();
+            if (!targetTitle) continue;
+
+            const targetLower = targetTitle.toLowerCase();
+            if (!validTargets.has(targetLower)) {
+              const lineIdx = lines.findIndex(l => l.includes(currentMatch[0]));
+              let excerpt = "";
+              if (lineIdx !== -1) {
+                const start = Math.max(0, lineIdx - 2);
+                const end = Math.min(lines.length, lineIdx + 3);
+                excerpt = lines.slice(start, end).join("\n");
+              } else {
+                excerpt = doc.content.slice(0, 300);
+              }
+
+              const sources = unresolvedMap.get(targetTitle) || [];
+              if (!sources.some(s => s.path === note.path)) {
+                sources.push({
+                  path: note.path,
+                  title: note.title,
+                  excerpt
+                });
+                unresolvedMap.set(targetTitle, sources);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to read note ${note.path} for unresolved link scan:`, err);
+        }
+      }
+
+      const list = Array.from(unresolvedMap.entries()).map(([target, sources]) => ({
+        target,
+        sources
+      }));
+
+      list.sort((a, b) => a.target.localeCompare(b.target));
+      setUnresolvedLinks(list);
+      setStatus(`Scan complete: found ${list.length} unresolved link(s)`);
+    } catch (err) {
+      console.error(err);
+      setStatus("Failed to scan unresolved links");
+    } finally {
+      setIsScanningUnresolved(false);
+    }
+  }
+
+  async function draftStubNote(targetTitle: string, sources: { path: string; title: string; excerpt: string }[]) {
+    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama")) {
+      setStatus("Please configure LLM settings first");
+      return;
+    }
+
+    setDraftingTarget(targetTitle);
+    setDraftedContent(null);
+    setIsDraftingStub(true);
+    try {
+      const sourceInfo = sources.map(s => `Note: "${s.title}"\nContext Excerpt:\n${s.excerpt}`).join("\n\n");
+      const systemPrompt = "You are an expert wiki editor. Please write a short, concise, and high-quality stub note (in Markdown) defining the term. Do not include a heading for the title, just write the body text with appropriate formatting.";
+      const userPrompt = `We have an unresolved wiki link to the note "${targetTitle}". It is referenced in the following contexts:\n\n${sourceInfo}\n\nPlease write a concise defining stub note (in Markdown) for "${targetTitle}" based on this context.`;
+      
+      const payload: ChatMessage[] = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ];
+
+      const response = await sendChatMessage(config, payload);
+      setDraftedContent(response);
+      setStatus(`Drafted AI stub for "${targetTitle}"`);
+    } catch (err) {
+      console.error(err);
+      setStatus("Failed to draft AI stub");
+    } finally {
+      setIsDraftingStub(false);
+    }
+  }
+
+  async function createStubNote(targetTitle: string, content: string) {
+    setStatus("Creating note...");
+    try {
+      const result = await vaultApi.createNote(null, targetTitle);
+      const newPath = result.selectedPath;
+      if (!newPath) {
+        throw new Error("Failed to get selected path for new note");
+      }
+
+      const saveResult = await vaultApi.saveNote(newPath, content, "");
+      if (saveResult.saved) {
+        setStatus(`Created stub note: "${targetTitle}"`);
+        await refreshVault(newPath);
+        void runUnresolvedLinksScan();
+      } else {
+        throw new Error("Failed to save stub content");
+      }
+    } catch (err) {
+      console.error(err);
+      setStatus(`Failed to create stub note: ${errorMessage(err)}`);
+    }
+  }
+
   async function loadPromptDiff(run: PromptRun) {
     if (diffRunId === run.id) {
       setDiffRunId(null);
@@ -2013,9 +2144,18 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
                     >
                       Chat with LLM
                     </button>
+                    <button
+                      className={distillTab === "auditor" ? "active" : ""}
+                      onClick={() => {
+                        setDistillTab("auditor");
+                        void runUnresolvedLinksScan();
+                      }}
+                    >
+                      Wiki Auditor
+                    </button>
                   </div>
 
-                  {distillTab === "paste" ? (
+                  {distillTab === "paste" && (
                     <div className="distillInputArea">
                       <h3>Raw Input Context</h3>
                       <textarea
@@ -2071,7 +2211,9 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                         </button>
                       </div>
                     </div>
-                  ) : (
+                  )}
+
+                  {distillTab === "chat" && (
                     <div className="distillChatArea">
                       <div className="chatHeader">
                         <h3>LLM Copilot Chat</h3>
@@ -2277,6 +2419,102 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                           </button>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {distillTab === "auditor" && (
+                    <div className="distillAuditorArea">
+                      <div className="auditorHeader">
+                        <h3>Wiki Link Auditor</h3>
+                        <button
+                          type="button"
+                          className="smallButton"
+                          disabled={isScanningUnresolved}
+                          onClick={() => void runUnresolvedLinksScan()}
+                        >
+                          {isScanningUnresolved ? "Scanning..." : "Re-Scan Vault"}
+                        </button>
+                      </div>
+
+                      {isScanningUnresolved && (
+                        <div className="auditorLoading">
+                          <span className="spinner">⌛</span> Scanning all vault notes for unresolved wiki links...
+                        </div>
+                      )}
+
+                      {!isScanningUnresolved && draftingTarget && (
+                        <div className="stubDraftingBox">
+                          <h4>AI Stub Note Draft: <strong>{draftingTarget}</strong></h4>
+                          {isDraftingStub && (
+                            <div className="draftingLoading">
+                              <span className="spinner">⌛</span> Drafting stub note entry using LLM...
+                            </div>
+                          )}
+                          {!isDraftingStub && draftedContent !== null && (
+                            <>
+                              <pre className="stubPreview">{draftedContent}</pre>
+                              <div className="stubDraftActions">
+                                <button
+                                  type="button"
+                                  className="primary"
+                                  onClick={() => void createStubNote(draftingTarget, draftedContent)}
+                                >
+                                  Create Note
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDraftingTarget(null);
+                                    setDraftedContent(null);
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {!isScanningUnresolved && !draftingTarget && (
+                        <div className="unresolvedLinksList">
+                          {unresolvedLinks.length === 0 ? (
+                            <div className="auditorSuccessState">
+                              <span className="successCheck">✓</span>
+                              <p>All wiki links are resolved! No dead links found in the vault.</p>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="hint" style={{ marginBottom: "12px" }}>
+                                The following wiki links exist in note contents but do not resolve to any existing note file. Click "Draft Stub" to generate a context-aware entry with AI.
+                              </p>
+                              {unresolvedLinks.map((item) => (
+                                <div key={item.target} className="unresolvedLinkCard">
+                                  <div className="unresolvedLinkHeader">
+                                    <strong>[[{item.target}]]</strong>
+                                    <button
+                                      type="button"
+                                      className="smallButton primary"
+                                      onClick={() => void draftStubNote(item.target, item.sources)}
+                                    >
+                                      Draft Stub
+                                    </button>
+                                  </div>
+                                  <div className="unresolvedLinkSources">
+                                    <span>Referenced in:</span>
+                                    {item.sources.map((source) => (
+                                      <div key={source.path} className="sourceExcerptCard">
+                                        <div className="sourceTitle">{source.title} (<code>{source.path}</code>)</div>
+                                        <pre className="sourceExcerpt">{source.excerpt}</pre>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
