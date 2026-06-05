@@ -225,6 +225,20 @@ function findNote(index: VaultIndex, path: string): ParsedNote | null {
   return index.notes.find((note) => note.path === path) ?? null;
 }
 
+export function estimateTokens(text: string): number {
+  let englishChars = 0;
+  let cjkChars = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code > 255) {
+      cjkChars++;
+    } else {
+      englishChars++;
+    }
+  }
+  return Math.ceil(englishChars / 4.0 + cjkChars * 1.2);
+}
+
 function renderBundle(
   title: string,
   notes: IncludedNote[],

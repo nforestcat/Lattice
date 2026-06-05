@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildVaultIndex } from "../src/core/indexer";
-import { createContextBundle, getContextBundleCandidates } from "../src/core/contextBundle";
+import { createContextBundle, getContextBundleCandidates, estimateTokens } from "../src/core/contextBundle";
 
 describe("createContextBundle", () => {
   it("bundles the focus note with outgoing links and backlinks for LLM context", () => {
@@ -203,5 +203,19 @@ describe("createContextBundle", () => {
     expect(recommended).toBeDefined();
     expect(recommended!.score).toBe(6.0); // Max of tagScore (4.5) and mentionScore (6.0)
     expect(recommended!.reasonDetail).toBe("Shares tags: #llm; mentions focus 1 time(s)");
+  });
+
+  describe("estimateTokens", () => {
+    it("estimates token counts for English text correctly", () => {
+      expect(estimateTokens("Hello World")).toBe(3); // 11 chars / 4 = 2.75 -> 3
+    });
+
+    it("estimates token counts for Korean CJK text correctly", () => {
+      expect(estimateTokens("한글")).toBe(3); // 2 chars * 1.2 = 2.4 -> 3
+    });
+
+    it("estimates token counts for mixed text correctly", () => {
+      expect(estimateTokens("Hello 한글")).toBe(4); // 6 / 4 + 2 * 1.2 = 1.5 + 2.4 = 3.9 -> 4
+    });
   });
 });

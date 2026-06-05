@@ -9,6 +9,7 @@ import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, No
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
+import { estimateTokens } from "../core/contextBundle";
 
 type ViewMode = "split" | "edit" | "preview" | "graph";
 
@@ -36,6 +37,21 @@ export function App() {
   const [noteSearchQuery, setNoteSearchQuery] = useState("");
   const [captureDraft, setCaptureDraft] = useState("");
   const [status, setStatus] = useState("Ready");
+  const [contextLimit, setContextLimit] = useState<number>(() => {
+    const saved = localStorage.getItem("lattice:context_limit");
+    return saved ? parseInt(saved, 10) : 8000;
+  });
+  const [isCustomLimit, setIsCustomLimit] = useState<boolean>(() => {
+    const saved = localStorage.getItem("lattice:context_limit");
+    if (!saved) return false;
+    const val = parseInt(saved, 10);
+    return val !== 8000 && val !== 32000 && val !== 128000;
+  });
+
+  const handleLimitChange = (val: number) => {
+    setContextLimit(val);
+    localStorage.setItem("lattice:context_limit", val.toString());
+  };
 
   useEffect(() => {
     void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
@@ -413,6 +429,13 @@ export function App() {
     .filter((candidate) => selectedContextPaths.has(candidate.path))
     .reduce((total, candidate) => total + candidate.characterCount, 0);
 
+  const selectedContextTokens = useMemo(() => {
+    const selectedNotes = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path));
+    return selectedNotes.reduce((total, candidate) => {
+      return total + Math.ceil(candidate.characterCount * 0.6);
+    }, 0);
+  }, [contextCandidates, selectedContextPaths]);
+
   return (
     <main className="workspace">
       <aside className="sidebar">
@@ -521,6 +544,64 @@ export function App() {
             <span>{selectedContextCount}/{contextCandidates.length} notes</span>
             <span>{selectedContextCharacters} chars</span>
           </div>
+
+          <div className="budgetSection">
+            <div className="budgetsHeader">
+              <span>{selectedContextTokens.toLocaleString()} / {contextLimit.toLocaleString()} tokens</span>
+              <span className="budgetPercent">{Math.min(100, Math.round((selectedContextTokens / contextLimit) * 100))}%</span>
+            </div>
+            
+            <div className="progressBarOuter">
+              <div 
+                className={`progressBarInner ${selectedContextTokens > contextLimit ? "overLimit" : ""}`}
+                style={{ width: `${Math.min(100, (selectedContextTokens / contextLimit) * 100)}%` }}
+              />
+            </div>
+
+            {selectedContextTokens > contextLimit && (
+              <div className="budgetWarning">
+                ⚠️ Exceeded target limit by {(selectedContextTokens - contextLimit).toLocaleString()} tokens.
+              </div>
+            )}
+
+            <div className="limitConfig">
+              <label htmlFor="context-limit-select">Limit</label>
+              <div className="limitInputs">
+                <select
+                  id="context-limit-select"
+                  value={isCustomLimit ? "custom" : contextLimit}
+                  onChange={(event) => {
+                    const val = event.target.value;
+                    if (val === "custom") {
+                      setIsCustomLimit(true);
+                    } else {
+                      setIsCustomLimit(false);
+                      handleLimitChange(parseInt(val, 10));
+                    }
+                  }}
+                >
+                  <option value={8000}>8K (GPT-3.5/Ollama)</option>
+                  <option value={32000}>32K (Claude 3 Haiku)</option>
+                  <option value={128000}>128K (GPT-4o/Claude 3.5)</option>
+                  <option value="custom">Custom...</option>
+                </select>
+
+                {isCustomLimit && (
+                  <input
+                    type="number"
+                    className="customLimitField"
+                    placeholder="Tokens..."
+                    value={contextLimit}
+                    onChange={(event) => {
+                      const val = parseInt(event.target.value, 10);
+                      handleLimitChange(isNaN(val) ? 0 : val);
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="bundleOptions">
             <div className="optionGroup">
               <label htmlFor="bundle-purpose">Purpose</label>

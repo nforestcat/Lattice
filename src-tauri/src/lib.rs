@@ -799,6 +799,21 @@ fn count_title_mentions(content: &str, title: &str) -> usize {
     count
 }
 
+#[cfg(test)]
+fn estimate_tokens(text: &str) -> usize {
+    let mut english_chars: f64 = 0.0;
+    let mut cjk_chars: f64 = 0.0;
+    for c in text.chars() {
+        if c as u32 > 255 {
+            cjk_chars += 1.0;
+        } else {
+            english_chars += 1.0;
+        }
+    }
+    let total: f64 = english_chars / 4.0 + cjk_chars * 1.2;
+    total.ceil() as usize
+}
+
 
 fn context_bundle_candidates(notes: &[ParsedNote], focus_path: &str) -> Result<Vec<ContextBundleCandidate>, String> {
     Ok(context_bundle_included_notes(notes, focus_path)?
@@ -1621,5 +1636,12 @@ mod tests {
 
         assert!(candidates.iter().any(|candidate| candidate.path == "Meeting.md" && candidate.reason == "Recommended"));
         assert!(candidates.iter().all(|candidate| candidate.path != "Other.md"));
+    }
+
+    #[test]
+    fn test_estimate_tokens() {
+        assert_eq!(estimate_tokens("Hello World"), 3); // 11 English chars / 4 = 2.75 -> ceil -> 3
+        assert_eq!(estimate_tokens("한글"), 3); // 2 CJK chars * 1.2 = 2.4 -> ceil -> 3
+        assert_eq!(estimate_tokens("Hello 한글"), 4); // 6 English / 4 = 1.5, 2 CJK * 1.2 = 2.4. Sum = 3.9 -> ceil -> 4
     }
 }
