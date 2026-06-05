@@ -125,6 +125,15 @@ export type VaultApi = {
   restoreSnapshot(snapshotId: string): Promise<SaveResult>;
   getGitStatus(): Promise<GitStatus>;
   setAutoGit(enabled: boolean): Promise<GitSettings>;
-  getVaultConfig(): Promise<Record<string, any>>;
-  saveVaultConfig(config: Record<string, any>): Promise<void>;
+  getVaultConfig(): Promise<VaultConfig>;
+  saveVaultConfig(config: VaultConfig): Promise<void>;
+};
+
+export type VaultConfig = {
+  contextLimit?: number;
+  bundlePreset?: string;
+  bundlePurpose?: string;
+  bundleMode?: "short" | "standard" | "full";
+  selectedPaths?: Record<string, string[]>;
+  promptInstructions?: Record<string, string>;
 };

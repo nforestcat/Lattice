@@ -22,6 +22,21 @@ describe("App layout", () => {
       { path: "Rec2.md", title: "Rec2", reason: "Recommended", reasonDetail: "Rec2 detail", score: 7, excerpt: "Rec2 excerpt", tokenEstimate: 40, selected: false, characterCount: 80 }
     ]);
 
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockImplementation(async (path, options) => {
+      const selected = options?.selectedPaths || [];
+      let tokens = 0;
+      if (selected.includes("Home.md")) tokens += 50;
+      if (selected.includes("Rec1.md")) tokens += 30;
+      if (selected.includes("Rec2.md")) tokens += 40;
+      return {
+        title: "Context Bundle: Home",
+        focusPath: "Home.md",
+        notePaths: selected,
+        markdown: "Bundle Content",
+        estimatedTokens: tokens
+      };
+    });
+
     render(<App />);
 
     // Wait for the app to load and refresh context on the active note Home.md
@@ -68,6 +83,7 @@ describe("App layout", () => {
     expect(screen.queryByText(/Exceeded target limit/)).toBeNull();
 
     candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
   });
 
   it("allows sorting candidates by score/title and filtering by connection type", async () => {
@@ -196,5 +212,59 @@ describe("App layout", () => {
 
     getVaultConfigSpy.mockRestore();
     saveVaultConfigSpy.mockRestore();
+  });
+
+  it("loads prompt instructions from config and saves edited prompt instructions in Prompt Workspace", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePurpose: "Answer questions based on the provided wiki context.",
+      bundlePreset: "ask",
+      promptInstructions: {
+        "Home.md": "Draft instructions for Home"
+      }
+    });
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 }
+    ]);
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md"],
+      markdown: "Bundle Content",
+      estimatedTokens: 50
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    
+    // Click Generate Bundle
+    const generateBtn = screen.getByRole("button", { name: "Generate bundle" });
+    fireEvent.click(generateBtn);
+
+    // Verify Prompt Workspace is rendered and has the loaded instruction
+    await waitFor(() => expect(screen.getByText("Prompt Workspace")).toBeTruthy());
+    const promptTextarea = screen.getByPlaceholderText("Ask a question or specify the task for the LLM...") as HTMLTextAreaElement;
+    expect(promptTextarea.value).toBe("Draft instructions for Home");
+
+    // Edit the prompt instruction
+    saveVaultConfigSpy.mockClear();
+    fireEvent.change(promptTextarea, { target: { value: "Updated draft" } });
+
+    await waitFor(() => {
+      expect(saveVaultConfigSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        promptInstructions: expect.objectContaining({
+          "Home.md": "Updated draft"
+        })
+      }));
+    });
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
   });
 });

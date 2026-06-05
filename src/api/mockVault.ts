@@ -17,7 +17,8 @@ import type {
   SaveResult,
   Snapshot,
   VaultApi,
-  VaultSnapshot
+  VaultSnapshot,
+  VaultConfig
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
@@ -363,11 +364,11 @@ export function createMockVaultApi(): VaultApi {
       autoGitEnabled = enabled;
       return { autoGitEnabled };
     },
-    async getVaultConfig(): Promise<Record<string, any>> {
+    async getVaultConfig(): Promise<VaultConfig> {
       const saved = localStorage.getItem(`lattice:mock_config:${openRoot}`);
       return saved ? JSON.parse(saved) : {};
     },
-    async saveVaultConfig(config: Record<string, any>): Promise<void> {
+    async saveVaultConfig(config: VaultConfig): Promise<void> {
       localStorage.setItem(`lattice:mock_config:${openRoot}`, JSON.stringify(config));
     }
   };

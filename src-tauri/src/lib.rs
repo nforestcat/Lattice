@@ -241,6 +241,23 @@ struct GitSettings {
     auto_git_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct VaultConfig {
+    #[serde(default)]
+    context_limit: Option<usize>,
+    #[serde(default)]
+    bundle_preset: Option<String>,
+    #[serde(default)]
+    bundle_purpose: Option<String>,
+    #[serde(default)]
+    bundle_mode: Option<String>,
+    #[serde(default)]
+    selected_paths: Option<HashMap<String, Vec<String>>>,
+    #[serde(default)]
+    prompt_instructions: Option<HashMap<String, String>>,
+}
+
 #[tauri::command]
 fn open_vault(path: String, state: tauri::State<AppState>) -> Result<VaultSnapshot, String> {
     let root = PathBuf::from(path);
@@ -604,21 +621,21 @@ fn set_auto_git(enabled: bool, state: tauri::State<AppState>) -> Result<GitSetti
 }
 
 #[tauri::command]
-fn get_vault_config(state: tauri::State<AppState>) -> Result<serde_json::Value, String> {
+fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
     let config_path = root.join(".lattice").join("config.json");
     if config_path.exists() {
         let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-        let val: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let val: VaultConfig = serde_json::from_str(&content).unwrap_or_default();
         Ok(val)
     } else {
-        Ok(serde_json::Value::Object(serde_json::Map::new()))
+        Ok(VaultConfig::default())
     }
 }
 
 #[tauri::command]
-fn save_vault_config(config: serde_json::Value, state: tauri::State<AppState>) -> Result<(), String> {
+fn save_vault_config(config: VaultConfig, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
     let lattice_dir = root.join(".lattice");

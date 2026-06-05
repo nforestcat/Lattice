@@ -5,7 +5,7 @@ import { marked } from "marked";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig } from "../api/types";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
@@ -91,11 +91,12 @@ export function App() {
   const [filterBy, setFilterBy] = useState<string>("all");
   const [contextLimit, setContextLimit] = useState<number>(8000);
   const [isCustomLimit, setIsCustomLimit] = useState<boolean>(false);
-  const [vaultConfig, setVaultConfig] = useState<Record<string, any>>({});
-  const vaultConfigRef = useRef<Record<string, any>>({});
+  const [vaultConfig, setVaultConfig] = useState<VaultConfig>({});
+  const vaultConfigRef = useRef<VaultConfig>({});
+  const [promptInstruction, setPromptInstruction] = useState("");
 
-  const updateVaultConfig = async (updates: Record<string, any>) => {
-    const nextConfig = {
+  const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
+    const nextConfig: VaultConfig = {
       ...vaultConfigRef.current,
       ...updates
     };
@@ -105,6 +106,18 @@ export function App() {
       await vaultApi.saveVaultConfig(nextConfig);
     } catch (e) {
       console.error("Failed to save vault config", e);
+    }
+  };
+
+  const handlePromptInstructionChange = (val: string) => {
+    setPromptInstruction(val);
+    if (activePath) {
+      const currentPrompts = vaultConfigRef.current.promptInstructions ?? {};
+      const nextPrompts = {
+        ...currentPrompts,
+        [activePath]: val
+      };
+      void updateVaultConfig({ promptInstructions: nextPrompts });
     }
   };
 
@@ -129,7 +142,7 @@ export function App() {
     setSelectedContextPaths(new Set());
     setInboxCaptures([]);
 
-    let loadedConfig: Record<string, any> = {};
+    let loadedConfig: VaultConfig = {};
     try {
       loadedConfig = await vaultApi.getVaultConfig();
       vaultConfigRef.current = loadedConfig;
@@ -189,7 +202,7 @@ export function App() {
     }
   }
 
-  async function selectNote(path: string, currentConfig?: Record<string, any>) {
+  async function selectNote(path: string, currentConfig?: VaultConfig) {
     const note = await vaultApi.readNote(path);
     setActivePath(path);
     setDocument(note);
@@ -198,7 +211,7 @@ export function App() {
     await refreshContext(path, currentConfig);
   }
 
-  async function refreshContext(path: string, currentConfig?: Record<string, any>) {
+  async function refreshContext(path: string, currentConfig?: VaultConfig) {
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
     setContextBundle(null);
@@ -212,6 +225,9 @@ export function App() {
     } else {
       setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
     }
+
+    const savedPrompt = configToUse.promptInstructions?.[path] || "";
+    setPromptInstruction(savedPrompt);
 
     setInboxCaptures(isInboxPath(path) ? await vaultApi.getInboxCaptures(path) : []);
     setGraph(await vaultApi.getGraph());
@@ -384,25 +400,51 @@ export function App() {
 
   async function autoPruneCandidates() {
     if (!activePath) return;
-    const selectedNotes = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path));
-    let runningSum = selectedNotes.reduce((total, candidate) => total + candidate.tokenEstimate, 0);
+    let nextPaths = new Set(selectedContextPaths);
+    const selectedNotes = contextCandidates.filter((candidate) => nextPaths.has(candidate.path));
     const recommendedSelected = selectedNotes
       .filter((candidate) => candidate.reason === "Recommended")
       .sort((a, b) => a.score - b.score);
 
-    const nextPaths = new Set(selectedContextPaths);
     let prunedCount = 0;
+    let currentBundle: ContextBundle;
+    try {
+      currentBundle = await vaultApi.getContextBundle(activePath, {
+        selectedPaths: Array.from(nextPaths),
+        purpose: bundlePurpose,
+        mode: bundleMode,
+        preset: bundlePreset
+      });
+    } catch (e) {
+      setStatus(errorMessage(e));
+      return;
+    }
+
+    let currentTokens = currentBundle.estimatedTokens;
 
     for (const note of recommendedSelected) {
-      if (runningSum <= contextLimit) {
+      if (currentTokens <= contextLimit) {
         break;
       }
       nextPaths.delete(note.path);
-      runningSum -= note.tokenEstimate;
       prunedCount++;
+      try {
+        currentBundle = await vaultApi.getContextBundle(activePath, {
+          selectedPaths: Array.from(nextPaths),
+          purpose: bundlePurpose,
+          mode: bundleMode,
+          preset: bundlePreset
+        });
+        currentTokens = currentBundle.estimatedTokens;
+      } catch (e) {
+        setStatus(errorMessage(e));
+        return;
+      }
     }
 
     setSelectedContextPaths(nextPaths);
+    setContextBundle(currentBundle);
+
     if (activePath) {
       const currentSelected = vaultConfigRef.current.selectedPaths ?? {};
       const nextSelected = {
@@ -412,15 +454,10 @@ export function App() {
       void updateVaultConfig({ selectedPaths: nextSelected });
     }
 
-    if (contextBundle) {
-      const pathArray = contextCandidates.filter((candidate) => nextPaths.has(candidate.path)).map((candidate) => candidate.path);
-      await generateContextBundle(pathArray);
-    }
-
     if (prunedCount > 0) {
-      setStatus(`Auto-pruned ${prunedCount} recommended note(s) to fit under the limit.`);
+      setStatus(`Auto-pruned ${prunedCount} recommended note(s) to fit under the limit (Final: ${currentTokens.toLocaleString()} tokens).`);
     } else {
-      setStatus("No recommended notes to prune.");
+      setStatus("No recommended notes to prune or already under limit.");
     }
   }
 
@@ -479,6 +516,21 @@ export function App() {
     try {
       await navigator.clipboard.writeText(contextBundle.markdown);
       setStatus("Context bundle copied");
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function copyCombinedPrompt() {
+    if (!contextBundle) {
+      return;
+    }
+    const combined = promptInstruction.trim()
+      ? `${promptInstruction.trim()}\n\n---\n\n${contextBundle.markdown}`
+      : contextBundle.markdown;
+    try {
+      await navigator.clipboard.writeText(combined);
+      setStatus("Combined prompt copied");
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -934,7 +986,27 @@ export function App() {
                   </div>
                 </div>
               )}
-              <button onClick={() => void copyContextBundle()}>Copy bundle</button>
+              <div className="promptWorkspace">
+                <h3>Prompt Workspace</h3>
+                <div className="optionGroup" style={{ marginTop: "4px" }}>
+                  <label htmlFor="prompt-instruction">Question / Instructions</label>
+                  <textarea
+                    id="prompt-instruction"
+                    placeholder="Ask a question or specify the task for the LLM..."
+                    value={promptInstruction}
+                    onChange={(e) => handlePromptInstructionChange(e.target.value)}
+                    style={{ minHeight: "80px" }}
+                  />
+                </div>
+                <div className="workspaceActions">
+                  <button className="primary" onClick={() => void copyCombinedPrompt()}>
+                    Copy Final Prompt
+                  </button>
+                  <button onClick={() => void copyContextBundle()}>
+                    Copy Bundle Only
+                  </button>
+                </div>
+              </div>
               <textarea readOnly value={contextBundle.markdown} />
             </div>
           )}

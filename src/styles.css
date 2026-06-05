@@ -905,6 +905,56 @@ summary:hover .treeActions {
   color: #0f172a;
 }
 
+/* Prompt Workspace Styling */
+.promptWorkspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 12px;
+  transition: all 0.2s ease;
+}
+
+.promptWorkspace:hover {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: #94a3b8;
+}
+
+.promptWorkspace h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  margin: 0;
+}
+
+.promptWorkspace textarea {
+  min-height: 80px;
+  font-family: inherit;
+  font-size: 13px;
+  background: #fff;
+  border-color: #cbd5e1;
+  resize: vertical;
+}
+
+.promptWorkspace textarea:focus {
+  border-color: #3b82f6;
+  outline: none;
+}
+
+.workspaceActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspaceActions button {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 220px minmax(320px, 1fr);
