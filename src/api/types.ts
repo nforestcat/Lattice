@@ -151,6 +151,8 @@ export type PromptRun = {
   tokenCount: number;
   createdAt: string;
   activePath: string;
+  promptHash?: string;
+  preview?: string;
 };
 
 export type PromptTemplate = {

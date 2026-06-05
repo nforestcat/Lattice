@@ -1,6 +1,6 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { App } from "../src/ui/App";
+import { App, normalizeVaultConfig } from "../src/ui/App";
 import { vaultApi } from "../src/api";
 
 describe("App layout", () => {
@@ -572,6 +572,233 @@ describe("App layout", () => {
     getVaultConfigSpy.mockRestore();
     saveVaultConfigSpy.mockRestore();
     candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
+  it("normalizes malformed or empty vault configs using normalizeVaultConfig", () => {
+    const emptyConfig = normalizeVaultConfig(null);
+    expect(emptyConfig.version).toBe(1);
+    expect(emptyConfig.contextLimit).toBe(8000);
+    expect(emptyConfig.promptRuns).toEqual([]);
+    
+    const partialConfig = normalizeVaultConfig({ contextLimit: 32000, promptRuns: null });
+    expect(partialConfig.contextLimit).toBe(32000);
+    expect(partialConfig.promptRuns).toEqual([]);
+  });
+
+  it("compiles template variables properly when template is selected", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      promptTemplates: [
+        { id: "custom-var", name: "Var Tmpl", template: "About {active_note} in {vault_name} on {date} with {selected_notes}", isSystem: false }
+      ]
+    });
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },
+      { path: "Project.md", title: "Project", reason: "Recommended", reasonDetail: "Mentions focus", score: 8, excerpt: "Project details", tokenEstimate: 40, selected: true, characterCount: 80 }
+    ]);
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md", "Project.md"],
+      markdown: "Bundle Content",
+      estimatedTokens: 90
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    
+    // Generate Bundle
+    fireEvent.click(screen.getByRole("button", { name: "Generate bundle" }));
+
+    await waitFor(() => expect(screen.getByText("Prompt Workspace")).toBeTruthy());
+
+    // Expand templates dropdown
+    fireEvent.click(screen.getByText("Templates ▾"));
+    await waitFor(() => expect(screen.getByText("Var Tmpl")).toBeTruthy());
+    
+    // Select the template with placeholders
+    fireEvent.click(screen.getByText("Var Tmpl"));
+
+    const promptTextarea = screen.getByPlaceholderText("Ask a question or specify the task for the LLM...") as HTMLTextAreaElement;
+    
+    const currentDate = new Date().toLocaleDateString();
+    expect(promptTextarea.value).toContain("About Home in Demo Vault on");
+    expect(promptTextarea.value).toContain("with [[Home]], [[Project]]");
+
+    getVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
+  it("renders quality badges based on note size, score, and stale modification date", async () => {
+    const staleDate = "2026-04-10T12:00:00.000Z";
+    const freshDate = "2026-06-01T12:00:00.000Z";
+
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: freshDate, contentHash: "123" },
+        { path: "LargeNote.md", title: "LargeNote", tags: [], frontmatter: {}, modifiedAt: freshDate, contentHash: "456" },
+        { path: "StaleNote.md", title: "StaleNote", tags: [], frontmatter: {}, modifiedAt: staleDate, contentHash: "789" },
+        { path: "RedundantNote.md", title: "RedundantNote", tags: [], frontmatter: {}, modifiedAt: freshDate, contentHash: "abc" }
+      ],
+      tree: []
+    });
+
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },
+      { path: "LargeNote.md", title: "LargeNote", reason: "Recommended", reasonDetail: "Large note", score: 8, excerpt: "Large excerpt", tokenEstimate: 3000, selected: true, characterCount: 12000 },
+      { path: "StaleNote.md", title: "StaleNote", reason: "Outgoing", reasonDetail: "Stale outgoing", score: 7, excerpt: "Stale excerpt", tokenEstimate: 40, selected: true, characterCount: 150 },
+      { path: "RedundantNote.md", title: "RedundantNote", reason: "Recommended", reasonDetail: "Redundant note", score: 3, excerpt: "Redundant excerpt", tokenEstimate: 30, selected: true, characterCount: 120 }
+    ]);
+
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md", "LargeNote.md", "StaleNote.md", "RedundantNote.md"],
+      markdown: "Bundle Content",
+      estimatedTokens: 3120
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    
+    fireEvent.click(screen.getByRole("button", { name: "Generate bundle" }));
+    await waitFor(() => expect(screen.getByText("🔍 Context Bundle Audit & Diff")).toBeTruthy());
+
+    // Expand audit breakdown
+    fireEvent.click(screen.getByText("🔍 Context Bundle Audit & Diff"));
+
+    await waitFor(() => {
+      const rows = Array.from(document.querySelectorAll(".auditNoteRow"));
+      const homeRow = rows.find(r => r.querySelector(".auditNoteTitle")?.getAttribute("title") === "Home.md");
+      const largeRow = rows.find(r => r.querySelector(".auditNoteTitle")?.getAttribute("title") === "LargeNote.md");
+      const staleRow = rows.find(r => r.querySelector(".auditNoteTitle")?.getAttribute("title") === "StaleNote.md");
+      const redundantRow = rows.find(r => r.querySelector(".auditNoteTitle")?.getAttribute("title") === "RedundantNote.md");
+
+      expect(homeRow?.querySelector(".qualityBadge.useful")).toBeTruthy();
+      expect(largeRow?.querySelector(".qualityBadge.large")).toBeTruthy();
+      expect(staleRow?.querySelector(".qualityBadge.stale")).toBeTruthy();
+      expect(staleRow?.querySelector(".qualityBadge.useful")).toBeTruthy();
+      expect(redundantRow?.querySelector(".qualityBadge.redundant")).toBeTruthy();
+    });
+
+    openVaultSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
+  it("filters history runs list and expands cards for audits detail and copy actions", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: writeTextMock
+      },
+      writable: true,
+      configurable: true
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePreset: "ask",
+      promptRuns: [
+        {
+          id: "run-1",
+          question: "Summarize history run 1",
+          selectedNotes: ["Home.md"],
+          preset: "ask",
+          purpose: "Summarize this vault for a follow-up LLM prompt.",
+          mode: "standard",
+          tokenCount: 150,
+          createdAt: "2026-06-05T14:00:00.000Z",
+          activePath: "Home.md",
+          promptHash: "abc12345",
+          preview: "Preview of run 1"
+        },
+        {
+          id: "run-2",
+          question: "Draft test run 2",
+          selectedNotes: ["Project.md"],
+          preset: "write",
+          purpose: "Write draft",
+          mode: "full",
+          tokenCount: 450,
+          createdAt: "2026-06-05T14:10:00.000Z",
+          activePath: "Project.md",
+          promptHash: "def67890",
+          preview: "Preview of run 2"
+        }
+      ]
+    });
+
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Project",
+      focusPath: "Project.md",
+      notePaths: ["Project.md"],
+      markdown: "Project Bundle Content",
+      estimatedTokens: 300
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Prompt History")).toBeTruthy());
+    expect(screen.getByText("Summarize history run 1")).toBeTruthy();
+    expect(screen.getByText("Draft test run 2")).toBeTruthy();
+
+    // 1. Filter by preset dropdown
+    const presetSelect = document.querySelector(".historyPresetSelect") as HTMLSelectElement;
+    expect(presetSelect).toBeTruthy();
+    fireEvent.change(presetSelect, { target: { value: "write" } });
+    
+    await waitFor(() => {
+      expect(screen.queryByText("Summarize history run 1")).toBeNull();
+      expect(screen.getByText("Draft test run 2")).toBeTruthy();
+    });
+
+    // Reset preset filter
+    fireEvent.change(presetSelect, { target: { value: "" } });
+    await waitFor(() => expect(screen.getByText("Summarize history run 1")).toBeTruthy());
+
+    // 2. Filter by search input
+    const searchInput = document.querySelector(".historySearchField") as HTMLInputElement;
+    expect(searchInput).toBeTruthy();
+    fireEvent.change(searchInput, { target: { value: "run 1" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Summarize history run 1")).toBeTruthy();
+      expect(screen.queryByText("Draft test run 2")).toBeNull();
+    });
+
+    // Clear search
+    fireEvent.change(searchInput, { target: { value: "" } });
+
+    // 3. Expand run card
+    const card2 = document.querySelector(".promptRunCard:nth-child(2)") as HTMLElement;
+    expect(card2).toBeTruthy();
+    fireEvent.click(card2);
+
+    await waitFor(() => {
+      expect(screen.getByText("def67890")).toBeTruthy();
+      const textarea = document.querySelector(".expandedPreviewTextarea") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("Preview of run 2");
+    });
+
+    // 4. Click Copy Full Prompt
+    const copyFullBtn = Array.from(card2.querySelectorAll("button")).find(btn => btn.textContent === "Copy Full Prompt")!;
+    fireEvent.click(copyFullBtn);
+
+    await waitFor(() => {
+      expect(bundleSpy).toHaveBeenCalledWith("Project.md", expect.objectContaining({
+        preset: "write",
+        mode: "full"
+      }));
+      expect(writeTextMock).toHaveBeenCalledWith("Draft test run 2\n\n---\n\nProject Bundle Content");
+    });
+
+    getVaultConfigSpy.mockRestore();
     bundleSpy.mockRestore();
   });
 });

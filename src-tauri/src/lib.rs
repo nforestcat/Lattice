@@ -262,11 +262,14 @@ struct PromptRun {
     question: String,
     selected_notes: Vec<String>,
     preset: String,
-    purpose: String,
+    #[serde(default)]
+    purpose: Option<String>,
     mode: String,
     token_count: usize,
     created_at: String,
     active_path: String,
+    prompt_hash: Option<String>,
+    preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

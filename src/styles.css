@@ -1346,6 +1346,168 @@ summary:hover .treeActions {
   margin-top: 2px;
 }
 
+/* Quality Badges */
+.qualityBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.qualityBadge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+}
+
+.qualityBadge.useful {
+  background: #e6fbf1;
+  color: #15803d;
+  border: 1px solid #c6f6d5;
+}
+
+.qualityBadge.redundant {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #ffedd5;
+}
+
+.qualityBadge.large {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fee2e2;
+}
+
+.qualityBadge.stale {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+/* History Filters and UI */
+.historyFilters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.historySearchField {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  transition: border-color 0.2s ease;
+}
+
+.historySearchField:focus {
+  border-color: #3b82f6;
+  outline: none;
+}
+
+.historyFilterControls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.historyFilterCheckbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.historyFilterCheckbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.historyPresetSelect {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: #334155;
+}
+
+/* Expanded History Card styling */
+.promptRunCard.expanded {
+  border-color: #94a3b8;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+.promptRunExpandedPanel {
+  margin-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.expandedMetaRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.expandedMetaRow code {
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.expandedNotesList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.expandedNoteBadge {
+  background: #f1f5f9;
+  color: #334155;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.expandedPreviewWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.expandedPreviewTextarea {
+  width: 100%;
+  min-height: 80px;
+  font-family: monospace;
+  font-size: 11px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 6px;
+  resize: vertical;
+}
+
+
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 220px minmax(320px, 1fr);

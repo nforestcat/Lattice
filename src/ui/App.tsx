@@ -82,6 +82,21 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
   }
 ];
 
+export function normalizeVaultConfig(config: any): VaultConfig {
+  const normalized: VaultConfig = {
+    version: typeof config?.version === "number" ? config.version : 1,
+    contextLimit: typeof config?.contextLimit === "number" ? config.contextLimit : 8000,
+    bundlePreset: typeof config?.bundlePreset === "string" ? config.bundlePreset : "ask",
+    bundlePurpose: typeof config?.bundlePurpose === "string" ? config.bundlePurpose : "",
+    bundleMode: (config?.bundleMode === "short" || config?.bundleMode === "standard" || config?.bundleMode === "full") ? config.bundleMode : "standard",
+    selectedPaths: (config?.selectedPaths && typeof config.selectedPaths === "object") ? config.selectedPaths : {},
+    promptInstructions: (config?.promptInstructions && typeof config.promptInstructions === "object") ? config.promptInstructions : {},
+    promptRuns: Array.isArray(config?.promptRuns) ? config.promptRuns : [],
+    promptTemplates: Array.isArray(config?.promptTemplates) ? config.promptTemplates : []
+  };
+  return normalized;
+}
+
 function normalizePreset(value: unknown): PresetType {
   return typeof value === "string" && value in PRESETS ? value as PresetType : "ask";
 }
@@ -131,6 +146,10 @@ export function App() {
   const vaultConfigRef = useRef<VaultConfig>({});
   const [promptInstruction, setPromptInstruction] = useState("");
   const [showTemplates, setShowTemplates] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historyActiveNoteOnly, setHistoryActiveNoteOnly] = useState(false);
+  const [historyPresetFilter, setHistoryPresetFilter] = useState("");
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -183,7 +202,8 @@ export function App() {
 
     let loadedConfig: VaultConfig = {};
     try {
-      loadedConfig = await vaultApi.getVaultConfig();
+      const rawConfig = await vaultApi.getVaultConfig();
+      loadedConfig = normalizeVaultConfig(rawConfig);
       vaultConfigRef.current = loadedConfig;
       setVaultConfig(loadedConfig);
 
@@ -582,6 +602,13 @@ export function App() {
       await navigator.clipboard.writeText(combined);
       setStatus("Combined prompt copied");
 
+      let hVal = 0;
+      for (let i = 0; i < combined.length; i++) {
+        hVal = (Math.imul(31, hVal) + combined.charCodeAt(i)) | 0;
+      }
+      const promptHash = Math.abs(hVal).toString(16);
+      const preview = combined.slice(0, 1500) + (combined.length > 1500 ? "..." : "");
+
       const newRun: PromptRun = {
         id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
         question: promptInstruction.trim(),
@@ -591,7 +618,9 @@ export function App() {
         mode: bundleMode,
         tokenCount: contextBundle.estimatedTokens,
         createdAt: new Date().toISOString(),
-        activePath: activePath || ""
+        activePath: activePath || "",
+        promptHash,
+        preview
       };
 
       const currentRuns = vaultConfigRef.current.promptRuns ?? [];
@@ -657,6 +686,47 @@ export function App() {
     } catch (error) {
       setStatus(errorMessage(error));
     }
+  }
+
+  async function copyFullPromptFromHistory(run: PromptRun) {
+    try {
+      setStatus("Regenerating historical prompt...");
+      const bundle = await vaultApi.getContextBundle(run.activePath, {
+        selectedPaths: run.selectedNotes,
+        purpose: run.purpose ?? "",
+        mode: run.mode,
+        preset: run.preset
+      });
+      const combined = run.question.trim()
+        ? `${run.question.trim()}\n\n---\n\n${bundle.markdown}`
+        : bundle.markdown;
+      await navigator.clipboard.writeText(combined);
+      setStatus(`Copied full prompt for ${run.activePath.split('/').pop() || run.activePath} from history!`);
+    } catch (err) {
+      setStatus(errorMessage(err));
+    }
+  }
+
+  function compileTemplate(templateText: string): string {
+    const activeNoteTitle = activePath 
+      ? (vault?.notes.find(n => n.path === activePath)?.title || activePath.split('/').pop()?.replace(/\.md$/, "") || "")
+      : "";
+      
+    const selectedNoteTitles = Array.from(selectedContextPaths).map(path => {
+      return vault?.notes.find(n => n.path === path)?.title || path.split('/').pop()?.replace(/\.md$/, "") || path;
+    });
+
+    const vaultName = vault?.rootPath 
+      ? (vault.rootPath.split(/[/\\]/).pop() || vault.rootPath)
+      : "Vault";
+
+    const currentDate = new Date().toLocaleDateString();
+
+    return templateText
+      .replace(/{active_note}/g, activeNoteTitle)
+      .replace(/{selected_notes}/g, selectedNoteTitles.map(t => `[[${t}]]`).join(", "))
+      .replace(/{date}/g, currentDate)
+      .replace(/{vault_name}/g, vaultName);
   }
 
   async function saveAsTemplate() {
@@ -1202,6 +1272,29 @@ export function App() {
                         const reason = isFocus ? "Focus" : (cand?.reason || "Linked");
                         const reasonDetail = isFocus ? "This is the active note of your workspace." : (cand?.reasonDetail || "Referenced note");
                         
+                        // Quality flags calculation
+                        const characterCount = isFocus ? draft.length : (cand?.characterCount || 0);
+                        const isTooLarge = characterCount > 10000 || (cand ? cand.tokenEstimate > 2500 : false);
+                        
+                        const noteMeta = vault?.notes.find(n => n.path === path);
+                        const modifiedAtStr = noteMeta?.modifiedAt;
+                        let isStale = false;
+                        if (modifiedAtStr) {
+                          const modifiedDate = new Date(modifiedAtStr);
+                          const diffTime = Date.now() - modifiedDate.getTime();
+                          const diffDays = diffTime / (1000 * 60 * 60 * 24);
+                          isStale = diffDays > 30;
+                        }
+                        
+                        const isUseful = isFocus || reason === "Outgoing" || reason === "Backlink" || (cand ? cand.score >= 7.5 : false);
+                        const isRedundant = cand ? (cand.reason === "Recommended" && cand.score < 5.0) : false;
+                        
+                        const qualityBadges: { type: string; label: string }[] = [];
+                        if (isUseful) qualityBadges.push({ type: "useful", label: "Useful" });
+                        if (isRedundant) qualityBadges.push({ type: "redundant", label: "Redundant" });
+                        if (isTooLarge) qualityBadges.push({ type: "large", label: "Too Large" });
+                        if (isStale) qualityBadges.push({ type: "stale", label: "Stale" });
+                        
                         return (
                           <div key={path} className="auditNoteRow">
                             <div className="auditNoteHeader">
@@ -1209,6 +1302,15 @@ export function App() {
                               <span className={`reason-badge reason-${reason.toLowerCase()}`}>{reason}</span>
                             </div>
                             <div className="auditNoteDetail">{reasonDetail}</div>
+                            {qualityBadges.length > 0 && (
+                              <div className="qualityBadges">
+                                {qualityBadges.map(badge => (
+                                  <span key={badge.type} className={`qualityBadge ${badge.type}`}>
+                                    {badge.label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1247,7 +1349,7 @@ export function App() {
                               key={tmpl.id} 
                               className="templatesDropdownItem"
                               onClick={() => {
-                                handlePromptInstructionChange(tmpl.template);
+                                handlePromptInstructionChange(compileTemplate(tmpl.template));
                                 setShowTemplates(false);
                               }}
                             >
@@ -1262,7 +1364,7 @@ export function App() {
                                   key={tmpl.id} 
                                   className="templatesDropdownItem customTemplateItem"
                                   onClick={() => {
-                                    handlePromptInstructionChange(tmpl.template);
+                                    handlePromptInstructionChange(compileTemplate(tmpl.template));
                                     setShowTemplates(false);
                                   }}
                                 >
@@ -1307,37 +1409,125 @@ export function App() {
           <h2>Prompt History</h2>
           {(!vaultConfig.promptRuns || vaultConfig.promptRuns.length === 0) ? (
             <p className="muted">No history yet</p>
-          ) : (
-            <div className="promptRunList">
-              {vaultConfig.promptRuns.map((run) => (
-                <div key={run.id} className="promptRunCard">
-                  <div className="promptRunHeader">
-                    <span className="promptRunTime" title={run.createdAt}>
-                      {new Date(run.createdAt).toLocaleString()}
-                    </span>
-                    <span className="promptRunMetaBadge">{run.preset} / {run.mode}</span>
-                  </div>
-                  <div className="promptRunQuestion">
-                    {run.question ? run.question : <span className="muted italic">No question (bundle only)</span>}
-                  </div>
-                  <div className="promptRunDetails">
-                    <span className="promptRunNoteLink" title="Click to view note" onClick={() => void selectNote(run.activePath)}>
-                      [[{run.activePath.split('/').pop() || run.activePath}]]
-                    </span>
-                    <span className="promptRunTokens">{run.tokenCount.toLocaleString()} tokens</span>
-                  </div>
-                  <div className="promptRunActions">
-                    <button className="smallButton" onClick={() => void applyPromptRun(run)}>
-                      Load
-                    </button>
-                    <button className="smallButton" onClick={() => void copyPromptRunQuestion(run)}>
-                      Copy Question
-                    </button>
+          ) : (() => {
+            const filteredPromptRuns = (vaultConfig.promptRuns ?? []).filter(run => {
+              if (historySearchQuery.trim()) {
+                const q = historySearchQuery.toLowerCase();
+                const matchQuestion = run.question.toLowerCase().includes(q);
+                const matchPreset = run.preset.toLowerCase().includes(q);
+                const matchNote = run.activePath.toLowerCase().includes(q);
+                if (!matchQuestion && !matchPreset && !matchNote) {
+                  return false;
+                }
+              }
+              if (historyActiveNoteOnly && activePath && run.activePath !== activePath) {
+                return false;
+              }
+              if (historyPresetFilter && run.preset !== historyPresetFilter) {
+                return false;
+              }
+              return true;
+            });
+
+            return (
+              <>
+                <div className="historyFilters">
+                  <input
+                    type="text"
+                    placeholder="Search history..."
+                    value={historySearchQuery}
+                    onChange={(e) => setHistorySearchQuery(e.target.value)}
+                    className="historySearchField"
+                  />
+                  <div className="historyFilterControls">
+                    <label className="historyFilterCheckbox">
+                      <input
+                        type="checkbox"
+                        checked={historyActiveNoteOnly}
+                        onChange={(e) => setHistoryActiveNoteOnly(e.target.checked)}
+                      />
+                      <span>Active note only</span>
+                    </label>
+                    <select
+                      value={historyPresetFilter}
+                      onChange={(e) => setHistoryPresetFilter(e.target.value)}
+                      className="historyPresetSelect"
+                    >
+                      <option value="">All presets</option>
+                      {Array.from(new Set((vaultConfig.promptRuns ?? []).map((r) => r.preset))).map((preset) => (
+                        <option key={preset} value={preset}>{preset}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+
+                {filteredPromptRuns.length === 0 ? (
+                  <p className="muted">No matching history found</p>
+                ) : (
+                  <div className="promptRunList">
+                    {filteredPromptRuns.map((run) => (
+                      <div 
+                        key={run.id} 
+                        className={`promptRunCard ${expandedRunId === run.id ? "expanded" : ""}`}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}
+                      >
+                        <div className="promptRunHeader">
+                          <span className="promptRunTime" title={run.createdAt}>
+                            {new Date(run.createdAt).toLocaleString()}
+                          </span>
+                          <span className="promptRunMetaBadge">{run.preset} / {run.mode}</span>
+                        </div>
+                        <div className="promptRunQuestion">
+                          {run.question ? run.question : <span className="muted italic">No question (bundle only)</span>}
+                        </div>
+                        <div className="promptRunDetails">
+                          <span className="promptRunNoteLink" title="Click to view note" onClick={(e) => { e.stopPropagation(); void selectNote(run.activePath); }}>
+                            [[{run.activePath.split('/').pop() || run.activePath}]]
+                          </span>
+                          <span className="promptRunTokens">{run.tokenCount.toLocaleString()} tokens</span>
+                        </div>
+                        <div className="promptRunActions" onClick={(e) => e.stopPropagation()}>
+                          <button className="smallButton" onClick={() => void applyPromptRun(run)}>
+                            Load
+                          </button>
+                          <button className="smallButton" onClick={() => void copyPromptRunQuestion(run)}>
+                            Copy Question
+                          </button>
+                          <button className="smallButton" onClick={() => void copyFullPromptFromHistory(run)}>
+                            Copy Full Prompt
+                          </button>
+                        </div>
+                        {expandedRunId === run.id && (
+                          <div className="promptRunExpandedPanel" onClick={(e) => e.stopPropagation()}>
+                            {run.promptHash && (
+                              <div className="expandedMetaRow">
+                                <strong>Hash:</strong> <code>{run.promptHash}</code>
+                              </div>
+                            )}
+                            <div className="expandedMetaRow">
+                              <strong>Included Notes ({run.selectedNotes.length}):</strong>
+                              <div className="expandedNotesList">
+                                {run.selectedNotes.map(p => (
+                                  <span key={p} className="expandedNoteBadge">{p.split('/').pop() || p}</span>
+                                ))}
+                              </div>
+                            </div>
+                            {run.preview && (
+                              <div className="expandedPreviewWrapper">
+                                <strong>Prompt Preview (First 1.5 KB):</strong>
+                                <textarea readOnly value={run.preview} className="expandedPreviewTextarea" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </section>
         <section>
           <h2>Capture</h2>
