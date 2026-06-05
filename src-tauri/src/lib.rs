@@ -191,6 +191,7 @@ struct ContextBundle {
     focus_path: String,
     note_paths: Vec<String>,
     markdown: String,
+    estimated_tokens: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -747,12 +748,15 @@ fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: Contex
     let title = format!("Context Bundle: {}", focus.meta.title);
     let purpose = options.purpose;
     let mode = options.mode.unwrap_or_else(|| "standard".to_string());
+    let markdown = render_context_bundle(&title, &included, purpose.as_deref(), &mode, notes);
+    let estimated_tokens = estimate_tokens(&markdown);
 
     Ok(ContextBundle {
         title: title.clone(),
         focus_path: focus_path.to_string(),
         note_paths: included.iter().map(|(note, _)| note.meta.path.clone()).collect(),
-        markdown: render_context_bundle(&title, &included, purpose.as_deref(), &mode, notes),
+        markdown,
+        estimated_tokens,
     })
 }
 
@@ -1512,6 +1516,7 @@ mod tests {
         assert!(bundle_short.markdown.contains("**Mode**: Short"));
         assert!(bundle_short.markdown.contains("**Purpose**: Summarize it"));
         assert!(bundle_short.markdown.contains("This is a longer body text for testing."));
+        assert!(bundle_short.estimated_tokens > 0);
 
         // Full Mode
         let bundle_full = create_context_bundle(

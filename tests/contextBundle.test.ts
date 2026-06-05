@@ -31,6 +31,7 @@ describe("createContextBundle", () => {
     expect(bundle.markdown).toContain("## Note: Project");
     expect(bundle.markdown).toContain("status: draft");
     expect(bundle.markdown).toContain("Build LLM wiki tooling.");
+    expect(bundle.estimatedTokens).toBeGreaterThan(0);
   });
 
   it("deduplicates notes that are both backlinks and outgoing links", () => {

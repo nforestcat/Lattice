@@ -501,11 +501,36 @@ summary:hover .treeActions {
   border-radius: 6px;
   color: #b91c1c;
   font-size: 11px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   line-height: 1.4;
   text-align: left;
   font-weight: 500;
 }
+
+.warningActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.warningButton {
+  background: #ffffff;
+  border: 1px solid #fca5a5;
+  color: #b91c1c;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.warningButton:hover {
+  background: #fef2f2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
 
 .limitConfig {
   display: flex;

@@ -291,20 +291,64 @@ export function App() {
     }
   }
 
-  async function generateContextBundle() {
+  async function generateContextBundle(overridePaths?: string[], overrideMode?: "short" | "standard" | "full") {
     if (!activePath) {
       return;
     }
     try {
+      const paths = overridePaths ?? contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).map((candidate) => candidate.path);
+      const mode = overrideMode ?? bundleMode;
       const bundle = await vaultApi.getContextBundle(activePath, {
-        selectedPaths: contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).map((candidate) => candidate.path),
+        selectedPaths: paths,
         purpose: bundlePurpose,
-        mode: bundleMode
+        mode
       });
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
     } catch (error) {
       setStatus(errorMessage(error));
+    }
+  }
+
+  async function autoPruneCandidates() {
+    if (!activePath) return;
+    const selectedNotes = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path));
+    let runningSum = selectedNotes.reduce((total, candidate) => total + candidate.tokenEstimate, 0);
+    const recommendedSelected = selectedNotes
+      .filter((candidate) => candidate.reason === "Recommended")
+      .sort((a, b) => a.score - b.score);
+
+    const nextPaths = new Set(selectedContextPaths);
+    let prunedCount = 0;
+
+    for (const note of recommendedSelected) {
+      if (runningSum <= contextLimit) {
+        break;
+      }
+      nextPaths.delete(note.path);
+      runningSum -= note.tokenEstimate;
+      prunedCount++;
+    }
+
+    setSelectedContextPaths(nextPaths);
+    localStorage.setItem(`lattice:selected_paths:${activePath}`, JSON.stringify(Array.from(nextPaths)));
+
+    if (contextBundle) {
+      const pathArray = contextCandidates.filter((candidate) => nextPaths.has(candidate.path)).map((candidate) => candidate.path);
+      await generateContextBundle(pathArray);
+    }
+
+    if (prunedCount > 0) {
+      setStatus(`Auto-pruned ${prunedCount} recommended note(s) to fit under the limit.`);
+    } else {
+      setStatus("No recommended notes to prune.");
+    }
+  }
+
+  async function switchToShortMode() {
+    setBundleMode("short");
+    if (contextBundle) {
+      await generateContextBundle(undefined, "short");
     }
   }
 
@@ -557,7 +601,21 @@ export function App() {
 
             {selectedContextTokens > contextLimit && (
               <div className="budgetWarning">
-                ⚠️ Exceeded target limit by {(selectedContextTokens - contextLimit).toLocaleString()} tokens.
+                <p style={{ margin: 0, marginBottom: "8px" }}>
+                  ⚠️ Exceeded target limit by {(selectedContextTokens - contextLimit).toLocaleString()} tokens.
+                </p>
+                <div className="warningActions">
+                  {contextCandidates.some((c) => selectedContextPaths.has(c.path) && c.reason === "Recommended") && (
+                    <button className="warningButton" onClick={() => void autoPruneCandidates()}>
+                      Auto-prune Recommended
+                    </button>
+                  )}
+                  {bundleMode !== "short" && (
+                    <button className="warningButton" onClick={() => void switchToShortMode()}>
+                      Switch to Short Mode
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -664,7 +722,28 @@ export function App() {
           <button onClick={() => void generateContextBundle()} disabled={!activePath || selectedContextCount === 0}>Generate bundle</button>
           {contextBundle && (
             <div className="bundleBox">
-              <p className="muted">{contextBundle.notePaths.length} notes · {contextBundle.markdown.length} chars</p>
+              <p className="muted">
+                {contextBundle.notePaths.length} notes · {contextBundle.markdown.length} chars · ~{contextBundle.estimatedTokens.toLocaleString()} tokens
+              </p>
+              {contextBundle.estimatedTokens > contextLimit && (
+                <div className="budgetWarning" style={{ marginBottom: "8px" }}>
+                  <p style={{ margin: 0, marginBottom: "8px" }}>
+                    ⚠️ Generated bundle exceeds target limit by {(contextBundle.estimatedTokens - contextLimit).toLocaleString()} tokens.
+                  </p>
+                  <div className="warningActions">
+                    {contextCandidates.some((c) => selectedContextPaths.has(c.path) && c.reason === "Recommended") && (
+                      <button className="warningButton" onClick={() => void autoPruneCandidates()}>
+                        Auto-prune & Regenerate
+                      </button>
+                    )}
+                    {bundleMode !== "short" && (
+                      <button className="warningButton" onClick={() => void switchToShortMode()}>
+                        Switch to Short Mode
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
               <button onClick={() => void copyContextBundle()}>Copy bundle</button>
               <textarea readOnly value={contextBundle.markdown} />
             </div>

@@ -79,6 +79,7 @@ export type ContextBundle = {
   focusPath: string;
   notePaths: string[];
   markdown: string;
+  estimatedTokens: number;
 };
 
 export type ContextBundleOptions = {

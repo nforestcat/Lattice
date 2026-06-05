@@ -6,6 +6,7 @@ export type ContextBundle = {
   focusPath: string;
   notePaths: string[];
   markdown: string;
+  estimatedTokens: number;
 };
 
 export type ContextBundleOptions = {
@@ -65,12 +66,14 @@ export function createContextBundle(index: VaultIndex, focusPath: string, option
   const title = `Context Bundle: ${focus.title}`;
   const mode = options.mode || "standard";
   const purpose = options.purpose;
+  const markdown = renderBundle(title, notes, purpose, mode, index);
 
   return {
     title,
     focusPath,
     notePaths: notes.map((entry) => entry.note.path),
-    markdown: renderBundle(title, notes, purpose, mode, index)
+    markdown,
+    estimatedTokens: estimateTokens(markdown)
   };
 }
 

@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "../src/ui/App";
+import { vaultApi } from "../src/api";
 
 describe("App layout", () => {
   it("starts in split mode with editor and preview visible together", async () => {
@@ -12,4 +13,61 @@ describe("App layout", () => {
     expect(document.querySelector(".editorSurface")).toBeTruthy();
     expect(document.querySelector(".previewSurface")?.textContent).toContain("Welcome to the local vault.");
   });
+
+  it("handles token limit config overflows and auto-prunes lowest score recommended notes", async () => {
+    // Stub getContextBundleCandidates to return controlled focus and recommended notes
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },
+      { path: "Rec1.md", title: "Rec1", reason: "Recommended", reasonDetail: "Rec1 detail", score: 5, excerpt: "Rec1 excerpt", tokenEstimate: 30, selected: false, characterCount: 60 },
+      { path: "Rec2.md", title: "Rec2", reason: "Recommended", reasonDetail: "Rec2 detail", score: 7, excerpt: "Rec2 excerpt", tokenEstimate: 40, selected: false, characterCount: 80 }
+    ]);
+
+    render(<App />);
+
+    // Wait for the app to load and refresh context on the active note Home.md
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Rec1")).toBeTruthy());
+
+    // Check Rec1 and Rec2 checkboxes to select them
+    const rec1Checkbox = screen.getByLabelText("Rec1") as HTMLInputElement;
+    const rec2Checkbox = screen.getByLabelText("Rec2") as HTMLInputElement;
+    
+    // Check current state: only Home is selected (50 tokens), wait for state flush
+    await waitFor(() => expect(screen.getByText(/50 \/ [\d,]+ tokens/)).toBeTruthy());
+
+    fireEvent.click(rec1Checkbox);
+    fireEvent.click(rec2Checkbox);
+
+    // Selected total should now be 50 + 30 + 40 = 120 tokens
+    await waitFor(() => expect(screen.getByText(/120 \/ [\d,]+ tokens/)).toBeTruthy());
+
+    // Switch limit selection to custom limit and set it to 100
+    const limitSelect = screen.getByLabelText("Limit") as HTMLSelectElement;
+    fireEvent.change(limitSelect, { target: { value: "custom" } });
+
+    const customLimitInput = screen.getByPlaceholderText("Tokens...") as HTMLInputElement;
+    fireEvent.change(customLimitInput, { target: { value: "100" } });
+
+    // Warning should show up: Exceeded limit by 20 tokens (120 - 100)
+    await waitFor(() => expect(screen.getByText(/Exceeded target limit by 20 tokens/)).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Auto-prune Recommended" })).toBeTruthy();
+
+    // Click Auto-prune Recommended
+    const pruneBtn = screen.getByRole("button", { name: "Auto-prune Recommended" });
+    fireEvent.click(pruneBtn);
+
+    // Total tokens should drop to 90 (120 - 30) because Rec1 (score 5) got pruned, while Rec2 (score 7) remains selected.
+    await waitFor(() => expect(screen.getByText(/90 \/ 100 tokens/)).toBeTruthy());
+
+    
+    // Rec1 should be unchecked, Rec2 should be checked
+    expect(rec1Checkbox.checked).toBe(false);
+    expect(rec2Checkbox.checked).toBe(true);
+
+    // Warning should be gone
+    expect(screen.queryByText(/Exceeded target limit/)).toBeNull();
+
+    candidatesSpy.mockRestore();
+  });
 });
+

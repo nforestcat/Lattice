@@ -20,7 +20,7 @@ Implemented so far:
 - Generate LLM context bundles from selected related notes (with Short/Standard/Full modes and Purpose instructions)
 - Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions)
 - Persist custom context bundle selections across note visits using local storage
-- Estimate token consumption and track context window budget (8K, 32K, 128K, or custom) with a visual progress bar and alert overlays
+- Estimate token consumption, track context window budget, display the final bundle actual token count with a visual progress bar, and offer automated pruning of recommended candidates (sorted by score) and Short mode suggestions on overflow
 - Capture loose ideas or LLM answers into daily Inbox notes
 - Triage Inbox captures (into new notes, append to existing notes, or mark processed)
 - Create snapshots and optionally auto-commit saves in existing Git vaults
