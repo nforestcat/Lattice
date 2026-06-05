@@ -19,9 +19,9 @@ Implemented so far:
 - View and edit note relationships in a graph
 - Generate LLM context bundles from selected related notes (with Short/Standard/Full modes, Purpose instructions, and tailored task presets like Ask, Refactor, Summarize, Plan, Debug)
 - Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions), with options to sort and filter candidates in the UI by score, title, or connection type
-- Persist custom context bundle selections, presets, purposes, modes, and limits across note visits using a type-safe, versioned vault-local configuration file (`.lattice/config.json`) with an automated config migration layer in both TypeScript and Rust to normalize and upgrade legacy files
+- Persist custom context bundle selections, presets, purposes, modes, and limits across note visits using a type-safe, versioned vault-local configuration file (`.lattice/config.json`) with an automated config migration layer in both TypeScript and Rust to normalize and upgrade legacy files while preserving valid fields from partially malformed configs
 - Estimate token consumption, track context window budget with model-agnostic size presets (Small 8K, Medium 32K, Large 128K, Huge 200K, or Custom), display the final bundle actual token count with a visual progress bar, and offer automated pruning of recommended candidates (sorted by score) matching the actual generated bundle token limit
-- Draft, preview, copy, and log final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note, prompt copy events recorded in a local-first **Prompt History** timeline featuring text search, active note toggles, preset dropdown filters, collapsible card previews displaying hash/included notes details, and an interactive **History Diff** view comparing stored vs current prompt configurations, with prompt copies retrieved from a dedicated **Full Prompt Archive** folder `.lattice/runs/<run_id>.md`, and built-in/custom **Prompt Templates** with placeholders like `{active_note}`, `{selected_notes}`, `{date}`, and `{vault_name}` resolving dynamically on selection)
+- Draft, preview, copy, and log final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note, prompt copy events recorded in a local-first **Prompt History** timeline featuring text search, active note toggles, preset dropdown filters, collapsible card previews displaying hash/included notes details, and an interactive **History Diff** view comparing stored vs current prompt configurations, with prompt copies retrieved from a dedicated **Full Prompt Archive** folder `.lattice/runs/<run_id>.md` that is excluded from vault note scanning, and built-in/custom **Prompt Templates** with placeholders like `{active_note}`, `{selected_notes}`, `{date}`, and `{vault_name}` resolving dynamically on selection)
 - Audit context bundles via the **Bundle Audit & Diff** view to inspect exactly why each note was included (connection reason), view heuristic quality badges (Useful, Redundant, Too Large, Stale), and trace differences (added/removed notes, token size delta) from the previous generation
 - Fast and optimized production bundling using Vite code-splitting manual chunks, isolating heavy dependencies (React Flow, CodeMirror, highlight.js, marked) to minimize main JS entry bundle size below 62 KB
 - Detect selected Obsidian vault metadata from `.obsidian` settings and import compatible appearance/readability hints such as readable line length, theme, accent color, enabled core plugin names, attachment folder path, enabled CSS snippets list, and custom hotkeys
@@ -93,11 +93,11 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 - `src-tauri`: Rust backend and Tauri commands
 - `tests`: Vitest coverage for core behavior and UI smoke tests
 
-Markdown files are the source of truth. Generated indexes, graph data, and context bundles are rebuildable from the vault.
+Markdown files are the source of truth. Generated indexes, graph data, and context bundles are rebuildable from the vault. Lattice-owned `.lattice` internals are kept out of the visible note index.
 
 ## Next Ideas
 
-- Add reusable prompt templates and exportable prompt runs before direct LLM API integration
+- Add export/import controls for archived prompt runs before direct LLM API integration
 
 ## License
 

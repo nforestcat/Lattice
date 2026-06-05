@@ -695,6 +695,63 @@ fn migrate_config(mut config: VaultConfig) -> VaultConfig {
     config
 }
 
+fn vault_config_from_json(content: &str) -> VaultConfig {
+    let value: serde_json::Value = match serde_json::from_str(content) {
+        Ok(value) => value,
+        Err(_) => return VaultConfig::default(),
+    };
+    let Some(object) = value.as_object() else {
+        return VaultConfig::default();
+    };
+
+    VaultConfig {
+        version: object.get("version").and_then(serde_json::Value::as_u64).map(|value| value as usize),
+        context_limit: object.get("contextLimit").and_then(serde_json::Value::as_u64).map(|value| value as usize),
+        bundle_preset: object.get("bundlePreset").and_then(serde_json::Value::as_str).map(str::to_string),
+        bundle_purpose: object.get("bundlePurpose").and_then(serde_json::Value::as_str).map(str::to_string),
+        bundle_mode: object.get("bundleMode").and_then(serde_json::Value::as_str).map(str::to_string),
+        selected_paths: object.get("selectedPaths").and_then(string_array_map_from_value),
+        prompt_instructions: object.get("promptInstructions").and_then(string_map_from_value),
+        prompt_runs: object.get("promptRuns").and_then(|value| {
+            value.as_array().map(|runs| {
+                runs.iter()
+                    .filter_map(|run| serde_json::from_value::<PromptRun>(run.clone()).ok())
+                    .collect::<Vec<_>>()
+            })
+        }),
+        prompt_templates: object.get("promptTemplates").and_then(|value| {
+            value.as_array().map(|templates| {
+                templates.iter()
+                    .filter_map(|template| serde_json::from_value::<PromptTemplate>(template.clone()).ok())
+                    .collect::<Vec<_>>()
+            })
+        }),
+    }
+}
+
+fn string_map_from_value(value: &serde_json::Value) -> Option<HashMap<String, String>> {
+    value.as_object().map(|object| {
+        object
+            .iter()
+            .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string())))
+            .collect()
+    })
+}
+
+fn string_array_map_from_value(value: &serde_json::Value) -> Option<HashMap<String, Vec<String>>> {
+    value.as_object().map(|object| {
+        object
+            .iter()
+            .filter_map(|(key, value)| {
+                value.as_array().map(|items| {
+                    let paths = items.iter().filter_map(serde_json::Value::as_str).map(str::to_string).collect();
+                    (key.clone(), paths)
+                })
+            })
+            .collect()
+    })
+}
+
 #[tauri::command]
 fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -702,7 +759,7 @@ fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String
     let config_path = root.join(".lattice").join("config.json");
     let config = if config_path.exists() {
         let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).unwrap_or_default()
+        vault_config_from_json(&content)
     } else {
         VaultConfig::default()
     };
@@ -713,11 +770,11 @@ fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String
 fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
-    let runs_dir = root.join(".lattice").join("runs");
+    let run_path = prompt_run_archive_path(root, &run_id)?;
+    let runs_dir = run_path.parent().ok_or("Invalid archive path")?;
     if !runs_dir.exists() {
         fs::create_dir_all(&runs_dir).map_err(|e| e.to_string())?;
     }
-    let run_path = runs_dir.join(format!("{}.md", run_id));
     fs::write(&run_path, content).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -726,12 +783,21 @@ fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppSt
 fn get_archived_prompt(run_id: String, state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
-    let run_path = root.join(".lattice").join("runs").join(format!("{}.md", run_id));
+    let run_path = prompt_run_archive_path(root, &run_id)?;
     if run_path.exists() {
         fs::read_to_string(&run_path).map_err(|e| e.to_string())
     } else {
         Err("Archived prompt not found".to_string())
     }
+}
+
+fn prompt_run_archive_path(root: &Path, run_id: &str) -> Result<PathBuf, String> {
+    let is_safe = !run_id.is_empty()
+        && run_id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
+    if !is_safe {
+        return Err("Invalid prompt run id".to_string());
+    }
+    Ok(root.join(".lattice").join("runs").join(format!("{}.md", run_id)))
 }
 
 #[tauri::command]
@@ -768,6 +834,9 @@ fn scan_vault(root: &Path) -> Result<Vec<ParsedNote>, String> {
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok).filter(|entry| entry.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md"))) {
         let path = entry.path();
         let rel = path.strip_prefix(root).map_err(|error| error.to_string())?.to_string_lossy().replace('\\', "/");
+        if rel.starts_with(".lattice/") || rel == ".lattice" {
+            continue;
+        }
         let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let modified_at = entry.metadata().ok().and_then(|meta| meta.modified().ok()).map(|_| Utc::now().to_rfc3339());
         notes.push(parse_note(rel, content, modified_at));
@@ -1677,6 +1746,34 @@ mod tests {
     }
 
     #[test]
+    fn prompt_archive_paths_stay_inside_lattice_runs() {
+        let root = PathBuf::from("C:/vault");
+
+        assert_eq!(
+            prompt_run_archive_path(&root, "run_123-abc").unwrap(),
+            root.join(".lattice").join("runs").join("run_123-abc.md")
+        );
+        assert!(prompt_run_archive_path(&root, "../outside").is_err());
+        assert!(prompt_run_archive_path(&root, "nested/run").is_err());
+        assert!(prompt_run_archive_path(&root, "").is_err());
+    }
+
+    #[test]
+    fn scan_vault_ignores_lattice_internal_markdown() {
+        let root = temp_test_dir("scan-ignore-lattice");
+        fs::create_dir_all(root.join(".lattice").join("runs")).unwrap();
+        fs::write(root.join("Home.md"), "# Home\n").unwrap();
+        fs::write(root.join(".lattice").join("runs").join("run-1.md"), "# Archived prompt\n").unwrap();
+
+        let notes = scan_vault(&root).unwrap();
+        let paths = notes.iter().map(|note| note.meta.path.as_str()).collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["Home.md"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn unique_note_path_adds_numeric_suffixes() {
         let existing = vec![
             parsed("Projects/New Note.md", "New Note"),
@@ -1710,6 +1807,43 @@ mod tests {
         assert_eq!(migrated2.context_limit, Some(32000));
         assert_eq!(migrated2.bundle_preset, Some("refactor".to_string()));
         assert_eq!(migrated2.bundle_mode, Some("standard".to_string()));
+    }
+
+    #[test]
+    fn config_json_keeps_valid_fields_when_other_fields_are_malformed() {
+        let config = vault_config_from_json(r#"{
+            "version": "bad",
+            "contextLimit": 32000,
+            "bundlePreset": "refactor",
+            "selectedPaths": {
+                "Home.md": ["Home.md", 123, null]
+            },
+            "promptInstructions": {
+                "Home.md": "Review this",
+                "Broken.md": false
+            },
+            "promptRuns": [
+                {
+                    "id": "run-1",
+                    "question": "Question",
+                    "selectedNotes": ["Home.md"],
+                    "preset": "ask",
+                    "mode": "standard",
+                    "tokenCount": 10,
+                    "createdAt": "2026-06-05T00:00:00.000Z",
+                    "activePath": "Home.md"
+                },
+                { "id": 1 }
+            ]
+        }"#);
+        let migrated = migrate_config(config);
+
+        assert_eq!(migrated.version, Some(1));
+        assert_eq!(migrated.context_limit, Some(32000));
+        assert_eq!(migrated.bundle_preset, Some("refactor".to_string()));
+        assert_eq!(migrated.selected_paths.as_ref().unwrap().get("Home.md").unwrap(), &vec!["Home.md".to_string()]);
+        assert_eq!(migrated.prompt_instructions.as_ref().unwrap().get("Home.md").unwrap(), "Review this");
+        assert_eq!(migrated.prompt_runs.as_ref().unwrap().len(), 1);
     }
 
     #[test]
