@@ -448,6 +448,7 @@ describe("App layout", () => {
           question: "Summarize this vault",
           selectedNotes: ["Home.md"],
           preset: "ask",
+          purpose: "Summarize this vault for a follow-up LLM prompt.",
           mode: "standard",
           tokenCount: 150,
           createdAt: "2026-06-05T14:00:00.000Z",
@@ -486,6 +487,13 @@ describe("App layout", () => {
     await waitFor(() => {
       expect(saveVaultConfigSpy).toHaveBeenCalled();
     });
+    expect(saveVaultConfigSpy).toHaveBeenCalledWith(expect.objectContaining({
+      version: 1,
+      bundlePurpose: "Summarize this vault for a follow-up LLM prompt."
+    }));
+    expect(bundleSpy).toHaveBeenCalledWith("Home.md", expect.objectContaining({
+      purpose: "Summarize this vault for a follow-up LLM prompt."
+    }));
 
     getVaultConfigSpy.mockRestore();
     saveVaultConfigSpy.mockRestore();

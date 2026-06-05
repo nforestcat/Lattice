@@ -262,6 +262,7 @@ struct PromptRun {
     question: String,
     selected_notes: Vec<String>,
     preset: String,
+    purpose: String,
     mode: String,
     token_count: usize,
     created_at: String,

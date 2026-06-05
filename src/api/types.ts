@@ -146,6 +146,7 @@ export type PromptRun = {
   question: string;
   selectedNotes: string[];
   preset: string;
+  purpose: string;
   mode: "short" | "standard" | "full";
   tokenCount: number;
   createdAt: string;

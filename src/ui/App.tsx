@@ -47,6 +47,8 @@ export const PRESETS: Record<PresetType, { label: string; purpose: string; mode:
   }
 };
 
+const VAULT_CONFIG_VERSION = 1;
+
 export const BUILTIN_TEMPLATES: PromptTemplate[] = [
   {
     id: "summarize",
@@ -132,6 +134,7 @@ export function App() {
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
+      version: VAULT_CONFIG_VERSION,
       ...vaultConfigRef.current,
       ...updates
     };
@@ -584,6 +587,7 @@ export function App() {
         question: promptInstruction.trim(),
         selectedNotes: contextBundle.notePaths,
         preset: bundlePreset,
+        purpose: bundlePurpose,
         mode: bundleMode,
         tokenCount: contextBundle.estimatedTokens,
         createdAt: new Date().toISOString(),
@@ -605,7 +609,9 @@ export function App() {
 
       const nextConfig: VaultConfig = {
         ...vaultConfigRef.current,
+        version: VAULT_CONFIG_VERSION,
         bundlePreset: run.preset,
+        bundlePurpose: run.purpose,
         bundleMode: run.mode,
         selectedPaths: {
           ...currentSelected,
@@ -620,6 +626,7 @@ export function App() {
       vaultConfigRef.current = nextConfig;
       setVaultConfig(nextConfig);
       setBundlePreset(run.preset as PresetType);
+      setBundlePurpose(run.purpose);
       setBundleMode(run.mode);
       await vaultApi.saveVaultConfig(nextConfig);
 
@@ -627,7 +634,7 @@ export function App() {
 
       const bundle = await vaultApi.getContextBundle(run.activePath, {
         selectedPaths: run.selectedNotes,
-        purpose: bundlePurpose,
+        purpose: run.purpose,
         mode: run.mode,
         preset: run.preset
       });
