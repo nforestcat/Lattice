@@ -378,7 +378,7 @@ export function App() {
     }
   }
 
-  async function generateContextBundle(overridePaths?: string[], overrideMode?: "short" | "standard" | "full") {
+  async function generateContextBundle(overridePaths?: string[], overrideMode?: "short" | "standard" | "full", overridePreset?: PresetType) {
     if (!activePath) {
       return;
     }
@@ -389,7 +389,7 @@ export function App() {
         selectedPaths: paths,
         purpose: bundlePurpose,
         mode,
-        preset: bundlePreset
+        preset: overridePreset ?? bundlePreset
       });
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
@@ -454,8 +454,12 @@ export function App() {
       void updateVaultConfig({ selectedPaths: nextSelected });
     }
 
-    if (prunedCount > 0) {
+    if (prunedCount > 0 && currentTokens <= contextLimit) {
       setStatus(`Auto-pruned ${prunedCount} recommended note(s) to fit under the limit (Final: ${currentTokens.toLocaleString()} tokens).`);
+    } else if (prunedCount > 0) {
+      setStatus(`Auto-pruned ${prunedCount} recommended note(s), but bundle still exceeds the limit (Final: ${currentTokens.toLocaleString()} tokens).`);
+    } else if (currentTokens > contextLimit) {
+      setStatus("No recommended notes to prune; try Short mode or deselect required notes.");
     } else {
       setStatus("No recommended notes to prune or already under limit.");
     }
@@ -467,7 +471,7 @@ export function App() {
     setBundlePreset(nextPreset);
     void updateVaultConfig({ bundleMode: "short", bundlePreset: nextPreset });
     if (contextBundle) {
-      await generateContextBundle(undefined, "short");
+      await generateContextBundle(undefined, "short", nextPreset);
     }
   }
 

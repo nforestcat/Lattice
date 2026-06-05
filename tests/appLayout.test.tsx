@@ -86,6 +86,86 @@ describe("App layout", () => {
     bundleSpy.mockRestore();
   });
 
+  it("reports when auto-pruning cannot bring the actual bundle under the limit", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({});
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 120, selected: true, characterCount: 240 },
+      { path: "Rec1.md", title: "Rec1", reason: "Recommended", reasonDetail: "Rec1 detail", score: 5, excerpt: "Rec1 excerpt", tokenEstimate: 30, selected: true, characterCount: 60 }
+    ]);
+
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockImplementation(async (_path, options) => {
+      const selected = options?.selectedPaths || [];
+      return {
+        title: "Context Bundle: Home",
+        focusPath: "Home.md",
+        notePaths: selected,
+        markdown: "Bundle Content",
+        estimatedTokens: selected.includes("Rec1.md") ? 160 : 130
+      };
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Rec1")).toBeTruthy());
+
+    const limitSelect = screen.getByLabelText("Limit") as HTMLSelectElement;
+    fireEvent.change(limitSelect, { target: { value: "custom" } });
+    fireEvent.change(screen.getByPlaceholderText("Tokens..."), { target: { value: "100" } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Auto-prune Recommended" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Auto-prune Recommended" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/bundle still exceeds the limit \(Final: 130 tokens\)/)).toBeTruthy();
+    });
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
+  it("regenerates with the derived preset when switching an existing bundle to Short mode", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({});
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 }
+    ]);
+
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md"],
+      markdown: "Bundle Content",
+      estimatedTokens: 150
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByPlaceholderText("Tokens..."), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate bundle" }));
+
+    await waitFor(() => expect(screen.getByText("Prompt Workspace")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Short Mode" }));
+
+    await waitFor(() => {
+      expect(bundleSpy).toHaveBeenLastCalledWith("Home.md", expect.objectContaining({
+        mode: "short",
+        preset: "custom"
+      }));
+    });
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
   it("allows sorting candidates by score/title and filtering by connection type", async () => {
     const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
       { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 },

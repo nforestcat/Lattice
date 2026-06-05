@@ -94,7 +94,7 @@ Markdown files are the source of truth. Generated indexes, graph data, and conte
 
 ## Next Ideas
 
-- Add a first LLM prompt workspace before direct API integration
+- Add prompt history, reusable prompt templates, and exportable prompt runs before direct LLM API integration
 
 ## License
 
