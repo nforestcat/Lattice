@@ -295,7 +295,10 @@ export function App() {
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("");
-  const [results, setResults] = useState<NoteMeta[]>([]);
+  const [results, setResults] = useState<(NoteMeta & { similarity?: number })[]>([]);
+  const [searchMode, setSearchMode] = useState<"keyword" | "semantic">("keyword");
+  const [isSearchingSemantic, setIsSearchingSemantic] = useState(false);
+  const [semanticSearchError, setSemanticSearchError] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
@@ -786,14 +789,101 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     }
   }
 
-  async function runSearch(nextQuery = query, nextTag = tagFilter, nextProperty = propertyFilter) {
-    const frontmatter = parsePropertyFilter(nextProperty);
-    const notes = await vaultApi.searchNotes({
-      query: nextQuery,
-      tags: nextTag ? [nextTag] : [],
-      frontmatter
-    });
-    setResults(notes);
+  async function runSemanticSearch(searchQuery: string) {
+    const q = searchQuery.trim();
+    if (!q) {
+      setResults([]);
+      setSemanticSearchError(null);
+      return;
+    }
+
+    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama")) {
+      setSemanticSearchError("Please configure LLM API key / Ollama in the Distill Settings first.");
+      return;
+    }
+
+    setIsSearchingSemantic(true);
+    setSemanticSearchError(null);
+    try {
+      const rawCache = await vaultApi.loadEmbeddingsCache();
+      let cache: VectorCache = {};
+      try {
+        cache = rawCache ? JSON.parse(rawCache) : {};
+      } catch (e) {
+        cache = {};
+      }
+
+      const notesToProcess = vault?.notes || [];
+      let cacheUpdated = false;
+      
+      for (const note of notesToProcess) {
+        const cached = cache[note.path];
+        if (!cached || cached.contentHash !== note.contentHash) {
+          try {
+            const doc = await vaultApi.readNote(note.path);
+            const vector = await getEmbedding(config, doc.content);
+            if (vector.length > 0) {
+              cache[note.path] = {
+                contentHash: note.contentHash,
+                vector
+              };
+              cacheUpdated = true;
+            }
+          } catch (err) {
+            console.error(`Semantic search: failed to embed note ${note.path}:`, err);
+          }
+        }
+      }
+
+      if (cacheUpdated) {
+        await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+      }
+
+      const queryVector = await getEmbedding(config, q);
+      if (queryVector.length === 0) {
+        throw new Error("Could not compute embedding for query");
+      }
+
+      const searchResults: (NoteMeta & { similarity: number })[] = [];
+      for (const note of notesToProcess) {
+        const entry = cache[note.path];
+        if (!entry) continue;
+
+        const similarity = cosineSimilarity(queryVector, entry.vector);
+        if (similarity >= 0.3) {
+          searchResults.push({
+            ...note,
+            similarity
+          });
+        }
+      }
+
+      searchResults.sort((a, b) => b.similarity - a.similarity);
+      setResults(searchResults);
+    } catch (err) {
+      console.error("Semantic search error:", err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setSemanticSearchError(`Search failed: ${errMsg}`);
+    } finally {
+      setIsSearchingSemantic(false);
+    }
+  }
+
+  async function runSearch(nextQuery = query, nextTag = tagFilter, nextProperty = propertyFilter, forceMode?: "keyword" | "semantic") {
+    const mode = forceMode || searchMode;
+    if (mode === "semantic") {
+      await runSemanticSearch(nextQuery);
+    } else {
+      setSemanticSearchError(null);
+      const frontmatter = parsePropertyFilter(nextProperty);
+      const notes = await vaultApi.searchNotes({
+        query: nextQuery,
+        tags: nextTag ? [nextTag] : [],
+        frontmatter
+      });
+      setResults(notes);
+    }
   }
 
   async function restoreSnapshot(snapshotId: string) {
@@ -1572,9 +1662,19 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
           tagFilter={tagFilter}
           propertyFilter={propertyFilter}
           tags={allTags}
+          searchMode={searchMode}
+          onSearchModeChange={(mode) => {
+            setSearchMode(mode);
+            void runSearch(query, tagFilter, propertyFilter, mode);
+          }}
+          onSubmit={() => {
+            void runSearch(query, tagFilter, propertyFilter);
+          }}
           onQuery={(value) => {
             setQuery(value);
-            void runSearch(value, tagFilter, propertyFilter);
+            if (searchMode === "keyword") {
+              void runSearch(value, tagFilter, propertyFilter);
+            }
           }}
           onTag={(value) => {
             setTagFilter(value);
@@ -1605,10 +1705,28 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
           ))}
         </section>
         <section className="results">
-          <h2>Search</h2>
-          {results.map((note) => (
+          <h2>Search {searchMode === "semantic" ? "(Semantic)" : ""}</h2>
+          {isSearchingSemantic && (
+            <div className="searchLoadingText">
+              <span className="spinner">⌛</span> Searching semantically...
+            </div>
+          )}
+          {semanticSearchError && (
+            <div className="searchErrorText">{semanticSearchError}</div>
+          )}
+          {!isSearchingSemantic && results.length === 0 && query.trim() !== "" && (
+            <div className="muted" style={{ padding: "4px 0" }}>No notes found.</div>
+          )}
+          {!isSearchingSemantic && results.map((note) => (
             <button key={note.path} className="result" onClick={() => void selectNote(note.path)}>
-              <strong>{note.title}</strong>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                <strong>{note.title}</strong>
+                {note.similarity !== undefined && (
+                  <span className="similarityBadge">
+                    {Math.round(note.similarity * 100)}% Match
+                  </span>
+                )}
+              </div>
               <span>{note.path}</span>
             </button>
           ))}
@@ -2866,18 +2984,57 @@ function SearchPanel(props: {
   tagFilter: string;
   propertyFilter: string;
   tags: string[];
+  searchMode: "keyword" | "semantic";
+  onSearchModeChange(mode: "keyword" | "semantic"): void;
+  onSubmit(): void;
   onQuery(value: string): void;
   onTag(value: string): void;
   onProperty(value: string): void;
 }) {
   return (
     <section className="searchPanel">
-      <input value={props.query} onChange={(event) => props.onQuery(event.target.value)} placeholder="Search notes" />
-      <select value={props.tagFilter} onChange={(event) => props.onTag(event.target.value)}>
-        <option value="">All tags</option>
-        {props.tags.map((tag) => <option key={tag} value={tag}>#{tag}</option>)}
-      </select>
-      <input value={props.propertyFilter} onChange={(event) => props.onProperty(event.target.value)} placeholder="status=draft" />
+      <div className="searchModeToggle">
+        <button
+          type="button"
+          className={props.searchMode === "keyword" ? "active" : ""}
+          onClick={() => props.onSearchModeChange("keyword")}
+        >
+          Keyword
+        </button>
+        <button
+          type="button"
+          className={props.searchMode === "semantic" ? "active" : ""}
+          onClick={() => props.onSearchModeChange("semantic")}
+        >
+          Semantic
+        </button>
+      </div>
+      <div className="searchInputContainer">
+        <input
+          value={props.query}
+          onChange={(event) => props.onQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              props.onSubmit();
+            }
+          }}
+          placeholder={props.searchMode === "semantic" ? "Semantic query (Enter)..." : "Search notes"}
+        />
+        {props.searchMode === "semantic" && (
+          <button type="button" onClick={props.onSubmit} className="btnSemanticSearch">
+            Go
+          </button>
+        )}
+      </div>
+      {props.searchMode === "keyword" && (
+        <>
+          <select value={props.tagFilter} onChange={(event) => props.onTag(event.target.value)}>
+            <option value="">All tags</option>
+            {props.tags.map((tag) => <option key={tag} value={tag}>#{tag}</option>)}
+          </select>
+          <input value={props.propertyFilter} onChange={(event) => props.onProperty(event.target.value)} placeholder="status=draft" />
+        </>
+      )}
     </section>
   );
 }

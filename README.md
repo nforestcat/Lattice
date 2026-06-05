@@ -32,6 +32,7 @@ Implemented so far:
 - Chat with an integrated LLM Copilot in the Distill Workspace (supporting Ollama, OpenAI, Gemini, and Anthropic), with active context bundle auto-injection and streaming responses containing structured proposed edits that instantly populate the pending edit checklist
 - Compute semantic note recommendations using vector embeddings (Ollama or OpenAI/Custom OpenAI-compatible) and store them in a persistent local cache file (`.lattice/embeddings.json`) to minimize API requests and save overhead on subsequent note selections
 - Automatically scan the active editor note for unlinked mentions of other note titles (supporting CJK languages via Unicode property boundary matching) and suggest turning them into `[[Wiki Links]]` with a one-click apply button
+- Toggle search mode in the sidebar between traditional Keyword search and AI-powered **Semantic Search** to query the entire vault using natural language and rank results by vector embedding similarity scores (with custom match percentage badges)
 
 ## LLM Wiki Direction
 
