@@ -14,14 +14,14 @@ Implemented so far:
 - Browse notes in a folder tree
 - Create, rename, and delete notes/folders
 - Edit Markdown with CodeMirror
-- View rendered Markdown preview beside the editor, including styled inline code and fenced code blocks with language badges
+- View rendered Markdown preview beside the editor, including styled inline code and fenced code blocks with language badges and premium syntax highlighting (powered by `highlight.js`)
 - Parse wiki links, backlinks, outgoing links, tags, and frontmatter
 - View and edit note relationships in a graph
 - Generate LLM context bundles from selected related notes (with Short/Standard/Full modes, Purpose instructions, and tailored task presets like Ask, Refactor, Summarize, Plan, Debug)
 - Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions), with options to sort and filter candidates in the UI by score, title, or connection type
 - Persist custom context bundle selections, presets, purposes, modes, and limits across note visits using a type-safe vault-local configuration file (`.lattice/config.json`)
 - Estimate token consumption, track context window budget with model-agnostic size presets (Small 8K, Medium 32K, Large 128K, Huge 200K, or Custom), display the final bundle actual token count with a visual progress bar, and offer automated pruning of recommended candidates (sorted by score) matching the actual generated bundle token limit
-- Draft, preview, and copy final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note in the local vault config)
+- Draft, preview, copy, and log final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note, and copy events recorded in a local-first **Prompt History** timeline permitting loading past configurations and retrieving questions)
 - Detect selected Obsidian vault metadata from `.obsidian` settings and import compatible appearance/readability hints such as readable line length, theme, accent color, and enabled core plugin names
 - Capture loose ideas or LLM answers into daily Inbox notes
 - Triage Inbox captures (into new notes, append to existing notes, or mark processed)
@@ -95,7 +95,7 @@ Markdown files are the source of truth. Generated indexes, graph data, and conte
 
 ## Next Ideas
 
-- Add prompt history, reusable prompt templates, and exportable prompt runs before direct LLM API integration
+- Add reusable prompt templates and exportable prompt runs before direct LLM API integration
 
 ## License
 

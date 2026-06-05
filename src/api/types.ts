@@ -138,6 +138,17 @@ export type VaultApi = {
   saveVaultConfig(config: VaultConfig): Promise<void>;
 };
 
+export type PromptRun = {
+  id: string;
+  question: string;
+  selectedNotes: string[];
+  preset: string;
+  mode: "short" | "standard" | "full";
+  tokenCount: number;
+  createdAt: string;
+  activePath: string;
+};
+
 export type VaultConfig = {
   contextLimit?: number;
   bundlePreset?: string;
@@ -145,4 +156,5 @@ export type VaultConfig = {
   bundleMode?: "short" | "standard" | "full";
   selectedPaths?: Record<string, string[]>;
   promptInstructions?: Record<string, string>;
+  promptRuns?: PromptRun[];
 };

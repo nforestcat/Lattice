@@ -252,6 +252,19 @@ struct GitSettings {
     auto_git_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptRun {
+    id: String,
+    question: String,
+    selected_notes: Vec<String>,
+    preset: String,
+    mode: String,
+    token_count: usize,
+    created_at: String,
+    active_path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct VaultConfig {
@@ -267,6 +280,8 @@ struct VaultConfig {
     selected_paths: Option<HashMap<String, Vec<String>>>,
     #[serde(default)]
     prompt_instructions: Option<HashMap<String, String>>,
+    #[serde(default)]
+    prompt_runs: Option<Vec<PromptRun>>,
 }
 
 #[tauri::command]

@@ -12,8 +12,11 @@ describe("renderMarkdownPreview", () => {
 
     expect(html).toContain('class="codeBlock"');
     expect(html).toContain('class="codeLanguage">Python</span>');
-    expect(html).toContain("for n in range(3):");
-    expect(html).toContain("print(n &lt; 2)");
+    expect(html).toContain('class="hljs"');
+    // Ensure syntax highlighting is active
+    expect(html).toContain('class="hljs-keyword">for</span>');
+    expect(html).toContain("n &lt;");
+    expect(html).toContain('<span class="hljs-number">2</span>');
   });
 
   it("renders inline code with a preview-specific class", () => {

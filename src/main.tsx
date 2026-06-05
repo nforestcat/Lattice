@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "@xyflow/react/dist/style.css";
+import "highlight.js/styles/github.css";
 import "./styles.css";
 import { App } from "./ui/App";
 

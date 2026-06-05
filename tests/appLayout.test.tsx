@@ -47,6 +47,52 @@ describe("App layout", () => {
     openVaultSpy.mockRestore();
   });
 
+  it("asks for confirmation before deleting a note from the file tree", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const deleteSpy = vi.spyOn(vaultApi, "deleteEntry");
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByTitle("Delete Home.md"));
+
+    expect(confirmSpy).toHaveBeenCalledWith('Delete note "Home.md"?');
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+    deleteSpy.mockRestore();
+  });
+
+  it("asks for confirmation before removing a managed graph link", async () => {
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const deleteLinkSpy = vi.spyOn(vaultApi, "deleteManagedGraphLink");
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+
+    const removeSelect = Array.from(document.querySelectorAll("select")).find((select) => {
+      return select.querySelector("option")?.textContent === "Remove managed link";
+    }) as HTMLSelectElement | undefined;
+    expect(removeSelect).toBeTruthy();
+
+    fireEvent.change(removeSelect!, { target: { value: "Projects/Obsidian Replacement.md" } });
+
+    expect(confirmSpy).toHaveBeenCalledWith('Remove managed graph link to "Projects/Obsidian Replacement.md"?');
+    expect(deleteLinkSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+    deleteLinkSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("handles token limit config overflows and auto-prunes lowest score recommended notes", async () => {
     // Stub getContextBundleCandidates to return controlled focus and recommended notes
     const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
@@ -373,6 +419,72 @@ describe("App layout", () => {
           "Home.md": "Updated draft"
         })
       }));
+    });
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
+  it("renders prompt runs history and handles Load/Copy actions", async () => {
+    // Mock navigator.clipboard
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: writeTextMock
+      },
+      writable: true,
+      configurable: true
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePreset: "ask",
+      promptRuns: [
+        {
+          id: "run-123",
+          question: "Summarize this vault",
+          selectedNotes: ["Home.md"],
+          preset: "ask",
+          mode: "standard",
+          tokenCount: 150,
+          createdAt: "2026-06-05T14:00:00.000Z",
+          activePath: "Home.md"
+        }
+      ]
+    });
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 }
+    ]);
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md"],
+      markdown: "Bundle Content",
+      estimatedTokens: 50
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Prompt History")).toBeTruthy());
+    expect(screen.getByText("Summarize this vault")).toBeTruthy();
+    expect(screen.getByText("ask / standard")).toBeTruthy();
+    expect(screen.getByText("150 tokens")).toBeTruthy();
+
+    // Verify copy question works
+    const copyBtn = screen.getByRole("button", { name: "Copy Question" });
+    fireEvent.click(copyBtn);
+    expect(writeTextMock).toHaveBeenCalledWith("Summarize this vault");
+
+    // Click Load
+    const loadBtn = screen.getByRole("button", { name: "Load" });
+    fireEvent.click(loadBtn);
+
+    await waitFor(() => {
+      expect(saveVaultConfigSpy).toHaveBeenCalled();
     });
 
     getVaultConfigSpy.mockRestore();

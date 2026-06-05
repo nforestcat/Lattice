@@ -1,4 +1,5 @@
 import { Marked, Renderer } from "marked";
+import hljs from "highlight.js";
 
 const markedPreview = new Marked();
 const renderer = new Renderer();
@@ -6,10 +7,20 @@ const renderer = new Renderer();
 renderer.code = ({ text, lang }) => {
   const language = normalizeLanguageLabel(lang);
   const badge = language ? `<span class="codeLanguage">${escapeHtml(language)}</span>` : "";
+  
+  let highlighted = escapeHtml(text);
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      highlighted = hljs.highlight(text, { language: lang }).value;
+    } catch (_) {
+      // fallback
+    }
+  }
+
   return [
     '<figure class="codeBlock">',
     `<figcaption>${badge}</figcaption>`,
-    `<pre><code>${escapeHtml(text)}</code></pre>`,
+    `<pre><code class="hljs">${highlighted}</code></pre>`,
     "</figure>"
   ].join("");
 };

@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun } from "../api/types";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { renderMarkdownPreview } from "./markdownPreview";
@@ -289,6 +289,10 @@ export function App() {
   }
 
   async function deleteGraphLink(sourcePath: string, targetPath: string) {
+    if (!window.confirm(`Remove managed graph link to "${targetPath}"?`)) {
+      return;
+    }
+
     const result = await vaultApi.deleteManagedGraphLink(sourcePath, targetPath);
     setGraph(result.graph);
     if (sourcePath === activePath) {
@@ -538,6 +542,74 @@ export function App() {
     try {
       await navigator.clipboard.writeText(combined);
       setStatus("Combined prompt copied");
+
+      const newRun: PromptRun = {
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+        question: promptInstruction.trim(),
+        selectedNotes: contextBundle.notePaths,
+        preset: bundlePreset,
+        mode: bundleMode,
+        tokenCount: contextBundle.estimatedTokens,
+        createdAt: new Date().toISOString(),
+        activePath: activePath || ""
+      };
+
+      const currentRuns = vaultConfigRef.current.promptRuns ?? [];
+      const nextRuns = [newRun, ...currentRuns].slice(0, 100);
+      void updateVaultConfig({ promptRuns: nextRuns });
+    } catch (error) {
+      setStatus(errorMessage(error));
+    }
+  }
+
+  async function applyPromptRun(run: PromptRun) {
+    try {
+      const currentSelected = vaultConfigRef.current.selectedPaths ?? {};
+      const currentPrompts = vaultConfigRef.current.promptInstructions ?? {};
+
+      const nextConfig: VaultConfig = {
+        ...vaultConfigRef.current,
+        bundlePreset: run.preset,
+        bundleMode: run.mode,
+        selectedPaths: {
+          ...currentSelected,
+          [run.activePath]: run.selectedNotes
+        },
+        promptInstructions: {
+          ...currentPrompts,
+          [run.activePath]: run.question
+        }
+      };
+
+      vaultConfigRef.current = nextConfig;
+      setVaultConfig(nextConfig);
+      setBundlePreset(run.preset as PresetType);
+      setBundleMode(run.mode);
+      await vaultApi.saveVaultConfig(nextConfig);
+
+      await selectNote(run.activePath, nextConfig);
+
+      const bundle = await vaultApi.getContextBundle(run.activePath, {
+        selectedPaths: run.selectedNotes,
+        purpose: bundlePurpose,
+        mode: run.mode,
+        preset: run.preset
+      });
+      setContextBundle(bundle);
+      setStatus(`Loaded history prompt from ${new Date(run.createdAt).toLocaleString()}`);
+    } catch (e) {
+      setStatus(errorMessage(e));
+    }
+  }
+
+  async function copyPromptRunQuestion(run: PromptRun) {
+    if (!run.question) {
+      setStatus("No question to copy");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(run.question);
+      setStatus("Question copied to clipboard");
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -1019,6 +1091,42 @@ export function App() {
                 </div>
               </div>
               <textarea readOnly value={contextBundle.markdown} />
+            </div>
+          )}
+        </section>
+        <section className="promptHistorySection">
+          <h2>Prompt History</h2>
+          {(!vaultConfig.promptRuns || vaultConfig.promptRuns.length === 0) ? (
+            <p className="muted">No history yet</p>
+          ) : (
+            <div className="promptRunList">
+              {vaultConfig.promptRuns.map((run) => (
+                <div key={run.id} className="promptRunCard">
+                  <div className="promptRunHeader">
+                    <span className="promptRunTime" title={run.createdAt}>
+                      {new Date(run.createdAt).toLocaleString()}
+                    </span>
+                    <span className="promptRunMetaBadge">{run.preset} / {run.mode}</span>
+                  </div>
+                  <div className="promptRunQuestion">
+                    {run.question ? run.question : <span className="muted italic">No question (bundle only)</span>}
+                  </div>
+                  <div className="promptRunDetails">
+                    <span className="promptRunNoteLink" title="Click to view note" onClick={() => void selectNote(run.activePath)}>
+                      [[{run.activePath.split('/').pop() || run.activePath}]]
+                    </span>
+                    <span className="promptRunTokens">{run.tokenCount.toLocaleString()} tokens</span>
+                  </div>
+                  <div className="promptRunActions">
+                    <button className="smallButton" onClick={() => void applyPromptRun(run)}>
+                      Load
+                    </button>
+                    <button className="smallButton" onClick={() => void copyPromptRunQuestion(run)}>
+                      Copy Question
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>
