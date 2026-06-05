@@ -1687,3 +1687,120 @@ summary:hover .treeActions {
     display: none;
   }
 }
+
+/* Danger button style for history delete */
+.smallButton.dangerButton {
+  color: #ef4444;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.smallButton.dangerButton:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #f87171;
+}
+
+.archiveStatusBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.archiveStatusText {
+  color: #475569;
+}
+
+.archiveStatusBar .pruneButton {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.archiveStatusBar .pruneButton:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.fullPromptDiffWrapper {
+  margin-top: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.fullPromptDiffWrapper .diffHeader {
+  background: #f1f5f9;
+  padding: 6px 10px;
+  font-weight: bold;
+  border-bottom: 1px solid #cbd5e1;
+  margin-bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.diffRegenText {
+  font-size: 10px;
+  font-weight: normal;
+  color: #64748b;
+  font-style: italic;
+}
+
+.diffErrorText {
+  padding: 8px 12px;
+  color: #ef4444;
+  background: #fef2f2;
+  font-size: 11px;
+}
+
+.fullPromptDiffBox {
+  max-height: 250px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.diffLine {
+  display: flex;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 1px 4px;
+}
+
+.diffLine.normal {
+  color: #334155;
+}
+
+.diffLine.added {
+  background-color: #ecfdf5;
+  color: #065f46;
+}
+
+.diffLine.removed {
+  background-color: #fef2f2;
+  color: #991b1b;
+}
+
+.diffPrefix {
+  width: 15px;
+  user-select: none;
+  font-weight: bold;
+  opacity: 0.7;
+}
+
+.diffContent {
+  flex: 1;
+}

@@ -852,7 +852,7 @@ describe("App layout", () => {
       configurable: true
     });
 
-    const archiveSpy = vi.spyOn(vaultApi, "archivePromptRun").mockResolvedValue();
+    const archiveSpy = vi.spyOn(vaultApi, "archivePromptRun").mockResolvedValue("mocked-sha256-hash");
     const getArchiveSpy = vi.spyOn(vaultApi, "getArchivedPrompt").mockResolvedValue("Exact archived content here");
 
     const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
@@ -925,6 +925,112 @@ describe("App layout", () => {
 
     archiveSpy.mockRestore();
     getArchiveSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    candidatesSpy.mockRestore();
+    bundleSpy.mockRestore();
+  });
+
+  it("supports delete, prune, and unified line-by-line diffing for archived prompt runs", async () => {
+    const statusSpy = vi.spyOn(vaultApi, "getArchiveStatus").mockResolvedValue({ fileCount: 5, totalBytes: 20480 });
+    const deletePromptSpy = vi.spyOn(vaultApi, "deleteArchivedPrompt").mockResolvedValue();
+    const pruneSpy = vi.spyOn(vaultApi, "pruneArchivedPrompts").mockResolvedValue();
+    const getArchiveSpy = vi.spyOn(vaultApi, "getArchivedPrompt").mockResolvedValue("Exact archived content here\nLine 2");
+    const saveConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      contextLimit: 8000,
+      bundleMode: "standard",
+      bundlePreset: "ask",
+      promptRuns: [
+        {
+          id: "run-delete-diff-test",
+          question: "Stored run instruction",
+          selectedNotes: ["Home.md"],
+          preset: "ask",
+          purpose: "Summarize.",
+          mode: "standard",
+          tokenCount: 100,
+          createdAt: "2026-06-05T14:00:00.000Z",
+          activePath: "Home.md",
+          promptHash: "hash-diff",
+          preview: "Preview"
+        }
+      ]
+    });
+
+    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      { path: "Home.md", title: "Home", reason: "Focus", reasonDetail: "Focus note", score: 10, excerpt: "Focus excerpt", tokenEstimate: 50, selected: true, characterCount: 100 }
+    ]);
+
+    const bundleSpy = vi.spyOn(vaultApi, "getContextBundle").mockResolvedValue({
+      title: "Context Bundle: Home",
+      focusPath: "Home.md",
+      notePaths: ["Home.md"],
+      markdown: "Different workspace prompt content\nLine 2",
+      estimatedTokens: 90
+    });
+
+    render(<App />);
+
+    // Wait for App to load
+    await waitFor(() => expect(screen.getByText("Prompt History")).toBeTruthy());
+
+    // 1. Verify archive status bar rendering
+    await waitFor(() => {
+      expect(screen.getByText(/Archive:/)).toBeTruthy();
+      expect(screen.getByText("5")).toBeTruthy();
+      expect(screen.getByText(/20.0 KB/)).toBeTruthy();
+    });
+
+    // 2. Generate workspace bundle so that there is a current combined prompt to compare with
+    fireEvent.click(screen.getByRole("button", { name: "Generate bundle" }));
+    await waitFor(() => expect(screen.getByText("Prompt Workspace")).toBeTruthy());
+
+    // Set current question to match
+    const promptTextarea = screen.getByPlaceholderText("Ask a question or specify the task for the LLM...") as HTMLTextAreaElement;
+    fireEvent.change(promptTextarea, { target: { value: "Stored run instruction" } });
+
+    // 3. Expand the history card
+    const card = document.querySelector(".promptRunCard") as HTMLElement;
+    expect(card).toBeTruthy();
+    fireEvent.click(card);
+
+    // 4. Click Unified Prompt Diff button
+    await waitFor(() => expect(screen.getByText("Compare Full Text (Exact)")).toBeTruthy());
+    const compareBtn = screen.getByText("Compare Full Text (Exact)");
+    fireEvent.click(compareBtn);
+
+    // 5. Verify line-by-line diff rendering
+    await waitFor(() => {
+      expect(screen.getByText("Unified Prompt Diff")).toBeTruthy();
+      // "Exact archived content here" was deleted, "Different workspace prompt content" was added
+      const removedTexts = Array.from(document.querySelectorAll(".diffLine.removed")).map((el) => el.textContent);
+      const addedTexts = Array.from(document.querySelectorAll(".diffLine.added")).map((el) => el.textContent);
+      expect(removedTexts.some((t) => t?.includes("Exact archived content here"))).toBe(true);
+      expect(addedTexts.some((t) => t?.includes("Different workspace prompt content"))).toBe(true);
+    });
+
+    // 6. Click Prune Orphaned button
+    const pruneBtn = screen.getByText("Prune Orphaned");
+    fireEvent.click(pruneBtn);
+    await waitFor(() => {
+      expect(pruneSpy).toHaveBeenCalledWith(["run-delete-diff-test"]);
+    });
+
+    // 7. Click Delete button
+    const deleteBtn = card.querySelector(".smallButton.dangerButton") as HTMLButtonElement;
+    expect(deleteBtn).toBeTruthy();
+    fireEvent.click(deleteBtn);
+    await waitFor(() => {
+      expect(deletePromptSpy).toHaveBeenCalledWith("run-delete-diff-test");
+      expect(saveConfigSpy).toHaveBeenCalled();
+    });
+
+    statusSpy.mockRestore();
+    deletePromptSpy.mockRestore();
+    pruneSpy.mockRestore();
+    getArchiveSpy.mockRestore();
+    saveConfigSpy.mockRestore();
     getVaultConfigSpy.mockRestore();
     candidatesSpy.mockRestore();
     bundleSpy.mockRestore();

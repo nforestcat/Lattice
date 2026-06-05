@@ -635,7 +635,8 @@ fn restore_snapshot(snapshot_id: String, state: tauri::State<AppState>) -> Resul
     let root = guard.root_path.clone().ok_or("No vault is open")?;
     let snapshot = guard.snapshots.iter().find(|candidate| candidate.id == snapshot_id).cloned().ok_or("Snapshot not found")?;
     let content = guard.snapshot_content.get(&snapshot_id).cloned().ok_or("Snapshot content not found")?;
-    fs::write(root.join(&snapshot.path), &content).map_err(|error| error.to_string())?;
+    let target_path = resolve_vault_path(&root, &snapshot.path)?;
+    fs::write(target_path, &content).map_err(|error| error.to_string())?;
     guard.notes = resolve_links(scan_vault(&root)?);
     Ok(SaveResult {
         saved: true,
@@ -766,8 +767,74 @@ fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String
     Ok(migrate_config(config))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveStatus {
+    file_count: usize,
+    total_bytes: u64,
+}
+
 #[tauri::command]
-fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppState>) -> Result<(), String> {
+fn get_archive_status(state: tauri::State<AppState>) -> Result<ArchiveStatus, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let runs_dir = root.join(".lattice").join("runs");
+    let mut file_count = 0;
+    let mut total_bytes = 0;
+    if runs_dir.exists() && runs_dir.is_dir() {
+        for entry in fs::read_dir(runs_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "md" {
+                        file_count += 1;
+                        if let Ok(meta) = path.metadata() {
+                            total_bytes += meta.len();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(ArchiveStatus { file_count, total_bytes })
+}
+
+#[tauri::command]
+fn delete_archived_prompt(run_id: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let run_path = prompt_run_archive_path(root, &run_id)?;
+    if run_path.exists() {
+        fs::remove_file(&run_path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn prune_archived_prompts(active_run_ids: Vec<String>, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let runs_dir = root.join(".lattice").join("runs");
+    if runs_dir.exists() && runs_dir.is_dir() {
+        let active_set: HashSet<String> = active_run_ids.into_iter().map(|id| format!("{}.md", id)).collect();
+        for entry in fs::read_dir(&runs_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                    if filename.ends_with(".md") && !active_set.contains(filename) {
+                        fs::remove_file(&path).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
     let run_path = prompt_run_archive_path(root, &run_id)?;
@@ -775,8 +842,15 @@ fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppSt
     if !runs_dir.exists() {
         fs::create_dir_all(&runs_dir).map_err(|e| e.to_string())?;
     }
-    fs::write(&run_path, content).map_err(|e| e.to_string())?;
-    Ok(())
+    fs::write(&run_path, &content).map_err(|e| e.to_string())?;
+
+    // Compute SHA-256 hash of prompt content
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let hash_result = hasher.finalize();
+    let hex_hash = format!("{:x}", hash_result);
+
+    Ok(hex_hash)
 }
 
 #[tauri::command]
@@ -1688,7 +1762,10 @@ pub fn run() {
             get_vault_config,
             save_vault_config,
             archive_prompt_run,
-            get_archived_prompt
+            get_archived_prompt,
+            get_archive_status,
+            delete_archived_prompt,
+            prune_archived_prompts
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local Vault Notes");

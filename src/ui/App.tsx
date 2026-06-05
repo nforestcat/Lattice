@@ -187,6 +187,58 @@ function presetForSettings(purpose: string, mode: "short" | "standard" | "full")
   return matched ? matched[0] as PresetType : "custom";
 }
 
+interface DiffLine {
+  type: "added" | "removed" | "normal";
+  value: string;
+}
+
+function computeSimpleLineDiff(oldText: string, newText: string): DiffLine[] {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+
+  const dp: number[][] = [];
+  const n = Math.min(oldLines.length, 1000);
+  const m = Math.min(newLines.length, 1000);
+
+  for (let i = 0; i <= n; i++) {
+    dp[i] = new Array(m + 1).fill(0);
+  }
+
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  const result: DiffLine[] = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      result.push({ type: "normal", value: oldLines[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({ type: "added", value: newLines[j - 1] });
+      j--;
+    } else if (i > 0 && (j === 0 || dp[i - 1][j] >= dp[i][j - 1])) {
+      result.push({ type: "removed", value: oldLines[i - 1] });
+      i--;
+    }
+  }
+
+  if (oldLines.length > n || newLines.length > m) {
+    result.reverse();
+    result.push({ type: "normal", value: "... [Diff truncated for performance, showing first 1000 lines] ..." });
+    return result;
+  }
+
+  return result.reverse();
+}
+
 export function App() {
   const [vault, setVault] = useState<VaultSnapshot | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -225,6 +277,9 @@ export function App() {
   const [historyActiveNoteOnly, setHistoryActiveNoteOnly] = useState(false);
   const [historyPresetFilter, setHistoryPresetFilter] = useState("");
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [archiveStatus, setArchiveStatus] = useState<{ fileCount: number; totalBytes: number } | null>(null);
+  const [diffRunId, setDiffRunId] = useState<string | null>(null);
+  const [diffResult, setDiffResult] = useState<{ lines: DiffLine[]; regenerating: boolean; error?: string } | null>(null);
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -238,6 +293,15 @@ export function App() {
       await vaultApi.saveVaultConfig(nextConfig);
     } catch (e) {
       console.error("Failed to save vault config", e);
+    }
+  };
+
+  const refreshArchiveStatus = async () => {
+    try {
+      const status = await vaultApi.getArchiveStatus();
+      setArchiveStatus(status);
+    } catch (e) {
+      console.error("Failed to load archive status", e);
     }
   };
 
@@ -306,6 +370,7 @@ export function App() {
     }
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
+    void refreshArchiveStatus();
   }
 
   async function chooseVaultFolder() {
@@ -336,6 +401,7 @@ export function App() {
       setSelectedContextPaths(new Set());
       setInboxCaptures([]);
     }
+    void refreshArchiveStatus();
   }
 
   async function selectNote(path: string, currentConfig?: VaultConfig) {
@@ -677,20 +743,21 @@ export function App() {
       await navigator.clipboard.writeText(combined);
       setStatus("Combined prompt copied");
 
-      let hVal = 0;
-      for (let i = 0; i < combined.length; i++) {
-        hVal = (Math.imul(31, hVal) + combined.charCodeAt(i)) | 0;
-      }
-      const promptHash = Math.abs(hVal).toString(16);
+      let promptHash = "";
       const preview = combined.slice(0, 1500) + (combined.length > 1500 ? "..." : "");
-
       const newId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11);
 
       // Archive the exact prompt content
       try {
-        await vaultApi.archivePromptRun(newId, combined);
+        promptHash = await vaultApi.archivePromptRun(newId, combined);
+        void refreshArchiveStatus();
       } catch (archiveErr) {
         console.error("Failed to archive prompt run", archiveErr);
+        let hVal = 0;
+        for (let i = 0; i < combined.length; i++) {
+          hVal = (Math.imul(31, hVal) + combined.charCodeAt(i)) | 0;
+        }
+        promptHash = Math.abs(hVal).toString(16);
       }
 
       const newRun: PromptRun = {
@@ -802,6 +869,87 @@ export function App() {
       }
     } catch (err) {
       setStatus(errorMessage(err));
+    }
+  }
+
+  async function deletePromptRun(runId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await vaultApi.deleteArchivedPrompt(runId);
+      const nextRuns = (vaultConfig.promptRuns ?? []).filter((r) => r.id !== runId);
+      await updateVaultConfig({ promptRuns: nextRuns });
+      void refreshArchiveStatus();
+      setStatus("Deleted prompt run history entry");
+      if (expandedRunId === runId) {
+        setExpandedRunId(null);
+      }
+      if (diffRunId === runId) {
+        setDiffRunId(null);
+        setDiffResult(null);
+      }
+    } catch (err) {
+      setStatus(errorMessage(err));
+    }
+  }
+
+  async function pruneArchivedPrompts() {
+    try {
+      const activeRunIds = (vaultConfig.promptRuns ?? []).map((r) => r.id);
+      await vaultApi.pruneArchivedPrompts(activeRunIds);
+      void refreshArchiveStatus();
+      setStatus("Pruned orphaned prompt archives");
+    } catch (err) {
+      setStatus(errorMessage(err));
+    }
+  }
+
+  async function loadPromptDiff(run: PromptRun) {
+    if (diffRunId === run.id) {
+      setDiffRunId(null);
+      setDiffResult(null);
+      return;
+    }
+
+    setDiffRunId(run.id);
+    setDiffResult({ lines: [], regenerating: true });
+
+    try {
+      if (!contextBundle) {
+        setDiffResult({
+          lines: [],
+          regenerating: false,
+          error: "Current context bundle not loaded. Try generating a bundle first."
+        });
+        return;
+      }
+      const currentCombined = promptInstruction.trim()
+        ? `${promptInstruction.trim()}\n\n---\n\n${contextBundle.markdown}`
+        : contextBundle.markdown;
+
+      let oldPrompt = "";
+      try {
+        oldPrompt = await vaultApi.getArchivedPrompt(run.id);
+      } catch (err) {
+        console.warn("Archived prompt not found for diff, falling back to dynamic regeneration", err);
+      }
+
+      if (!oldPrompt) {
+        // Fallback to regeneration
+        const bundle = await vaultApi.getContextBundle(run.activePath, {
+          selectedPaths: run.selectedNotes,
+          purpose: run.purpose ?? "",
+          mode: run.mode,
+          preset: run.preset
+        });
+        oldPrompt = run.question.trim()
+          ? `${run.question.trim()}\n\n---\n\n${bundle.markdown}`
+          : bundle.markdown;
+      }
+
+      const diffLines = computeSimpleLineDiff(oldPrompt, currentCombined);
+      setDiffResult({ lines: diffLines, regenerating: false });
+    } catch (e) {
+      setDiffResult({ lines: [], regenerating: false, error: errorMessage(e) });
     }
   }
 
@@ -1529,6 +1677,20 @@ export function App() {
 
             return (
               <>
+                {archiveStatus && (
+                  <div className="archiveStatusBar">
+                    <span className="archiveStatusText">
+                      📁 Archive: <strong>{archiveStatus.fileCount}</strong> file(s) ({(archiveStatus.totalBytes / 1024).toFixed(1)} KB)
+                    </span>
+                    <button
+                      className="smallButton pruneButton"
+                      onClick={() => void pruneArchivedPrompts()}
+                      title="Clean up disk files of deleted prompt runs"
+                    >
+                      Prune Orphaned
+                    </button>
+                  </div>
+                )}
                 <div className="historyFilters">
                   <input
                     type="text"
@@ -1594,6 +1756,9 @@ export function App() {
                           </button>
                           <button className="smallButton" onClick={() => void copyFullPromptFromHistory(run)}>
                             Copy Full Prompt
+                          </button>
+                          <button className="smallButton dangerButton" onClick={(e) => void deletePromptRun(run.id, e)}>
+                            Delete
                           </button>
                         </div>
                         {expandedRunId === run.id && (
@@ -1696,6 +1861,39 @@ export function App() {
                                       )}
                                     </div>
                                   )}
+                                  
+                                  <div className="diffFullTextCompareSection">
+                                    <button
+                                      className="smallButton secondary"
+                                      onClick={() => void loadPromptDiff(run)}
+                                      style={{ marginTop: "8px" }}
+                                    >
+                                      {diffRunId === run.id ? "Hide Full Text Diff" : "Compare Full Text (Exact)"}
+                                    </button>
+
+                                    {diffRunId === run.id && diffResult && (
+                                      <div className="fullPromptDiffWrapper">
+                                        <div className="diffHeader">
+                                          <strong>Unified Prompt Diff</strong>
+                                          {diffResult.regenerating && <span className="diffRegenText">Retrieving/Regenerating...</span>}
+                                        </div>
+                                        {diffResult.error ? (
+                                          <div className="diffErrorText">{diffResult.error}</div>
+                                        ) : (
+                                          <div className="fullPromptDiffBox">
+                                            {diffResult.lines.map((line, idx) => (
+                                              <div key={idx} className={`diffLine ${line.type}`}>
+                                                <span className="diffPrefix">
+                                                  {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
+                                                </span>
+                                                <span className="diffContent">{line.value}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })() : (

@@ -372,11 +372,52 @@ export function createMockVaultApi(): VaultApi {
     async saveVaultConfig(config: VaultConfig): Promise<void> {
       localStorage.setItem(`lattice:mock_config:${openRoot}`, JSON.stringify(config));
     },
-    async archivePromptRun(runId: string, content: string): Promise<void> {
+    async archivePromptRun(runId: string, content: string): Promise<string> {
       localStorage.setItem(`lattice:mock_archive:${openRoot}:${runId}`, content);
+      try {
+        const msgUint8 = new TextEncoder().encode(content);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+        return hashHex;
+      } catch (e) {
+        // Fallback if crypto.subtle is not available (e.g. in some test environments)
+        return shortHash(content);
+      }
     },
     async getArchivedPrompt(runId: string): Promise<string> {
       return localStorage.getItem(`lattice:mock_archive:${openRoot}:${runId}`) || "";
+    },
+    async deleteArchivedPrompt(runId: string): Promise<void> {
+      localStorage.removeItem(`lattice:mock_archive:${openRoot}:${runId}`);
+    },
+    async pruneArchivedPrompts(activeRunIds: string[]): Promise<void> {
+      const activeKeys = new Set(activeRunIds.map((id) => `lattice:mock_archive:${openRoot}:${id}`));
+      const prefix = `lattice:mock_archive:${openRoot}:`;
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix) && !activeKeys.has(key)) {
+          keysToRemove.push(key);
+        }
+      }
+      for (const key of keysToRemove) {
+        localStorage.removeItem(key);
+      }
+    },
+    async getArchiveStatus(): Promise<{ fileCount: number; totalBytes: number }> {
+      const prefix = `lattice:mock_archive:${openRoot}:`;
+      let fileCount = 0;
+      let totalBytes = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          fileCount++;
+          const val = localStorage.getItem(key) || "";
+          totalBytes += new Blob([val]).size;
+        }
+      }
+      return { fileCount, totalBytes };
     }
   };
 }
