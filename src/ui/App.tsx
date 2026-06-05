@@ -83,22 +83,97 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
 ];
 
 export function normalizeVaultConfig(config: any): VaultConfig {
+  const preset = normalizePreset(config?.bundlePreset);
+  const bundlePurpose = typeof config?.bundlePurpose === "string" ? config.bundlePurpose : PRESETS[preset].purpose;
+  const bundleMode = normalizeBundleMode(config?.bundleMode, PRESETS[preset].mode);
   const normalized: VaultConfig = {
-    version: typeof config?.version === "number" ? config.version : 1,
-    contextLimit: typeof config?.contextLimit === "number" ? config.contextLimit : 8000,
-    bundlePreset: typeof config?.bundlePreset === "string" ? config.bundlePreset : "ask",
-    bundlePurpose: typeof config?.bundlePurpose === "string" ? config.bundlePurpose : "",
-    bundleMode: (config?.bundleMode === "short" || config?.bundleMode === "standard" || config?.bundleMode === "full") ? config.bundleMode : "standard",
-    selectedPaths: (config?.selectedPaths && typeof config.selectedPaths === "object") ? config.selectedPaths : {},
-    promptInstructions: (config?.promptInstructions && typeof config.promptInstructions === "object") ? config.promptInstructions : {},
-    promptRuns: Array.isArray(config?.promptRuns) ? config.promptRuns : [],
-    promptTemplates: Array.isArray(config?.promptTemplates) ? config.promptTemplates : []
+    version: Math.max(VAULT_CONFIG_VERSION, typeof config?.version === "number" ? config.version : VAULT_CONFIG_VERSION),
+    contextLimit: Number.isFinite(config?.contextLimit) && config.contextLimit > 0 ? config.contextLimit : 8000,
+    bundlePreset: preset,
+    bundlePurpose,
+    bundleMode,
+    selectedPaths: normalizeSelectedPaths(config?.selectedPaths),
+    promptInstructions: normalizePromptInstructions(config?.promptInstructions),
+    promptRuns: normalizePromptRuns(config?.promptRuns, bundlePurpose),
+    promptTemplates: normalizePromptTemplates(config?.promptTemplates)
   };
   return normalized;
 }
 
+function normalizeSelectedPaths(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key, paths]) => typeof key === "string" && Array.isArray(paths))
+      .map(([key, paths]) => [key, (paths as unknown[]).filter((path): path is string => typeof path === "string")])
+  );
+}
+
+function normalizePromptInstructions(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => {
+      return typeof entry[0] === "string" && typeof entry[1] === "string";
+    })
+  );
+}
+
+function normalizePromptRuns(value: unknown, fallbackPurpose: string): PromptRun[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((run): run is Record<string, unknown> => !!run && typeof run === "object" && !Array.isArray(run))
+    .map((run, index) => {
+      const preset = typeof run.preset === "string" && run.preset ? run.preset : "ask";
+      const presetForFallbacks = normalizeLegacyPreset(preset);
+      return {
+        id: typeof run.id === "string" && run.id ? run.id : `legacy-run-${index + 1}`,
+        question: typeof run.question === "string" ? run.question : "",
+        selectedNotes: Array.isArray(run.selectedNotes) ? run.selectedNotes.filter((path): path is string => typeof path === "string") : [],
+        preset,
+        purpose: typeof run.purpose === "string" ? run.purpose : PRESETS[presetForFallbacks].purpose || fallbackPurpose,
+        mode: normalizeBundleMode(run.mode, PRESETS[presetForFallbacks].mode),
+        tokenCount: Number.isFinite(run.tokenCount) && Number(run.tokenCount) >= 0 ? Number(run.tokenCount) : 0,
+        createdAt: typeof run.createdAt === "string" ? run.createdAt : "",
+        activePath: typeof run.activePath === "string" ? run.activePath : "",
+        promptHash: typeof run.promptHash === "string" ? run.promptHash : undefined,
+        preview: typeof run.preview === "string" ? run.preview : undefined
+      };
+    });
+}
+
+function normalizePromptTemplates(value: unknown): PromptTemplate[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((template): template is Record<string, unknown> => !!template && typeof template === "object" && !Array.isArray(template))
+    .filter((template) => typeof template.name === "string" && typeof template.template === "string")
+    .map((template, index) => ({
+      id: typeof template.id === "string" && template.id ? template.id : `template-${index + 1}`,
+      name: template.name as string,
+      template: template.template as string,
+      isSystem: typeof template.isSystem === "boolean" ? template.isSystem : false
+    }));
+}
+
 function normalizePreset(value: unknown): PresetType {
   return typeof value === "string" && value in PRESETS ? value as PresetType : "ask";
+}
+
+function normalizeLegacyPreset(value: unknown): PresetType {
+  if (value === "review") {
+    return "refactor";
+  }
+  if (value === "write") {
+    return "plan";
+  }
+  return normalizePreset(value);
 }
 
 function normalizeBundleMode(value: unknown, fallback: "short" | "standard" | "full"): "short" | "standard" | "full" {
@@ -635,11 +710,12 @@ export function App() {
     try {
       const currentSelected = vaultConfigRef.current.selectedPaths ?? {};
       const currentPrompts = vaultConfigRef.current.promptInstructions ?? {};
+      const presetForUi = normalizeLegacyPreset(run.preset);
 
       const nextConfig: VaultConfig = {
         ...vaultConfigRef.current,
         version: VAULT_CONFIG_VERSION,
-        bundlePreset: run.preset,
+        bundlePreset: presetForUi,
         bundlePurpose: run.purpose,
         bundleMode: run.mode,
         selectedPaths: {
@@ -654,7 +730,7 @@ export function App() {
 
       vaultConfigRef.current = nextConfig;
       setVaultConfig(nextConfig);
-      setBundlePreset(run.preset as PresetType);
+      setBundlePreset(presetForUi);
       setBundlePurpose(run.purpose);
       setBundleMode(run.mode);
       await vaultApi.saveVaultConfig(nextConfig);

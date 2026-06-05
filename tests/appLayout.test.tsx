@@ -584,6 +584,46 @@ describe("App layout", () => {
     const partialConfig = normalizeVaultConfig({ contextLimit: 32000, promptRuns: null });
     expect(partialConfig.contextLimit).toBe(32000);
     expect(partialConfig.promptRuns).toEqual([]);
+
+    const migratedConfig = normalizeVaultConfig({
+      version: 0,
+      bundlePreset: "review",
+      selectedPaths: {
+        "Home.md": ["Home.md", 42, null]
+      },
+      promptInstructions: {
+        "Home.md": "Review this",
+        "Broken.md": 123
+      },
+      promptRuns: [
+        {
+          id: "legacy-run",
+          question: "Review this vault",
+          selectedNotes: ["Home.md", false],
+          preset: "review",
+          mode: "invalid",
+          tokenCount: -5,
+          createdAt: "2026-06-05T14:00:00.000Z",
+          activePath: "Home.md"
+        }
+      ],
+      promptTemplates: [
+        { id: "ok", name: "OK", template: "Template {active_note}" },
+        { id: "bad", name: 123, template: null }
+      ]
+    });
+    expect(migratedConfig.version).toBe(1);
+    expect(migratedConfig.selectedPaths?.["Home.md"]).toEqual(["Home.md"]);
+    expect(migratedConfig.promptInstructions).toEqual({ "Home.md": "Review this" });
+    expect(migratedConfig.promptRuns?.[0]).toEqual(expect.objectContaining({
+      purpose: "Review code structure, propose refactorings, or suggest quality improvements.",
+      mode: "full",
+      tokenCount: 0,
+      selectedNotes: ["Home.md"]
+    }));
+    expect(migratedConfig.promptTemplates).toEqual([
+      { id: "ok", name: "OK", template: "Template {active_note}", isSystem: false }
+    ]);
   });
 
   it("compiles template variables properly when template is selected", async () => {
