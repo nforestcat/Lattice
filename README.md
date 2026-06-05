@@ -18,7 +18,8 @@ Implemented so far:
 - Parse wiki links, backlinks, outgoing links, tags, and frontmatter
 - View and edit note relationships in a graph
 - Generate LLM context bundles from selected related notes (with Short/Standard/Full modes and Purpose instructions)
-- Recommend related notes beyond explicit wiki links (by shared tags or unlinked mentions)
+- Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions)
+- Persist custom context bundle selections across note visits using local storage
 - Capture loose ideas or LLM answers into daily Inbox notes
 - Triage Inbox captures (into new notes, append to existing notes, or mark processed)
 - Create snapshots and optionally auto-commit saves in existing Git vaults
