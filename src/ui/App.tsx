@@ -300,6 +300,7 @@ export function App() {
   const [searchMode, setSearchMode] = useState<"keyword" | "semantic">("keyword");
   const [isSearchingSemantic, setIsSearchingSemantic] = useState(false);
   const [semanticSearchError, setSemanticSearchError] = useState<string | null>(null);
+  const [embeddingsCache, setEmbeddingsCache] = useState<VectorCache>({});
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
@@ -447,6 +448,13 @@ export function App() {
 
       const llmCfg = loadedConfig.llmConfig || { provider: "openai", apiKey: "", model: "gpt-4o" };
       setLlmConfig(llmCfg);
+
+      const rawCache = await vaultApi.loadEmbeddingsCache();
+      try {
+        setEmbeddingsCache(rawCache ? JSON.parse(rawCache) : {});
+      } catch (e) {
+        setEmbeddingsCache({});
+      }
 
       if (loadedConfig.archiveRetentionPolicy && loadedConfig.archiveRetentionPolicy !== "none") {
         void pruneExpiredPromptRuns(loadedConfig.archiveRetentionPolicy, loadedConfig, false);
@@ -708,6 +716,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       if (cacheUpdated) {
         await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
       }
+      setEmbeddingsCache(cache);
 
       const activeEntry = cache[path];
       if (!activeEntry) {
@@ -844,6 +853,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       if (cacheUpdated) {
         await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
       }
+      setEmbeddingsCache(cache);
 
       const queryVector = await getEmbedding(config, q);
       if (queryVector.length === 0) {
@@ -1979,6 +1989,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               <GraphView
                 graph={graph}
                 activePath={activePath}
+                embeddingsCache={embeddingsCache}
                 onOpen={(path) => void selectNote(path)}
                 onCreateLink={(targetPath) => activePath && void createGraphLink(activePath, targetPath)}
                 onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
@@ -3339,24 +3350,192 @@ function TreeNode({
 function GraphView(props: {
   graph: GraphData;
   activePath: string | null;
+  embeddingsCache: VectorCache;
   onOpen(path: string): void;
   onCreateLink(path: string): void;
   onDeleteLink(path: string): void;
 }) {
-  const nodes = useMemo<Node[]>(
-    () =>
-      props.graph.nodes.map((node, index) => ({
+  const nodes = useMemo<Node[]>(() => {
+    const graphNodes = props.graph.nodes;
+    const n = graphNodes.length;
+    if (n === 0) return [];
+
+    // Initialize positions in a circle to start force layout simulation
+    const positions = graphNodes.map((node, index) => {
+      const angle = (index / n) * 2 * Math.PI;
+      const radius = 120 + n * 8;
+      return {
         id: node.id,
-        position: { x: 80 + (index % 3) * 220, y: 80 + Math.floor(index / 3) * 160 },
+        x: Math.cos(angle) * radius + 300,
+        y: Math.sin(angle) * radius + 300
+      };
+    });
+
+    // Semantic threshold
+    const semanticThreshold = 0.5;
+    const semanticLinks: { source: string; target: string; similarity: number }[] = [];
+
+    // Find all semantic links between all pairs of nodes
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const idA = graphNodes[i].id;
+        const idB = graphNodes[j].id;
+        const vecA = props.embeddingsCache[idA]?.vector;
+        const vecB = props.embeddingsCache[idB]?.vector;
+        if (vecA && vecB) {
+          const similarity = cosineSimilarity(vecA, vecB);
+          if (similarity >= semanticThreshold) {
+            semanticLinks.push({ source: idA, target: idB, similarity });
+          }
+        }
+      }
+    }
+
+    // Force-directed layout parameters
+    const width = 800;
+    const height = 600;
+    const iterations = 80;
+    const k = Math.sqrt((width * height) / n) * 0.9; // Ideal distance
+
+    // Run simple spring layout simulation
+    for (let iter = 0; iter < iterations; iter++) {
+      const dxs = new Array(n).fill(0);
+      const dys = new Array(n).fill(0);
+
+      // 1. Repulsion between all nodes
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (i === j) continue;
+          const xDist = positions[i].x - positions[j].x;
+          const yDist = positions[i].y - positions[j].y;
+          let dist = Math.sqrt(xDist * xDist + yDist * yDist);
+          if (dist === 0) dist = 0.1;
+          
+          const force = (k * k) / dist;
+          dxs[i] += (xDist / dist) * force;
+          dys[i] += (yDist / dist) * force;
+        }
+      }
+
+      // 2. Attraction along hard wiki links
+      for (const edge of props.graph.edges) {
+        const idxS = graphNodes.findIndex((node) => node.id === edge.source);
+        const idxT = graphNodes.findIndex((node) => node.id === edge.target);
+        if (idxS === -1 || idxT === -1) continue;
+
+        const xDist = positions[idxS].x - positions[idxT].x;
+        const yDist = positions[idxS].y - positions[idxT].y;
+        let dist = Math.sqrt(xDist * xDist + yDist * yDist);
+        if (dist === 0) dist = 0.1;
+
+        const force = (dist * dist) / k;
+        dxs[idxS] -= (xDist / dist) * force;
+        dys[idxS] -= (yDist / dist) * force;
+        dxs[idxT] += (xDist / dist) * force;
+        dys[idxT] += (yDist / dist) * force;
+      }
+
+      // 3. Attraction along semantic links (weaker multiplier)
+      for (const semLink of semanticLinks) {
+        const idxS = graphNodes.findIndex((node) => node.id === semLink.source);
+        const idxT = graphNodes.findIndex((node) => node.id === semLink.target);
+        if (idxS === -1 || idxT === -1) continue;
+
+        const xDist = positions[idxS].x - positions[idxT].x;
+        const yDist = positions[idxS].y - positions[idxT].y;
+        let dist = Math.sqrt(xDist * xDist + yDist * yDist);
+        if (dist === 0) dist = 0.1;
+
+        const force = ((dist * dist) / k) * (semLink.similarity * 0.45);
+        dxs[idxS] -= (xDist / dist) * force;
+        dys[idxS] -= (yDist / dist) * force;
+        dxs[idxT] += (xDist / dist) * force;
+        dys[idxT] += (yDist / dist) * force;
+      }
+
+      // 4. Update coordinates with temperature cooling
+      const temp = 50 * (1 - iter / iterations);
+      for (let i = 0; i < n; i++) {
+        const disp = Math.sqrt(dxs[i] * dxs[i] + dys[i] * dys[i]);
+        if (disp === 0) continue;
+        const cappedDisp = Math.min(disp, temp);
+        positions[i].x += (dxs[i] / disp) * cappedDisp;
+        positions[i].y += (dys[i] / disp) * cappedDisp;
+      }
+    }
+
+    return graphNodes.map((node, index) => {
+      const pos = positions[index];
+      const id = node.id;
+      
+      let cls = "graphNode";
+      if (id === props.activePath) {
+        cls = "graphNode active";
+      } else if (props.activePath) {
+        const vecActive = props.embeddingsCache[props.activePath]?.vector;
+        const vecNode = props.embeddingsCache[id]?.vector;
+        if (vecActive && vecNode) {
+          const sim = cosineSimilarity(vecActive, vecNode);
+          if (sim >= 0.7) {
+            cls = "graphNode semantic-high";
+          } else if (sim >= 0.5) {
+            cls = "graphNode semantic-medium";
+          }
+        }
+      }
+
+      return {
+        id,
+        position: { x: pos.x, y: pos.y },
         data: { label: node.label },
-        className: node.id === props.activePath ? "graphNode active" : "graphNode"
-      })),
-    [props.graph.nodes, props.activePath]
-  );
-  const edges = useMemo<Edge[]>(
-    () => props.graph.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, animated: edge.isManaged })),
-    [props.graph.edges]
-  );
+        className: cls
+      };
+    });
+  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache]);
+
+  const edges = useMemo<Edge[]>(() => {
+    const graphNodes = props.graph.nodes;
+    const list: Edge[] = [];
+
+    // 1. Render hard wiki links
+    for (const edge of props.graph.edges) {
+      list.push({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        animated: edge.isManaged,
+        style: { stroke: edge.isManaged ? "#3b82f6" : "#cbd5e1", strokeWidth: 2 }
+      });
+    }
+
+    // 2. Render dotted semantic connections from the active note
+    const activePath = props.activePath;
+    if (activePath) {
+      const vecActive = props.embeddingsCache[activePath]?.vector;
+      if (vecActive) {
+        for (const node of graphNodes) {
+          if (node.id === activePath) continue;
+          const vecNode = props.embeddingsCache[node.id]?.vector;
+          if (vecNode) {
+            const sim = cosineSimilarity(vecActive, vecNode);
+            if (sim >= 0.5) {
+              list.push({
+                id: `semantic-${activePath}-${node.id}`,
+                source: activePath,
+                target: node.id,
+                animated: true,
+                style: { stroke: "#10b981", strokeWidth: 1.5, strokeDasharray: "4 4" },
+                label: `${Math.round(sim * 100)}% Match`,
+                labelStyle: { fill: "#047857", fontSize: 9, fontWeight: 600 }
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return list;
+  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache]);
 
   const onNodeClick = useCallback((_: unknown, node: Node) => props.onOpen(node.id), [props]);
   const otherNodes = props.graph.nodes.filter((node) => node.id !== props.activePath);

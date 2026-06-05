@@ -35,6 +35,8 @@ Implemented so far:
 - Toggle search mode in the sidebar between traditional Keyword search and AI-powered **Semantic Search** to query the entire vault using natural language and rank results by vector embedding similarity scores (with custom match percentage badges)
 - Export and import prompt history runs (including both metadata and full prompt markdown contents) as a single portable JSON archive file
 - Configure age-based prompt run retention policies (7, 30, or 90 days) inside the Settings panel to automatically prune expired history runs in the background on startup or trigger them manually on demand
+- Render an interactive **Semantic Graph View** powered by a custom 2D Spring Force Layout simulation that pulls structurally linked and semantically similar notes closer together
+- Color code graph nodes dynamically based on their embedding similarity to the active selected note (with glowing emerald border highlights for similarity >= 0.7) and draw animated dotted green connection lines labeled with exact match percentages (e.g., `85% Match`)
 
 ## LLM Wiki Direction
 

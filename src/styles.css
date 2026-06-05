@@ -2513,3 +2513,15 @@ summary:hover .treeActions {
   background: #fef2f2;
   border-color: #f87171;
 }
+
+/* Semantic Graph Node Styles */
+.graphNode.semantic-high {
+  border: 2px solid #10b981 !important;
+  background: #ecfdf5 !important;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+
+.graphNode.semantic-medium {
+  border: 1.5px solid #34d399 !important;
+  background: #f0fdf4 !important;
+}
