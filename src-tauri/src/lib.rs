@@ -200,6 +200,7 @@ struct ContextBundleOptions {
     selected_paths: Option<Vec<String>>,
     purpose: Option<String>,
     mode: Option<String>,
+    preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -748,7 +749,8 @@ fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: Contex
     let title = format!("Context Bundle: {}", focus.meta.title);
     let purpose = options.purpose;
     let mode = options.mode.unwrap_or_else(|| "standard".to_string());
-    let markdown = render_context_bundle(&title, &included, purpose.as_deref(), &mode, notes);
+    let preset = options.preset;
+    let markdown = render_context_bundle(&title, &included, purpose.as_deref(), &mode, preset.as_deref(), notes);
     let estimated_tokens = estimate_tokens(&markdown);
 
     Ok(ContextBundle {
@@ -957,6 +959,7 @@ fn render_context_bundle(
     included: &[(ParsedNote, IncludedNoteInfo)],
     purpose: Option<&str>,
     mode: &str,
+    preset: Option<&str>,
     notes: &[ParsedNote],
 ) -> String {
     let mode_capitalized = if mode.is_empty() {
@@ -972,8 +975,20 @@ fn render_context_bundle(
     let mut lines = vec![
         format!("# {}", title),
         String::new(),
-        format!("**Mode**: {}", mode_capitalized),
     ];
+
+    if let Some(p_preset) = preset {
+        if !p_preset.trim().is_empty() && p_preset != "custom" {
+            let mut chars = p_preset.chars();
+            let preset_capitalized = match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+            };
+            lines.push(format!("**Preset**: {}", preset_capitalized));
+        }
+    }
+
+    lines.push(format!("**Mode**: {}", mode_capitalized));
 
     if let Some(p) = purpose {
         if !p.trim().is_empty() {
@@ -1510,6 +1525,7 @@ mod tests {
                 selected_paths: None,
                 purpose: Some("Summarize it".to_string()),
                 mode: Some("short".to_string()),
+                preset: None,
             },
         )
         .unwrap();
@@ -1526,6 +1542,7 @@ mod tests {
                 selected_paths: None,
                 purpose: None,
                 mode: Some("full".to_string()),
+                preset: None,
             },
         )
         .unwrap();
@@ -1533,6 +1550,22 @@ mod tests {
         assert!(bundle_full.markdown.contains("### Links"));
         assert!(bundle_full.markdown.contains("- **Outgoing**:"));
         assert!(bundle_full.markdown.contains("  - [[Research]] (`Research.md`)"));
+
+        // Preset Mode
+        let bundle_preset = create_context_bundle(
+            &notes,
+            "Project.md",
+            ContextBundleOptions {
+                selected_paths: None,
+                purpose: Some("Review code".to_string()),
+                mode: Some("full".to_string()),
+                preset: Some("refactor".to_string()),
+            },
+        )
+        .unwrap();
+        assert!(bundle_preset.markdown.contains("**Preset**: Refactor"));
+        assert!(bundle_preset.markdown.contains("**Mode**: Full"));
+        assert!(bundle_preset.markdown.contains("**Purpose**: Review code"));
     }
 
     #[test]

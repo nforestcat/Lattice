@@ -96,6 +96,22 @@ describe("createContextBundle", () => {
     expect(bundle.markdown).toContain("**Purpose**: Testing purpose field");
   });
 
+  it("includes the preset in the bundle headers if a non-custom preset is specified", () => {
+    const index = buildVaultIndex([
+      { path: "Home.md", content: "# Home\n\nSome body content." }
+    ]);
+
+    const bundle = createContextBundle(index, "Home.md", {
+      purpose: "Review code structure, propose refactorings, or suggest quality improvements.",
+      mode: "full",
+      preset: "refactor"
+    });
+
+    expect(bundle.markdown).toContain("**Preset**: Refactor");
+    expect(bundle.markdown).toContain("**Mode**: Full");
+    expect(bundle.markdown).toContain("**Purpose**: Review code structure, propose refactorings, or suggest quality improvements.");
+  });
+
   it("extracts a clean excerpt for Short mode", () => {
     const index = buildVaultIndex([
       {

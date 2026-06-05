@@ -12,6 +12,41 @@ import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 
 type ViewMode = "split" | "edit" | "preview" | "graph";
 
+export type PresetType = "custom" | "ask" | "refactor" | "summarize" | "plan" | "debug";
+
+export const PRESETS: Record<PresetType, { label: string; purpose: string; mode: "short" | "standard" | "full" }> = {
+  custom: {
+    label: "Custom Preset",
+    purpose: "",
+    mode: "standard"
+  },
+  ask: {
+    label: "Ask (Q&A)",
+    purpose: "Answer questions based on the provided wiki context.",
+    mode: "standard"
+  },
+  refactor: {
+    label: "Refactor",
+    purpose: "Review code structure, propose refactorings, or suggest quality improvements.",
+    mode: "full"
+  },
+  summarize: {
+    label: "Summarize",
+    purpose: "Create a concise summary, key points, and structural takeaways.",
+    mode: "short"
+  },
+  plan: {
+    label: "Plan",
+    purpose: "Develop an implementation plan, design document, or task breakdown.",
+    mode: "standard"
+  },
+  debug: {
+    label: "Debug",
+    purpose: "Diagnose errors, trace bugs, or suggest unit tests to fix issues.",
+    mode: "full"
+  }
+};
+
 export function App() {
   const [vault, setVault] = useState<VaultSnapshot | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -29,8 +64,15 @@ export function App() {
   const [contextBundle, setContextBundle] = useState<ContextBundle | null>(null);
   const [contextCandidates, setContextCandidates] = useState<ContextBundleCandidate[]>([]);
   const [selectedContextPaths, setSelectedContextPaths] = useState<Set<string>>(new Set());
-  const [bundlePurpose, setBundlePurpose] = useState("");
-  const [bundleMode, setBundleMode] = useState<"short" | "standard" | "full">("standard");
+  const [bundlePreset, setBundlePreset] = useState<string>(() => {
+    return localStorage.getItem("lattice:bundle_preset") || "ask";
+  });
+  const [bundlePurpose, setBundlePurpose] = useState(() => {
+    return localStorage.getItem("lattice:bundle_purpose") ?? PRESETS["ask"].purpose;
+  });
+  const [bundleMode, setBundleMode] = useState<"short" | "standard" | "full">(() => {
+    return (localStorage.getItem("lattice:bundle_mode") as any) ?? PRESETS["ask"].mode;
+  });
   const [inboxCaptures, setInboxCaptures] = useState<InboxCaptureBlock[]>([]);
   const [triageCaptureToAppend, setTriageCaptureToAppend] = useState<{ id: string; title: string } | null>(null);
   const [noteSearchQuery, setNoteSearchQuery] = useState("");
@@ -301,7 +343,8 @@ export function App() {
       const bundle = await vaultApi.getContextBundle(activePath, {
         selectedPaths: paths,
         purpose: bundlePurpose,
-        mode
+        mode,
+        preset: bundlePreset
       });
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);
@@ -347,10 +390,34 @@ export function App() {
 
   async function switchToShortMode() {
     setBundleMode("short");
+    localStorage.setItem("lattice:bundle_mode", "short");
+    updatePresetForCustomChanges(bundlePurpose, "short");
     if (contextBundle) {
       await generateContextBundle(undefined, "short");
     }
   }
+
+  const updatePresetForCustomChanges = (purpose: string, mode: "short" | "standard" | "full") => {
+    const matched = Object.entries(PRESETS).find(([key, config]) => {
+      return key !== "custom" && config.purpose === purpose && config.mode === mode;
+    });
+    const nextPreset = matched ? matched[0] : "custom";
+    setBundlePreset(nextPreset);
+    localStorage.setItem("lattice:bundle_preset", nextPreset);
+  };
+
+  const handlePresetChange = (preset: string) => {
+    setBundlePreset(preset);
+    localStorage.setItem("lattice:bundle_preset", preset);
+    if (preset !== "custom") {
+      const config = PRESETS[preset as PresetType];
+      setBundlePurpose(config.purpose);
+      localStorage.setItem("lattice:bundle_purpose", config.purpose);
+      setBundleMode(config.mode);
+      localStorage.setItem("lattice:bundle_mode", config.mode);
+    }
+    setContextBundle(null);
+  };
 
   function toggleContextCandidate(path: string) {
     setSelectedContextPaths((current) => {
@@ -659,6 +726,20 @@ export function App() {
 
           <div className="bundleOptions">
             <div className="optionGroup">
+              <label htmlFor="bundle-preset">Preset</label>
+              <select
+                id="bundle-preset"
+                value={bundlePreset}
+                onChange={(event) => handlePresetChange(event.target.value)}
+              >
+                {Object.entries(PRESETS).map(([key, config]) => (
+                  <option key={key} value={key}>
+                    {config.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="optionGroup">
               <label htmlFor="bundle-purpose">Purpose</label>
               <input
                 id="bundle-purpose"
@@ -666,7 +747,10 @@ export function App() {
                 placeholder="e.g. Summarize or refactor..."
                 value={bundlePurpose}
                 onChange={(event) => {
-                  setBundlePurpose(event.target.value);
+                  const val = event.target.value;
+                  setBundlePurpose(val);
+                  localStorage.setItem("lattice:bundle_purpose", val);
+                  updatePresetForCustomChanges(val, bundleMode);
                   setContextBundle(null);
                 }}
               />
@@ -677,7 +761,10 @@ export function App() {
                 id="bundle-mode"
                 value={bundleMode}
                 onChange={(event) => {
-                  setBundleMode(event.target.value as any);
+                  const val = event.target.value as any;
+                  setBundleMode(val);
+                  localStorage.setItem("lattice:bundle_mode", val);
+                  updatePresetForCustomChanges(bundlePurpose, val);
                   setContextBundle(null);
                 }}
               >

@@ -13,6 +13,7 @@ export type ContextBundleOptions = {
   selectedPaths?: string[];
   purpose?: string;
   mode?: "short" | "standard" | "full";
+  preset?: string;
 };
 
 export type ContextBundleCandidate = {
@@ -66,7 +67,8 @@ export function createContextBundle(index: VaultIndex, focusPath: string, option
   const title = `Context Bundle: ${focus.title}`;
   const mode = options.mode || "standard";
   const purpose = options.purpose;
-  const markdown = renderBundle(title, notes, purpose, mode, index);
+  const preset = options.preset;
+  const markdown = renderBundle(title, notes, purpose, mode, index, preset);
 
   return {
     title,
@@ -249,13 +251,20 @@ function renderBundle(
   notes: IncludedNote[],
   purpose?: string,
   mode: "short" | "standard" | "full" = "standard",
-  index?: VaultIndex
+  index?: VaultIndex,
+  preset?: string
 ): string {
   const headerLines = [
     `# ${title}`,
-    "",
-    `**Mode**: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`
+    ""
   ];
+
+  if (preset && preset.trim() && preset !== "custom") {
+    const capitalizedPreset = preset.charAt(0).toUpperCase() + preset.slice(1);
+    headerLines.push(`**Preset**: ${capitalizedPreset}`);
+  }
+
+  headerLines.push(`**Mode**: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`);
 
   if (purpose && purpose.trim()) {
     headerLines.push(`**Purpose**: ${purpose.trim()}`);

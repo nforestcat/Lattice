@@ -86,6 +86,7 @@ export type ContextBundleOptions = {
   selectedPaths?: string[];
   purpose?: string;
   mode?: "short" | "standard" | "full";
+  preset?: string;
 };
 
 export type ContextBundleCandidate = {
