@@ -41,7 +41,7 @@ Implemented so far:
 - Recommend bidirectional backlink suggestions (both unlinked mentions and semantically similar notes) with inline excerpts and a one-click apply button to add links
 - Generate AI-powered metadata suggestions (tags and YAML frontmatter properties) for the active note, allowing users to interactively toggle and apply recommendations
 - Filter graph view nodes interactively by tags, frontmatter metadata properties (using key-value or query inputs), and semantic similarity threshold range slider
-- Keep the vector embeddings cache fresh in the background using a debounced synchronization hook that calculates active note embeddings after the user stops typing
+- Keep the vector embeddings cache fresh by indexing semantic recommendations from the currently opened vault notes and using a debounced synchronization hook that recalculates active note embeddings only after the draft content changes and the user stops typing
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.

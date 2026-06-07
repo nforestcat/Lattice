@@ -701,6 +701,9 @@ Return the complete note content including any YAML frontmatter block at the ver
     if (!activePath || !draft) {
       return;
     }
+    if (!document || document.path !== activePath || draft === document.content) {
+      return;
+    }
 
     const timer = setTimeout(async () => {
       try {
@@ -742,7 +745,7 @@ Return the complete note content including any YAML frontmatter block at the ver
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [draft, activePath, vaultConfig, llmConfig]);
+  }, [draft, activePath, document?.path, document?.content, vaultConfig, llmConfig]);
 
   async function openVault(path: string) {
     const nextVault = await vaultApi.openVault(path);
@@ -798,7 +801,7 @@ Return the complete note content including any YAML frontmatter block at the ver
       setStatus("Imported Obsidian settings");
     }
     if (nextVault.notes[0]) {
-      await selectNote(nextVault.notes[0].path, loadedConfig);
+      await selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes);
     }
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
@@ -823,7 +826,7 @@ Return the complete note content including any YAML frontmatter block at the ver
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
     if (selectedPath) {
-      await selectNote(selectedPath);
+      await selectNote(selectedPath, undefined, nextVault.notes);
     } else {
       setActivePath(null);
       setDocument(null);
@@ -836,16 +839,16 @@ Return the complete note content including any YAML frontmatter block at the ver
     void refreshArchiveStatus();
   }
 
-  async function selectNote(path: string, currentConfig?: VaultConfig) {
+  async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[]) {
     const note = await vaultApi.readNote(path);
     setActivePath(path);
     setDocument(note);
     setDraft(note.content);
     setViewMode("split");
-    await refreshContext(path, currentConfig);
+    await refreshContext(path, currentConfig, currentNotes);
   }
 
-  async function refreshContext(path: string, currentConfig?: VaultConfig) {
+  async function refreshContext(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[]) {
     setMetadataSuggestions(null);
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
@@ -870,8 +873,9 @@ Return the complete note content including any YAML frontmatter block at the ver
 
     try {
       const note = await vaultApi.readNote(path);
-      updateLinkSuggestions(note.content, vault?.notes || []);
-      void updateSemanticRecommendations(path, configToUse.llmConfig || llmConfig, vault?.notes || []);
+      const notesForSuggestions = currentNotes ?? vault?.notes ?? [];
+      updateLinkSuggestions(note.content, notesForSuggestions);
+      void updateSemanticRecommendations(path, configToUse.llmConfig || llmConfig, notesForSuggestions);
     } catch (e) {
       console.error("Failed to read note for suggestions/semantics", e);
     }
@@ -1021,7 +1025,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       }
 
       let cacheUpdated = false;
-      const notesToProcess = vault?.notes || [];
+      const notesToProcess = notes;
       const noteContents: Record<string, string> = {};
       
       for (const note of notesToProcess) {

@@ -1,5 +1,5 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, normalizeVaultConfig } from "../src/ui/App";
 import { vaultApi } from "../src/api";
 import * as llmApi from "../src/api/llm";
@@ -20,7 +20,26 @@ vi.mock("@uiw/react-codemirror", () => {
   };
 });
 
+const originalFetch = window.fetch;
+
 describe("App layout", () => {
+  beforeEach(() => {
+    window.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ embedding: [0.9, 0.8, 0.7] }],
+        embedding: [0.9, 0.8, 0.7],
+        models: []
+      }),
+      text: async () => ""
+    } as Response);
+  });
+
+  afterEach(() => {
+    window.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
   it("starts in split mode with editor and preview visible together", async () => {
     render(<App />);
 
@@ -1540,16 +1559,24 @@ describe("App layout", () => {
   });
 
   it("fetches local models from Ollama and updates the datalist options", async () => {
-    const mockResponse = {
-      ok: true,
-      json: async () => ({
-        models: [
-          { name: "llama3:latest" },
-          { name: "mistral:latest" }
-        ]
-      })
-    };
-    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(mockResponse as Response);
+    const fetchSpy = vi.spyOn(window, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/api/tags")) {
+        return {
+          ok: true,
+          json: async () => ({
+            models: [
+              { name: "llama3:latest" },
+              { name: "mistral:latest" }
+            ]
+          })
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        json: async () => ({ embedding: [0.9, 0.8, 0.7] })
+      } as Response;
+    });
 
     const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
       llmConfig: { provider: "ollama", apiKey: "", model: "llama3", baseUrl: "http://localhost:11434" }
@@ -1726,6 +1753,102 @@ participants: Antigravity, User
     getGraphSpy.mockRestore();
     openVaultSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it("indexes semantic recommendations from the newly opened vault notes", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "home-hash" },
+        { path: "Related.md", title: "Related", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "related-hash" }
+      ],
+      tree: []
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4o",
+        embeddingModel: "text-embedding-3-small"
+      }
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockImplementation(async (path) => ({
+      path,
+      content: path === "Related.md" ? "Related note content" : "Home note content",
+      revision: "1"
+    }));
+
+    const saveEmbeddingsCacheSpy = vi.spyOn(vaultApi, "saveEmbeddingsCache").mockResolvedValue(undefined);
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.9, 0.8, 0.7] }] })
+    } as Response);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    await waitFor(() => expect(saveEmbeddingsCacheSpy).toHaveBeenCalled(), { timeout: 1000 });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/embeddings",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    openVaultSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    saveEmbeddingsCacheSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  it("does not synchronize embeddings for an unchanged note draft", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "home-hash" }
+      ],
+      tree: []
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4o",
+        embeddingModel: "text-embedding-3-small"
+      }
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Home note content",
+      revision: "1"
+    });
+
+    const saveEmbeddingsCacheSpy = vi.spyOn(vaultApi, "saveEmbeddingsCache").mockResolvedValue(undefined);
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.9, 0.8, 0.7] }] })
+    } as Response);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fetchSpy.mockClear();
+    saveEmbeddingsCacheSpy.mockClear();
+
+    await new Promise((resolve) => setTimeout(resolve, 3200));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(saveEmbeddingsCacheSpy).not.toHaveBeenCalled();
+
+    openVaultSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    saveEmbeddingsCacheSpy.mockRestore();
+    fetchSpy.mockRestore();
   });
 
   it("synchronizes vector embeddings in the background as note draft content changes", async () => {
