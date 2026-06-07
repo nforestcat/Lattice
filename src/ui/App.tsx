@@ -33,6 +33,23 @@ export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 
+async function computeHash(content: string): Promise<string> {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(16).padStart(12, "0").slice(0, 12);
+  }
+  const msgBuffer = new TextEncoder().encode(content);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  return hashHex.slice(0, 12);
+}
+
 export type PresetType = "custom" | "ask" | "refactor" | "summarize" | "plan" | "debug";
 
 export const PRESETS: Record<PresetType, { label: string; purpose: string; mode: "short" | "standard" | "full" }> = {
@@ -674,6 +691,58 @@ Return the complete note content including any YAML frontmatter block at the ver
       updateLinkSuggestions(draft, vault.notes);
     }
   }, [draft, vault?.notes]);
+
+  // Real-time Background Embedding Synchronization
+  useEffect(() => {
+    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+      return;
+    }
+    if (!activePath || !draft) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const hash = await computeHash(draft);
+        
+        let alreadyExists = false;
+        setEmbeddingsCache(prev => {
+          const cached = prev[activePath];
+          if (cached && cached.contentHash === hash) {
+            alreadyExists = true;
+          }
+          return prev;
+        });
+
+        if (alreadyExists) {
+          return;
+        }
+
+        const vector = await getEmbedding(config, draft);
+        if (vector && vector.length > 0) {
+          setEmbeddingsCache(prev => {
+            const nextCache = {
+              ...prev,
+              [activePath]: {
+                contentHash: hash,
+                vector
+              }
+            };
+            void vaultApi.saveEmbeddingsCache(JSON.stringify(nextCache));
+            return nextCache;
+          });
+
+          // Sync recommendation list in the background
+          void updateSemanticRecommendations(activePath, config, vault?.notes || []);
+        }
+      } catch (err) {
+        console.error("Background embedding sync error:", err);
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [draft, activePath, vaultConfig, llmConfig]);
 
   async function openVault(path: string) {
     const nextVault = await vaultApi.openVault(path);
@@ -2456,6 +2525,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
                 graph={graph}
                 activePath={activePath}
                 embeddingsCache={embeddingsCache}
+                notes={vault?.notes || []}
                 onOpen={(path) => void selectNote(path)}
                 onCreateLink={(targetPath) => activePath && void createGraphLink(activePath, targetPath)}
                 onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
@@ -4112,12 +4182,60 @@ function GraphView(props: {
   graph: GraphData;
   activePath: string | null;
   embeddingsCache: VectorCache;
+  notes: NoteMeta[];
   onOpen(path: string): void;
   onCreateLink(path: string): void;
   onDeleteLink(path: string): void;
 }) {
+  const [showFiltersPanel, setShowFiltersPanel] = useState(false);
+  const [excludedTags, setExcludedTags] = useState<Set<string>>(new Set());
+  const [frontmatterQuery, setFrontmatterQuery] = useState("");
+  const [semanticThreshold, setSemanticThreshold] = useState(0.5);
+
+  const allUniqueTags = useMemo(() => {
+    const set = new Set<string>();
+    props.graph.nodes.forEach(node => {
+      node.tags.forEach(tag => set.add(tag));
+    });
+    return Array.from(set).sort();
+  }, [props.graph.nodes]);
+
+  const visibleNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    props.graph.nodes.forEach(node => {
+      // 1. Tag check: if it contains any tag that is checked to be excluded
+      const hasExcludedTag = node.tags.some(tag => excludedTags.has(tag));
+      if (hasExcludedTag) return;
+
+      // 2. Frontmatter query check
+      const query = frontmatterQuery.trim().toLowerCase();
+      if (query) {
+        const parts = query.includes(":") ? query.split(":") : query.split("=");
+        const filterKey = parts[0].trim();
+        const noteMeta = props.notes.find(n => n.path === node.id);
+        if (!noteMeta) return; // Hide if metadata is missing
+
+        if (parts.length >= 2) {
+          const filterVal = parts[1].trim();
+          const fmValue = String(noteMeta.frontmatter[filterKey] || "").toLowerCase();
+          if (!fmValue.includes(filterVal)) {
+            return;
+          }
+        } else {
+          if (!(filterKey in noteMeta.frontmatter)) {
+            return;
+          }
+        }
+      }
+
+      ids.add(node.id);
+    });
+    return ids;
+  }, [props.graph.nodes, props.notes, excludedTags, frontmatterQuery]);
+
   const nodes = useMemo<Node[]>(() => {
-    const graphNodes = props.graph.nodes;
+    // Only include visible nodes
+    const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
     const n = graphNodes.length;
     if (n === 0) return [];
 
@@ -4132,11 +4250,9 @@ function GraphView(props: {
       };
     });
 
-    // Semantic threshold
-    const semanticThreshold = 0.5;
     const semanticLinks: { source: string; target: string; similarity: number }[] = [];
 
-    // Find all semantic links between all pairs of nodes
+    // Find all semantic links between all pairs of visible nodes
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
         const idA = graphNodes[i].id;
@@ -4163,7 +4279,7 @@ function GraphView(props: {
       const dxs = new Array(n).fill(0);
       const dys = new Array(n).fill(0);
 
-      // 1. Repulsion between all nodes
+      // 1. Repulsion between all visible nodes
       for (let i = 0; i < n; i++) {
         for (let j = 0; j < n; j++) {
           if (i === j) continue;
@@ -4178,8 +4294,9 @@ function GraphView(props: {
         }
       }
 
-      // 2. Attraction along hard wiki links
+      // 2. Attraction along hard wiki links (only between visible nodes)
       for (const edge of props.graph.edges) {
+        if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) continue;
         const idxS = graphNodes.findIndex((node) => node.id === edge.source);
         const idxT = graphNodes.findIndex((node) => node.id === edge.target);
         if (idxS === -1 || idxT === -1) continue;
@@ -4196,7 +4313,7 @@ function GraphView(props: {
         dys[idxT] += (yDist / dist) * force;
       }
 
-      // 3. Attraction along semantic links (weaker multiplier)
+      // 3. Attraction along semantic links (only between visible nodes)
       for (const semLink of semanticLinks) {
         const idxS = graphNodes.findIndex((node) => node.id === semLink.source);
         const idxT = graphNodes.findIndex((node) => node.id === semLink.target);
@@ -4252,14 +4369,15 @@ function GraphView(props: {
         className: cls
       };
     });
-  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache]);
+  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
 
   const edges = useMemo<Edge[]>(() => {
-    const graphNodes = props.graph.nodes;
+    const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
     const list: Edge[] = [];
 
-    // 1. Render hard wiki links
+    // 1. Render hard wiki links (only between visible nodes)
     for (const edge of props.graph.edges) {
+      if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) continue;
       list.push({
         id: edge.id,
         source: edge.source,
@@ -4269,9 +4387,9 @@ function GraphView(props: {
       });
     }
 
-    // 2. Render dotted semantic connections from the active note
+    // 2. Render dotted semantic connections from the active note (only to visible nodes)
     const activePath = props.activePath;
-    if (activePath) {
+    if (activePath && visibleNodeIds.has(activePath)) {
       const vecActive = props.embeddingsCache[activePath]?.vector;
       if (vecActive) {
         for (const node of graphNodes) {
@@ -4279,7 +4397,7 @@ function GraphView(props: {
           const vecNode = props.embeddingsCache[node.id]?.vector;
           if (vecNode) {
             const sim = cosineSimilarity(vecActive, vecNode);
-            if (sim >= 0.5) {
+            if (sim >= semanticThreshold) {
               list.push({
                 id: `semantic-${activePath}-${node.id}`,
                 source: activePath,
@@ -4296,10 +4414,12 @@ function GraphView(props: {
     }
 
     return list;
-  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache]);
+  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
 
   const onNodeClick = useCallback((_: unknown, node: Node) => props.onOpen(node.id), [props]);
-  const otherNodes = props.graph.nodes.filter((node) => node.id !== props.activePath);
+  const otherNodes = props.graph.nodes
+    .filter((node) => node.id !== props.activePath)
+    .filter((node) => visibleNodeIds.has(node.id));
 
   return (
     <div className="graphShell">
@@ -4312,7 +4432,119 @@ function GraphView(props: {
           <option value="">Remove managed link</option>
           {otherNodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
         </select>
+        <button
+          type="button"
+          className="graph-filter-toggle-btn"
+          onClick={() => setShowFiltersPanel(!showFiltersPanel)}
+          style={{
+            padding: "4px 8px",
+            fontSize: "12px",
+            background: showFiltersPanel ? "#cbd5e1" : "none",
+            border: "1px solid #cbd5e1",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontWeight: 500
+          }}
+        >
+          🔍 Filter Graph
+        </button>
       </div>
+
+      {showFiltersPanel && (
+        <div className="graphFiltersPanel" style={{
+          padding: "12px",
+          background: "rgba(248, 250, 252, 0.9)",
+          borderBottom: "1px solid #e2e8f0",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          fontSize: "12px"
+        }}>
+          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: "200px" }}>
+              <h4 style={{ margin: "0 0 6px 0", fontSize: "12px", color: "#334155" }}>Filter by Tags</h4>
+              <div className="graphFilterTagsList" style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "6px",
+                maxHeight: "80px",
+                overflowY: "auto",
+                padding: "4px",
+                border: "1px solid #e2e8f0",
+                borderRadius: "6px",
+                background: "#fff"
+              }}>
+                {allUniqueTags.length === 0 ? (
+                  <span className="muted" style={{ fontSize: "11px", color: "#94a3b8" }}>No tags in graph</span>
+                ) : (
+                  allUniqueTags.map(tag => {
+                    const isChecked = !excludedTags.has(tag);
+                    return (
+                      <label key={tag} style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          className="tag-filter-checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            setExcludedTags(prev => {
+                              const next = new Set(prev);
+                              if (next.has(tag)) {
+                                next.delete(tag);
+                              } else {
+                                next.add(tag);
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>#{tag}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            
+            <div style={{ flex: 1, minWidth: "180px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div>
+                <h4 style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#334155" }}>Filter by Metadata</h4>
+                <input
+                  type="text"
+                  className="metadata-filter-input"
+                  placeholder="e.g. status: draft"
+                  value={frontmatterQuery}
+                  onChange={(e) => setFrontmatterQuery(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "4px 8px",
+                    fontSize: "11px",
+                    borderRadius: "4px",
+                    border: "1px solid #cbd5e1"
+                  }}
+                />
+              </div>
+
+              <div>
+                <h4 style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#334155", display: "flex", justifyContent: "space-between" }}>
+                  <span>Semantic Threshold</span>
+                  <span style={{ fontWeight: 600, color: "#10b981" }}>{semanticThreshold.toFixed(2)}</span>
+                </h4>
+                <input
+                  type="range"
+                  className="semantic-threshold-slider"
+                  min="0.0"
+                  max="1.0"
+                  step="0.05"
+                  value={semanticThreshold}
+                  onChange={(e) => setSemanticThreshold(parseFloat(e.target.value))}
+                  style={{ width: "100%", cursor: "pointer" }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ReactFlow nodes={nodes} edges={edges} onNodeClick={onNodeClick} fitView>
         <Background />
         <MiniMap />

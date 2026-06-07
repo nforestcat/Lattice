@@ -40,6 +40,8 @@ Implemented so far:
 - Scan the vault for unresolved (dead) wiki links, draft context-aware Markdown stub note entries using the integrated LLM Copilot (incorporating referring context excerpts), and create/write the note to the vault in one click to resolve the links
 - Recommend bidirectional backlink suggestions (both unlinked mentions and semantically similar notes) with inline excerpts and a one-click apply button to add links
 - Generate AI-powered metadata suggestions (tags and YAML frontmatter properties) for the active note, allowing users to interactively toggle and apply recommendations
+- Filter graph view nodes interactively by tags, frontmatter metadata properties (using key-value or query inputs), and semantic similarity threshold range slider
+- Keep the vector embeddings cache fresh in the background using a debounced synchronization hook that calculates active note embeddings after the user stops typing
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.

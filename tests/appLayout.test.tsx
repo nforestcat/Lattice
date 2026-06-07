@@ -4,6 +4,22 @@ import { App, normalizeVaultConfig } from "../src/ui/App";
 import { vaultApi } from "../src/api";
 import * as llmApi from "../src/api/llm";
 
+vi.mock("@uiw/react-codemirror", () => {
+  return {
+    default: (props: any) => {
+      return (
+        <textarea
+          data-testid="mock-editor"
+          className="mock-editor"
+          value={props.value || ""}
+          onChange={(e) => props.onChange && props.onChange(e.target.value)}
+          style={{ width: "100%", height: "100%" }}
+        />
+      );
+    }
+  };
+});
+
 describe("App layout", () => {
   it("starts in split mode with editor and preview visible together", async () => {
     render(<App />);
@@ -1618,6 +1634,195 @@ participants: Antigravity, User
     // Cleanup spies
     getVaultConfigSpy.mockRestore();
     sendChatMessageSpy.mockRestore();
+  });
+
+  it("allows filtering nodes in the Graph View by tags and metadata", async () => {
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+
+    const getGraphSpy = vi.spyOn(vaultApi, "getGraph").mockResolvedValue({
+      nodes: [
+        { id: "Home.md", label: "Home", tags: ["home", "dashboard"] },
+        { id: "Projects/Obsidian Replacement.md", label: "Obsidian Replacement", tags: ["project"] }
+      ],
+      edges: [
+        { id: "edge-1", source: "Home.md", target: "Projects/Obsidian Replacement.md", isManaged: false }
+      ],
+      focusedPath: "Home.md"
+    });
+
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: ["home", "dashboard"], frontmatter: { status: "active" }, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" },
+        { path: "Projects/Obsidian Replacement.md", title: "Obsidian Replacement", tags: ["project"], frontmatter: { status: "draft" }, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "456" }
+      ],
+      tree: []
+    });
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Switch to Graph tab
+    const graphTabBtn = screen.getByRole("button", { name: "Graph" });
+    fireEvent.click(graphTabBtn);
+
+    // Verify GraphView elements: look for the "Filter Graph" toggle button
+    const filterToggleBtn = screen.getByRole("button", { name: /Filter Graph/ });
+    expect(filterToggleBtn).toBeTruthy();
+
+    // Toggle the filter panel open
+    fireEvent.click(filterToggleBtn);
+
+    // Verify tag checkboxes are displayed in the graph filter panel
+    const getFilterCheckbox = (tagName: string) => {
+      const labels = Array.from(document.querySelectorAll(".graphFilterTagsList label"));
+      const label = labels.find(l => l.textContent === `#${tagName}`);
+      return label?.querySelector("input") as HTMLInputElement | undefined;
+    };
+
+    await waitFor(() => expect(getFilterCheckbox("home")).toBeTruthy());
+    expect(getFilterCheckbox("project")).toBeTruthy();
+
+    // Verify nodes are initially rendered
+    const getGraphNode = (path: string) => {
+      return document.querySelector(`[data-testid="rf__node-${path}"]`);
+    };
+
+    expect(getGraphNode("Home.md")).toBeTruthy();
+    expect(getGraphNode("Projects/Obsidian Replacement.md")).toBeTruthy();
+
+    // Uncheck #project tag checkbox to hide "Obsidian Replacement" note
+    const projectCheckbox = getFilterCheckbox("project");
+    expect(projectCheckbox).toBeTruthy();
+    expect(projectCheckbox!.checked).toBe(true);
+    fireEvent.click(projectCheckbox!);
+    expect(projectCheckbox!.checked).toBe(false);
+
+    // Verify that "Obsidian Replacement" node is removed/hidden
+    await waitFor(() => expect(getGraphNode("Projects/Obsidian Replacement.md")).toBeNull());
+    expect(getGraphNode("Home.md")).toBeTruthy();
+
+    // Check it back
+    fireEvent.click(projectCheckbox!);
+    await waitFor(() => expect(getGraphNode("Projects/Obsidian Replacement.md")).toBeTruthy());
+
+    // Now test metadata filter: type status: active to hide status: draft
+    const metaInput = document.querySelector(".metadata-filter-input") as HTMLInputElement;
+    expect(metaInput).toBeTruthy();
+    fireEvent.change(metaInput, { target: { value: "status: active" } });
+
+    // Verify that "Obsidian Replacement" (status: draft) is hidden, and "Home" (status: active) is visible
+    await waitFor(() => expect(getGraphNode("Projects/Obsidian Replacement.md")).toBeNull());
+    expect(getGraphNode("Home.md")).toBeTruthy();
+
+    // Cleanup spies
+    getGraphSpy.mockRestore();
+    openVaultSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("synchronizes vector embeddings in the background as note draft content changes", async () => {
+    const getGraphSpy = vi.spyOn(vaultApi, "getGraph").mockResolvedValue({
+      nodes: [{ id: "Home.md", label: "Home", tags: [] }],
+      edges: [],
+      focusedPath: "Home.md"
+    });
+
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "initial-hash" }
+      ],
+      tree: []
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "text-embedding-3-small",
+        embeddingModel: "text-embedding-3-small",
+        baseUrl: "https://api.openai.com/v1"
+      }
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Initial content",
+      revision: "1"
+    });
+
+    const saveEmbeddingsCacheSpy = vi.spyOn(vaultApi, "saveEmbeddingsCache").mockResolvedValue(undefined);
+
+    const fetchSpy = vi.spyOn(window, "fetch").mockImplementation((url) => {
+      if (String(url).includes("/embeddings")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            data: [{ embedding: [0.9, 0.8, 0.7] }]
+          })
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response);
+    });
+
+    render(<App />);
+
+    // Wait for the app to load using real timers
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    
+    // Select the Home.md note to load it in the editor
+    const noteBtn = document.querySelector(".result") as HTMLButtonElement;
+    expect(noteBtn).toBeTruthy();
+    fireEvent.click(noteBtn);
+    
+    // Wait for editor to load content
+    await waitFor(() => {
+      const textarea = screen.getByTestId("mock-editor") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("Initial content");
+    });
+
+    // Now switch to fake timers to test debounce
+    vi.useFakeTimers();
+
+    const textarea = screen.getByTestId("mock-editor") as HTMLTextAreaElement;
+
+    // Simulating typing by changing value
+    fireEvent.change(textarea, { target: { value: "Updated content from background sync test" } });
+    expect(textarea.value).toBe("Updated content from background sync test");
+
+    // Clear fetchSpy mocks to only measure what happens during debounce
+    fetchSpy.mockClear();
+    saveEmbeddingsCacheSpy.mockClear();
+
+    // Advance time by 2.9 seconds: should NOT have triggered embedding fetch yet (since debounce is 3s)
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // Advance time past 3 seconds: should trigger fetch and saveEmbeddingsCache
+    await vi.advanceTimersByTimeAsync(200);
+
+    // Restore real timers so that waitFor can run its real interval checks
+    vi.useRealTimers();
+
+    // Verify it called fetch and saved embeddings cache
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    expect(saveEmbeddingsCacheSpy).toHaveBeenCalled();
+
+    // Cleanup spies
+    getGraphSpy.mockRestore();
+    openVaultSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    saveEmbeddingsCacheSpy.mockRestore();
+    fetchSpy.mockRestore();
   });
 });
 
