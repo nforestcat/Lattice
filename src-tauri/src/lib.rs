@@ -295,6 +295,14 @@ struct LlmConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+struct NoteTemplate {
+    name: String,
+    description: String,
+    prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct VaultConfig {
     #[serde(default)]
     version: Option<usize>,
@@ -316,6 +324,10 @@ struct VaultConfig {
     prompt_templates: Option<Vec<PromptTemplate>>,
     #[serde(default)]
     llm_config: Option<LlmConfig>,
+    #[serde(default)]
+    archive_retention_policy: Option<String>,
+    #[serde(default)]
+    note_templates: Option<Vec<NoteTemplate>>,
 }
 
 #[tauri::command]
@@ -742,6 +754,14 @@ fn vault_config_from_json(content: &str) -> VaultConfig {
             })
         }),
         llm_config: object.get("llmConfig").and_then(|value| serde_json::from_value::<LlmConfig>(value.clone()).ok()),
+        archive_retention_policy: object.get("archiveRetentionPolicy").and_then(serde_json::Value::as_str).map(str::to_string),
+        note_templates: object.get("noteTemplates").and_then(|value| {
+            value.as_array().map(|templates| {
+                templates.iter()
+                    .filter_map(|template| serde_json::from_value::<NoteTemplate>(template.clone()).ok())
+                    .collect::<Vec<_>>()
+            })
+        }),
     }
 }
 

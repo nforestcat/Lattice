@@ -1536,7 +1536,7 @@ describe("App layout", () => {
     const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(mockResponse as Response);
 
     const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
-      llmConfig: { provider: "ollama", model: "llama3", baseUrl: "http://localhost:11434" }
+      llmConfig: { provider: "ollama", apiKey: "", model: "llama3", baseUrl: "http://localhost:11434" }
     });
 
     render(<App />);
@@ -1578,6 +1578,46 @@ describe("App layout", () => {
     // Cleanup spies
     fetchSpy.mockRestore();
     getVaultConfigSpy.mockRestore();
+  });
+
+  it("applies a note template using the template dropdown", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "test-key", model: "gpt-4o" }
+    });
+
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue(
+      `---
+type: meeting
+date: 2026-06-07
+participants: Antigravity, User
+---
+
+# Meeting Notes
+- Discussion item 1
+`
+    );
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Locate the select dropdown for templates
+    const selectEl = document.querySelector(".templateSelect") as HTMLSelectElement;
+    expect(selectEl).toBeTruthy();
+
+    // Select "Meeting Notes" template
+    fireEvent.change(selectEl, { target: { value: "Meeting Notes" } });
+
+    // Verify sendChatMessage is called
+    await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalled());
+
+    // Verify status message indicating application
+    await waitFor(() => expect(screen.getByText(/Applied template "Meeting Notes"/)).toBeTruthy());
+
+    // Cleanup spies
+    getVaultConfigSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
   });
 });
 

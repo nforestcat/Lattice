@@ -206,6 +206,12 @@ export type LlmConfig = {
   embeddingModel?: string;
 };
 
+export type NoteTemplate = {
+  name: string;
+  description: string;
+  prompt: string;
+};
+
 export type VaultConfig = {
   version?: number;
   contextLimit?: number;
@@ -218,6 +224,7 @@ export type VaultConfig = {
   promptTemplates?: PromptTemplate[];
   llmConfig?: LlmConfig;
   archiveRetentionPolicy?: string;
+  noteTemplates?: NoteTemplate[];
 };
 
 export type ProposedEdit = {

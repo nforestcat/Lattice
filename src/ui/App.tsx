@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -12,6 +12,24 @@ import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { estimateTokens } from "../core/contextBundle";
 import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
+
+export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
+  {
+    name: "Meeting Notes",
+    description: "Template for recording meetings, attendees, action items, and notes.",
+    prompt: "A meeting notes document. Include frontmatter with 'type: meeting', 'date', and 'participants'. The body should have sections for 'Agenda', 'Discussion Notes', and 'Action Items' (with checkboxes)."
+  },
+  {
+    name: "Project Spec",
+    description: "Template for drafting technical specs, requirements, and milestones.",
+    prompt: "A project spec document. Include frontmatter with 'type: project', 'status: planning', and 'owner'. The body should have sections for 'Background', 'Proposed Changes', and 'Milestones'."
+  },
+  {
+    name: "Daily Log",
+    description: "Template for documenting daily progress, blockers, and goals.",
+    prompt: "A daily log entry. Include frontmatter with 'type: log' and 'date'. The body should have sections for 'Completed Today', 'Blockers', and 'Goals for Tomorrow'."
+  }
+];
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 
@@ -542,6 +560,48 @@ ${draft}
     } catch (e) {
       console.error("Failed to apply metadata suggestions", e);
       setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const [isAutofillingTemplate, setIsAutofillingTemplate] = useState(false);
+
+  async function autofillActiveNoteWithTemplate(templateName: string) {
+    if (!activePath || !document) return;
+    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+      setStatus("Please configure LLM settings first");
+      return;
+    }
+
+    const template = (vaultConfig.noteTemplates || DEFAULT_NOTE_TEMPLATES).find(t => t.name === templateName);
+    if (!template) return;
+
+    setIsAutofillingTemplate(true);
+    setStatus(`Applying template "${templateName}" with LLM...`);
+    try {
+      const prompt = `You are a note template assistant. 
+Generate note content for a note titled "${document.path.replace(/\.md$/i, "")}" based on the following template instructions:
+Template Name: ${template.name}
+Template Guidelines: ${template.prompt}
+
+Current note content (if any, use it as context to preserve existing information or draft a new note from scratch if empty):
+${draft}
+
+Return the complete note content including any YAML frontmatter block at the very top (bounded by ---). Return ONLY the raw markdown content. Do not include markdown code block formatting (like \`\`\`markdown) around your response.`;
+
+      const response = await sendChatMessage(config, [
+        { role: "system", content: "You only output raw markdown note content. Do not explain." },
+        { role: "user", content: prompt }
+      ]);
+
+      const cleanResponse = response.replace(/^```markdown\n?/i, "").replace(/```$/g, "").trim();
+      setDraft(cleanResponse);
+      setStatus(`Applied template "${templateName}"!`);
+    } catch (e) {
+      console.error("Failed to apply template", e);
+      setStatus(`Failed to apply template: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsAutofillingTemplate(false);
     }
   }
 
@@ -2323,7 +2383,34 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
             <button className={viewMode === "graph" ? "active" : ""} onClick={() => setViewMode("graph")}>Graph</button>
             <button className={viewMode === "distill" ? "active" : ""} onClick={() => setViewMode("distill")}>Distill</button>
           </div>
-          {viewMode !== "distill" && <button className="primary" onClick={() => void saveActiveNote()}>Save</button>}
+          {viewMode !== "distill" && activePath && (
+            <div className="templateSelectorContainer" style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+              <select
+                className="templateSelect"
+                value=""
+                onChange={(e) => {
+                  const tName = e.target.value;
+                  if (tName) void autofillActiveNoteWithTemplate(tName);
+                }}
+                disabled={isAutofillingTemplate}
+                style={{
+                  fontSize: "12px",
+                  padding: "4px 8px",
+                  borderRadius: "6px",
+                  border: "1px solid #cbd5e1"
+                }}
+              >
+                <option value="">{isAutofillingTemplate ? "Autofilling..." : "Apply Template..."}</option>
+                {(vaultConfig.noteTemplates || DEFAULT_NOTE_TEMPLATES).map((t) => (
+                  <option key={t.name} value={t.name}>{t.name}</option>
+                ))}
+              </select>
+              <button className="primary" onClick={() => void saveActiveNote()}>Save</button>
+            </div>
+          )}
+          {viewMode !== "distill" && !activePath && (
+            <button className="primary" disabled>Save</button>
+          )}
         </header>
 
         <div className={`editorWorkspace ${viewMode === "split" ? "split" : "single"}`}>
