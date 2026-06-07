@@ -32,12 +32,13 @@ export async function sendChatMessage(
       return data.message?.content || "";
     }
 
+    case "lm-studio":
     case "openai":
     case "custom": {
-      const defaultBase = provider === "openai" ? "https://api.openai.com/v1" : "";
+      const defaultBase = provider === "openai" ? "https://api.openai.com/v1" : (provider === "lm-studio" ? "http://localhost:1234/v1" : "");
       const base = baseUrl || defaultBase;
       if (!base) {
-        throw new Error("Base URL is required for custom OpenAI-compatible provider");
+        throw new Error("Base URL is required for custom/LM Studio provider");
       }
       const url = `${base.replace(/\/$/, "")}/chat/completions`;
       const headers: Record<string, string> = {

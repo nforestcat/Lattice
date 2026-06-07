@@ -159,6 +159,20 @@ export type VaultApi = {
   saveEmbeddingsCache(content: string): Promise<void>;
   getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]>;
   parseProposedEdits(rawText: string): Promise<ProposedEdit[]>;
+  getBacklinkSuggestions(activePath: string): Promise<BacklinkSuggestion[]>;
+  applyBacklinkSuggestion(suggestion: BacklinkSuggestion): Promise<void>;
+  applyNoteMetadata(path: string, frontmatter: Record<string, string>, tags: string[]): Promise<void>;
+};
+
+export type BacklinkSuggestion = {
+  id: string;
+  sourcePath: string;
+  sourceTitle: string;
+  targetPath: string;
+  targetTitle: string;
+  suggestionType: "unlinked_mention" | "semantic";
+  excerpt: string;
+  score: number;
 };
 
 export type PromptRun = {
@@ -182,7 +196,7 @@ export type PromptTemplate = {
   isSystem?: boolean;
 };
 
-export type LlmProvider = "openai" | "anthropic" | "gemini" | "ollama" | "custom";
+export type LlmProvider = "openai" | "anthropic" | "gemini" | "ollama" | "custom" | "lm-studio";
 
 export type LlmConfig = {
   provider: LlmProvider;

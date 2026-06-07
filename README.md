@@ -38,6 +38,8 @@ Implemented so far:
 - Render an interactive **Semantic Graph View** powered by a custom 2D Spring Force Layout simulation that pulls structurally linked and semantically similar notes closer together
 - Color code graph nodes dynamically based on their embedding similarity to the active selected note (with glowing emerald border highlights for similarity >= 0.7) and draw animated dotted green connection lines labeled with exact match percentages (e.g., `85% Match`)
 - Scan the vault for unresolved (dead) wiki links, draft context-aware Markdown stub note entries using the integrated LLM Copilot (incorporating referring context excerpts), and create/write the note to the vault in one click to resolve the links
+- Recommend bidirectional backlink suggestions (both unlinked mentions and semantically similar notes) with inline excerpts and a one-click apply button to add links
+- Generate AI-powered metadata suggestions (tags and YAML frontmatter properties) for the active note, allowing users to interactively toggle and apply recommendations
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.

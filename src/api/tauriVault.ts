@@ -17,7 +17,8 @@ import type {
   VaultSnapshot,
   VaultConfig,
   UnresolvedLinkGroup,
-  ProposedEdit
+  ProposedEdit,
+  BacklinkSuggestion
 } from "./types";
 
 export function createTauriVaultApi(): VaultApi {
@@ -66,6 +67,12 @@ export function createTauriVaultApi(): VaultApi {
     loadEmbeddingsCache: () => invoke<string>("load_embeddings_cache"),
     saveEmbeddingsCache: (content: string) => invoke<void>("save_embeddings_cache", { content }),
     getUnresolvedLinks: () => invoke<UnresolvedLinkGroup[]>("get_unresolved_links"),
-    parseProposedEdits: (rawText: string) => invoke<ProposedEdit[]>("parse_proposed_edits", { rawText })
+    parseProposedEdits: (rawText: string) => invoke<ProposedEdit[]>("parse_proposed_edits", { rawText }),
+    getBacklinkSuggestions: (activePath: string) =>
+      invoke<BacklinkSuggestion[]>("get_backlink_suggestions", { activePath }),
+    applyBacklinkSuggestion: (suggestion: BacklinkSuggestion) =>
+      invoke<void>("apply_backlink_suggestion", { suggestion }),
+    applyNoteMetadata: (path: string, frontmatter: Record<string, string>, tags: string[]) =>
+      invoke<void>("apply_note_metadata", { path, frontmatter, tags })
   };
 }

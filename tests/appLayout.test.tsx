@@ -1412,5 +1412,115 @@ describe("App layout", () => {
     saveNoteSpy.mockRestore();
     getUnresolvedLinksSpy.mockRestore();
   });
+
+  it("recommends bidirectional backlink suggestions and applies them inline", async () => {
+    const mockSuggestion = {
+      id: "mention:Home.md:Projects/Obsidian Replacement.md",
+      sourcePath: "Home.md",
+      sourceTitle: "Home",
+      targetPath: "Projects/Obsidian Replacement.md",
+      targetTitle: "Obsidian Replacement",
+      suggestionType: "unlinked_mention" as const,
+      excerpt: "Explore Obsidian Replacement and Markdown Systems.",
+      score: 1.0
+    };
+
+    const getSuggestionsSpy = vi.spyOn(vaultApi, "getBacklinkSuggestions").mockResolvedValue([mockSuggestion]);
+    const applySuggestionSpy = vi.spyOn(vaultApi, "applyBacklinkSuggestion").mockResolvedValue();
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Switch note to "Projects/Obsidian Replacement.md"
+    const obsidianNoteBtn = screen.getByText("Obsidian Replacement.md");
+    fireEvent.click(obsidianNoteBtn);
+
+    // Verify suggestions scan is loaded and shows suggestion
+    await waitFor(() => expect(getSuggestionsSpy).toHaveBeenCalledWith("Projects/Obsidian Replacement.md"));
+    await waitFor(() => expect(screen.getByText("AI Link Suggestions")).toBeTruthy());
+    
+    const suggestionsSection = document.querySelector(".backlinkSuggestionsSection");
+    expect(suggestionsSection).toBeTruthy();
+    expect(suggestionsSection!.textContent).toContain("Home");
+    expect(suggestionsSection!.textContent).toContain("mentions this note");
+    expect(suggestionsSection!.textContent).toContain("Explore Obsidian Replacement and Markdown Systems.");
+
+    // Click "Link Mention" button
+    const applyBtn = screen.getByRole("button", { name: "Link Mention" });
+    fireEvent.click(applyBtn);
+
+    // Verify applyBacklinkSuggestion is called
+    await waitFor(() => expect(applySuggestionSpy).toHaveBeenCalledWith(mockSuggestion));
+
+    getSuggestionsSpy.mockRestore();
+    applySuggestionSpy.mockRestore();
+  });
+
+  it("recommends metadata tags and frontmatter properties and applies them", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "test-key", model: "gpt-4o" }
+    });
+
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue(
+      JSON.stringify({
+        tags: ["productivity", "obsidian"],
+        frontmatter: {
+          status: "active",
+          priority: "high"
+        }
+      })
+    );
+
+    const applyMetadataSpy = vi.spyOn(vaultApi, "applyNoteMetadata").mockResolvedValue();
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Locate the "Suggest" button in the AI Metadata Suggestions section
+    const suggestBtn = screen.getByRole("button", { name: "Suggest" });
+    expect(suggestBtn).toBeTruthy();
+
+    // Click "Suggest"
+    fireEvent.click(suggestBtn);
+
+    // Wait for the suggestions card to load and display tags and properties
+    await waitFor(() => expect(screen.getByText("#productivity")).toBeTruthy());
+    expect(screen.getByText("#obsidian")).toBeTruthy();
+    expect(screen.getByText("status:")).toBeTruthy();
+    expect(screen.getByText("priority:")).toBeTruthy();
+
+    // Deselect one tag and one property to test toggle
+    const productivityCheckbox = screen.getByLabelText(/#productivity/) as HTMLInputElement;
+    expect(productivityCheckbox.checked).toBe(true);
+    fireEvent.click(productivityCheckbox);
+    expect(productivityCheckbox.checked).toBe(false);
+
+    const statusCheckbox = screen.getByLabelText(/status:\s*active/) as HTMLInputElement;
+    expect(statusCheckbox.checked).toBe(true);
+    fireEvent.click(statusCheckbox);
+    expect(statusCheckbox.checked).toBe(false);
+
+    // Apply the selected suggestions
+    const applyBtn = screen.getByRole("button", { name: "Apply Selected" });
+    fireEvent.click(applyBtn);
+
+    // Verify applyNoteMetadata is called with only the selected/active elements
+    await waitFor(() => {
+      expect(applyMetadataSpy).toHaveBeenCalledWith(
+        "Home.md",
+        { priority: "high" },
+        ["obsidian"]
+      );
+    });
+
+    // Cleanup spies
+    getVaultConfigSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
+    applyMetadataSpy.mockRestore();
+  });
 });
 

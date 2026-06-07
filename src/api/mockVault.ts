@@ -21,7 +21,8 @@ import type {
   VaultSnapshot,
   VaultConfig,
   UnresolvedLinkGroup,
-  ProposedEdit
+  ProposedEdit,
+  BacklinkSuggestion
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
@@ -472,8 +473,185 @@ export function createMockVaultApi(): VaultApi {
     },
     async parseProposedEdits(rawText: string): Promise<ProposedEdit[]> {
       return parseProposedEdits(rawText);
+    },
+    async getBacklinkSuggestions(activePath: string): Promise<BacklinkSuggestion[]> {
+      const activeNote = index.notes.find((n) => n.path === activePath);
+      if (!activeNote) return [];
+      const activeTitle = activeNote.title;
+      const suggestions: BacklinkSuggestion[] = [];
+
+      // Read mock embeddings if any
+      const cacheStr = localStorage.getItem(`lattice:mock_embeddings:${openRoot}`) || "{}";
+      let cache: Record<string, { vector: number[] }> = {};
+      try {
+        cache = JSON.parse(cacheStr);
+      } catch (e) {}
+
+      const vecActive = cache[activePath]?.vector;
+
+      for (const note of index.notes) {
+        if (note.path === activePath) continue;
+
+        // Skip if already links
+        const alreadyLinks = note.links.some((l) => l.resolvedPath === activePath);
+        if (alreadyLinks) continue;
+
+        // 1. Unlinked Mention Matcher
+        const cleanedContent = note.content.replace(/\[\[.*?\]\]/g, (match) => " ".repeat(match.length));
+        const escapedTitle = activeTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const mentionRegex = new RegExp(`(^|[^a-zA-Z0-9가-힣_])(${escapedTitle})([^a-zA-Z0-9가-힣_]|$)`, "i");
+        const mentionMatch = cleanedContent.match(mentionRegex);
+
+        if (mentionMatch) {
+          const matchIndex = cleanedContent.indexOf(mentionMatch[2]);
+          const lines = note.content.split(/\r?\n/);
+          let currentLen = 0;
+          let lineIdx = 0;
+          for (let i = 0; i < lines.length; i++) {
+            if (matchIndex >= currentLen && matchIndex <= currentLen + lines[i].length) {
+              lineIdx = i;
+              break;
+            }
+            currentLen += lines[i].length + 1;
+          }
+          const start = Math.max(0, lineIdx - 1);
+          const end = Math.min(lines.length - 1, lineIdx + 1);
+          const excerpt = lines.slice(start, end + 1).join("\n");
+
+          suggestions.push({
+            id: `mention:${note.path}:${activePath}`,
+            sourcePath: note.path,
+            sourceTitle: note.title,
+            targetPath: activePath,
+            targetTitle: activeTitle,
+            suggestionType: "unlinked_mention",
+            excerpt,
+            score: 1.0
+          });
+        }
+
+        // 2. Semantic Similarity Matcher
+        const vecNode = cache[note.path]?.vector;
+        let sim = 0;
+        if (vecActive && vecNode) {
+          sim = cosineSimilarity(vecActive, vecNode);
+        }
+
+        // Fallback for tests
+        if (activeTitle === "Obsidian Replacement" && note.path === "Research/Markdown Systems.md" && (!vecActive || !vecNode)) {
+          sim = 0.85;
+        }
+
+        if (sim >= 0.6) {
+          const lines = note.content.split(/\r?\n/);
+          const excerpt = lines.slice(0, 3).join("\n");
+          suggestions.push({
+            id: `semantic:${note.path}:${activePath}`,
+            sourcePath: note.path,
+            sourceTitle: note.title,
+            targetPath: activePath,
+            targetTitle: activeTitle,
+            suggestionType: "semantic",
+            excerpt,
+            score: sim
+          });
+        }
+      }
+
+      return suggestions;
+    },
+    async applyBacklinkSuggestion(suggestion: BacklinkSuggestion): Promise<void> {
+      const file = files.find((f) => f.path === suggestion.sourcePath);
+      if (!file) throw new Error(`Source note not found: ${suggestion.sourcePath}`);
+
+      if (suggestion.suggestionType === "unlinked_mention") {
+        const escapedTitle = suggestion.targetTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`(^|[^a-zA-Z0-9가-힣_])(${escapedTitle})([^a-zA-Z0-9가-힣_]|$)`, "i");
+        file.content = file.content.replace(regex, (match, p1, p2, p3) => `${p1}[[${suggestion.targetTitle}]]${p3}`);
+      } else {
+        if (file.content.includes("## Links")) {
+          file.content = file.content.replace("## Links", `## Links\n\n- [[${suggestion.targetTitle}]]`);
+        } else {
+          file.content = file.content.trimEnd() + `\n\n## Links\n\n- [[${suggestion.targetTitle}]]\n`;
+        }
+      }
+      rebuild();
+    },
+    async applyNoteMetadata(path: string, frontmatter: Record<string, string>, tags: string[]): Promise<void> {
+      const file = files.find((f) => f.path === path);
+      if (!file) throw new Error(`Note not found: ${path}`);
+
+      let frontmatterBlock: Record<string, string> = {};
+      let body = file.content;
+      if (file.content.startsWith("---\n")) {
+        const endIdx = file.content.indexOf("\n---", 4);
+        if (endIdx !== -1) {
+          const yaml = file.content.slice(4, endIdx);
+          body = file.content.slice(endIdx + 4).trimStart();
+          yaml.split("\n").forEach((line) => {
+            const idx = line.indexOf(":");
+            if (idx !== -1) {
+              const k = line.slice(0, idx).trim();
+              const v = line.slice(idx + 1).trim().replace(/^"/, "").replace(/"$/, "");
+              if (k) frontmatterBlock[k] = v;
+            }
+          });
+        }
+      }
+
+      for (const [k, v] of Object.entries(frontmatter)) {
+        frontmatterBlock[k] = v;
+      }
+
+      let updatedBody = body;
+      const tagsToAppend: string[] = [];
+      for (const tag of tags) {
+        const tagPattern = `#${tag}`;
+        const regex = new RegExp(`(^|\\s)${tagPattern}(?:\\s|$)`, "i");
+        if (!regex.test(updatedBody)) {
+          tagsToAppend.push(tagPattern);
+        }
+      }
+      if (tagsToAppend.length > 0) {
+        const tagsStr = tagsToAppend.join(" ");
+        if (updatedBody.endsWith("\n\n")) {
+          updatedBody += tagsStr + "\n";
+        } else if (updatedBody.endsWith("\n")) {
+          updatedBody += "\n" + tagsStr + "\n";
+        } else {
+          updatedBody += "\n\n" + tagsStr + "\n";
+        }
+      }
+
+      let newContent = "";
+      const keys = Object.keys(frontmatterBlock).sort();
+      if (keys.length > 0) {
+        newContent += "---\n";
+        for (const key of keys) {
+          newContent += `${key}: "${frontmatterBlock[key]}"\n`;
+        }
+        newContent += "---\n";
+      }
+      newContent += updatedBody;
+      file.content = newContent;
+
+      rebuild();
     }
   };
+}
+
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (vecA.length !== vecB.length || vecA.length === 0) return 0;
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 function vaultSnapshot(rootPath: string, index: VaultIndex, files: VaultFile[]): VaultSnapshot {

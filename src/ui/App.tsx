@@ -4,7 +4,7 @@ import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -90,7 +90,7 @@ function normalizeLlmConfig(value: any): LlmConfig | undefined {
     return undefined;
   }
   return {
-    provider: typeof value.provider === "string" && ["openai", "anthropic", "gemini", "ollama", "custom"].includes(value.provider) ? value.provider as LlmProvider : "openai",
+    provider: typeof value.provider === "string" && ["openai", "anthropic", "gemini", "ollama", "custom", "lm-studio"].includes(value.provider) ? value.provider as LlmProvider : "openai",
     apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
     model: typeof value.model === "string" ? value.model : "",
     baseUrl: typeof value.baseUrl === "string" ? value.baseUrl : undefined,
@@ -347,8 +347,155 @@ export function App() {
   const [draftedContent, setDraftedContent] = useState<string | null>(null);
   const [isDraftingStub, setIsDraftingStub] = useState(false);
   const [selectedUnresolvedTargets, setSelectedUnresolvedTargets] = useState<Set<string>>(new Set());
-  const [bulkDrafts, setBulkDrafts] = useState<Record<string, { content: string; status: "drafting" | "done" | "error" }>>({});
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, { content: string; status: "done" | "drafting" | "error" }>>({});
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
+  const [backlinkSuggestions, setBacklinkSuggestions] = useState<BacklinkSuggestion[]>([]);
+  const [isLoadingBacklinkSuggestions, setIsLoadingBacklinkSuggestions] = useState(false);
+
+  async function refreshBacklinkSuggestions(path: string) {
+    setIsLoadingBacklinkSuggestions(true);
+    try {
+      const suggestions = await vaultApi.getBacklinkSuggestions(path);
+      setBacklinkSuggestions(suggestions);
+    } catch (e) {
+      console.error("Failed to fetch backlink suggestions", e);
+    } finally {
+      setIsLoadingBacklinkSuggestions(false);
+    }
+  }
+
+  async function applyBacklinkSuggestion(suggestion: BacklinkSuggestion) {
+    setStatus(`Applying backlink suggestion from ${suggestion.sourceTitle}...`);
+    try {
+      await vaultApi.applyBacklinkSuggestion(suggestion);
+      setStatus(`Applied backlink suggestion!`);
+      if (vault) {
+        const nextVault = await vaultApi.openVault(vault.rootPath);
+        setVault(nextVault);
+      }
+      if (activePath) {
+        await refreshContext(activePath);
+        await refreshBacklinkSuggestions(activePath);
+      }
+    } catch (e) {
+      console.error("Failed to apply backlink suggestion", e);
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const [metadataSuggestions, setMetadataSuggestions] = useState<{ tags: string[]; frontmatter: Record<string, string> } | null>(null);
+  const [selectedSuggestedTags, setSelectedSuggestedTags] = useState<Set<string>>(new Set());
+  const [selectedSuggestedProperties, setSelectedSuggestedProperties] = useState<Set<string>>(new Set());
+  const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
+
+  async function generateMetadataSuggestions() {
+    if (!activePath || !document) return;
+    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+      setStatus("Please configure LLM settings first");
+      return;
+    }
+
+    setIsGeneratingMetadata(true);
+    setStatus("Generating metadata suggestions...");
+    try {
+      const prompt = `Analyze this note and suggest metadata (tags and YAML frontmatter key-value pairs).
+Return the result STRICTLY as a JSON object with this structure:
+{
+  "tags": ["tag1", "tag2"],
+  "frontmatter": {
+    "status": "draft",
+    "area": "product",
+    "summary": "Brief summary..."
+  }
+}
+Do not return any other text, markdown formatting, or explanation. Only return the raw JSON object.
+
+Existing tags in the vault: ${allTags.join(", ")} (prefer using existing tags if they fit, but suggest new ones if appropriate)
+
+Note title: ${document.path.replace(/\.md$/i, "")}
+Note content:
+${draft}
+`;
+
+      const response = await sendChatMessage(config, [
+        { role: "system", content: "You are a metadata assistant. You only respond with JSON." },
+        { role: "user", content: prompt }
+      ]);
+
+      const cleanResponse = response.replace(/```json/g, "").replace(/```/g, "").trim();
+      const parsed = JSON.parse(cleanResponse);
+
+      const tags = Array.isArray(parsed.tags) ? parsed.tags.map((t: any) => String(t).replace(/^#/, "").trim()) : [];
+      const frontmatter: Record<string, string> = {};
+      if (parsed.frontmatter && typeof parsed.frontmatter === "object") {
+        for (const [k, v] of Object.entries(parsed.frontmatter)) {
+          frontmatter[k] = String(v);
+        }
+      }
+
+      setMetadataSuggestions({ tags, frontmatter });
+      setSelectedSuggestedTags(new Set(tags));
+      setSelectedSuggestedProperties(new Set(Object.keys(frontmatter)));
+      setStatus("Generated suggestions!");
+    } catch (e) {
+      console.error("Failed to generate metadata suggestions", e);
+      setStatus(`Failed to generate suggestions: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsGeneratingMetadata(false);
+    }
+  }
+
+  function handleToggleSuggestedTag(tag: string) {
+    setSelectedSuggestedTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) {
+        next.delete(tag);
+      } else {
+        next.add(tag);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleSuggestedProperty(key: string) {
+    setSelectedSuggestedProperties(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  async function applyMetadataSuggestions() {
+    if (!activePath || !document || !metadataSuggestions) return;
+    setStatus("Applying metadata...");
+    try {
+      const tagsToApply = Array.from(selectedSuggestedTags);
+      const propertiesToApply: Record<string, string> = {};
+      for (const key of Array.from(selectedSuggestedProperties)) {
+        propertiesToApply[key] = metadataSuggestions.frontmatter[key];
+      }
+
+      await vaultApi.applyNoteMetadata(activePath, propertiesToApply, tagsToApply);
+      
+      setStatus("Applied metadata successfully!");
+      setMetadataSuggestions(null);
+
+      if (vault) {
+        const nextVault = await vaultApi.openVault(vault.rootPath);
+        setVault(nextVault);
+      }
+      await selectNote(activePath);
+    } catch (e) {
+      console.error("Failed to apply metadata suggestions", e);
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
     const nextConfig: VaultConfig = {
@@ -522,6 +669,7 @@ export function App() {
   }
 
   async function refreshContext(path: string, currentConfig?: VaultConfig) {
+    setMetadataSuggestions(null);
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
     setContextBundle(null);
@@ -550,6 +698,7 @@ export function App() {
     } catch (e) {
       console.error("Failed to read note for suggestions/semantics", e);
     }
+    void refreshBacklinkSuggestions(path);
   }
 
   async function saveActiveNote() {
@@ -680,7 +829,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }
 
   async function updateSemanticRecommendations(path: string, config: LlmConfig, notes: NoteMeta[]) {
-    if (!config.provider || (!config.apiKey && config.provider !== "ollama")) {
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       return;
     }
     
@@ -819,8 +968,8 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     }
 
     const config = vaultConfigRef.current.llmConfig || llmConfig;
-    if (!config.provider || (!config.apiKey && config.provider !== "ollama")) {
-      setSemanticSearchError("Please configure LLM API key / Ollama in the Distill Settings first.");
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+      setSemanticSearchError("Please configure LLM API key / Ollama / LM Studio in the Distill Settings first.");
       return;
     }
 
@@ -1552,7 +1701,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
   async function draftStubNote(targetTitle: string, sources: { path: string; title: string; excerpt: string }[]) {
     const config = vaultConfigRef.current.llmConfig || llmConfig;
-    if (!config.provider || (!config.apiKey && config.provider !== "ollama")) {
+    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       setStatus("Please configure LLM settings first");
       return;
     }
@@ -2301,14 +2450,16 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                   anthropic: "claude-3-5-sonnet-20240620",
                                   gemini: "gemini-1.5-pro",
                                   ollama: "llama3",
-                                  custom: "gpt-4o"
+                                  custom: "gpt-4o",
+                                  "lm-studio": "qwen2.5-coder-7b"
                                 };
                                 const defaultBases: Record<LlmProvider, string> = {
                                   openai: "",
                                   anthropic: "",
                                   gemini: "",
                                   ollama: "http://localhost:11434",
-                                  custom: "http://localhost:1234/v1"
+                                  custom: "http://localhost:1234/v1",
+                                  "lm-studio": "http://localhost:1234/v1"
                                 };
                                 setLlmConfig(prev => ({
                                   ...prev,
@@ -2322,6 +2473,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                               <option value="anthropic">Anthropic</option>
                               <option value="gemini">Google Gemini</option>
                               <option value="ollama">Ollama (Local)</option>
+                              <option value="lm-studio">LM Studio (Local)</option>
                               <option value="custom">Custom (OpenAI-compatible)</option>
                             </select>
                           </div>
@@ -2336,7 +2488,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                             />
                           </div>
 
-                          {llmConfig.provider !== "ollama" && (
+                          {llmConfig.provider !== "ollama" && llmConfig.provider !== "lm-studio" && (
                             <div className="formGroup">
                               <label>API Key</label>
                               <input
@@ -2348,7 +2500,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                             </div>
                           )}
 
-                          {(llmConfig.provider === "ollama" || llmConfig.provider === "custom") && (
+                          {(llmConfig.provider === "ollama" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
                             <div className="formGroup">
                               <label>Base URL</label>
                               <input
@@ -2360,7 +2512,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                             </div>
                           )}
 
-                          {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom") && (
+                          {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
                             <div className="formGroup">
                               <label>Embedding Model</label>
                               <input
@@ -3497,6 +3649,38 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
             </button>
           )) : <p className="muted">No backlinks</p>}
         </section>
+        <section className="backlinkSuggestionsSection">
+          <h2>AI Link Suggestions</h2>
+          {isLoadingBacklinkSuggestions ? (
+            <p className="loading">Scanning suggestions...</p>
+          ) : backlinkSuggestions.length ? (
+            <div className="backlinkSuggestionsList">
+              {backlinkSuggestions.map((suggestion) => (
+                <div key={suggestion.id} className="backlinkSuggestionCard">
+                  <div className="suggestionHeader">
+                    {suggestion.suggestionType === "unlinked_mention" ? (
+                      <span><strong>{suggestion.sourceTitle}</strong> mentions this note</span>
+                    ) : (
+                      <span>Semantically related to <strong>{suggestion.sourceTitle}</strong><span className="matchBadge">{(suggestion.score * 100).toFixed(0)}% Match</span></span>
+                    )}
+                  </div>
+                  {suggestion.excerpt && (
+                    <pre className="suggestionExcerpt">{suggestion.excerpt}</pre>
+                  )}
+                  <div className="suggestionActions">
+                    <button
+                      onClick={() => void applyBacklinkSuggestion(suggestion)}
+                    >
+                      {suggestion.suggestionType === "unlinked_mention" ? "Link Mention" : "Add Link"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No link suggestions</p>
+          )}
+        </section>
         <section>
           <h2>Outgoing</h2>
           {context?.outgoingLinks.map((link) => (
@@ -3516,6 +3700,69 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
           {Object.entries(context?.note.frontmatter ?? {}).map(([key, value]) => (
             <p key={key} className="property"><strong>{key}</strong><span>{value}</span></p>
           ))}
+        </section>
+        <section className="metadataSuggestionsSection">
+          <h2>AI Metadata Suggestions</h2>
+          {isGeneratingMetadata && (
+            <p className="metadataSuggestionsLoading">Generating suggestions...</p>
+          )}
+          {!metadataSuggestions && !isGeneratingMetadata && (
+            <button
+              className="suggest-btn"
+              disabled={!activePath}
+              onClick={() => void generateMetadataSuggestions()}
+            >
+              Suggest
+            </button>
+          )}
+          {metadataSuggestions && !isGeneratingMetadata && (
+            <div className="metadataSuggestionsCard">
+              {metadataSuggestions.tags.length > 0 && (
+                <div className="suggestedTagsGroup">
+                  <h3>Suggested Tags</h3>
+                  {metadataSuggestions.tags.map((tag) => (
+                    <label key={tag} className="suggestedTagLabel">
+                      <input
+                        type="checkbox"
+                        checked={selectedSuggestedTags.has(tag)}
+                        onChange={() => handleToggleSuggestedTag(tag)}
+                      />
+                      <span>#{tag}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {Object.keys(metadataSuggestions.frontmatter).length > 0 && (
+                <div className="suggestedPropertiesGroup">
+                  <h3>Suggested Properties</h3>
+                  {Object.entries(metadataSuggestions.frontmatter).map(([key, value]) => (
+                    <label key={key} className="suggestedPropertyLabel">
+                      <input
+                        type="checkbox"
+                        checked={selectedSuggestedProperties.has(key)}
+                        onChange={() => handleToggleSuggestedProperty(key)}
+                      />
+                      <strong>{key}:</strong> <span>{value}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="metadataSuggestionsActions">
+                <button
+                  className="apply-btn"
+                  onClick={() => void applyMetadataSuggestions()}
+                >
+                  Apply Selected
+                </button>
+                <button
+                  className="clear-btn"
+                  onClick={() => setMetadataSuggestions(null)}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
         </section>
         <section>
           <h2>Snapshots</h2>

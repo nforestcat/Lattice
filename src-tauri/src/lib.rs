@@ -933,6 +933,282 @@ fn save_embeddings_cache(content: String, state: tauri::State<AppState>) -> Resu
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct EmbeddingEntry {
+    content_hash: String,
+    vector: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BacklinkSuggestion {
+    id: String,
+    source_path: String,
+    source_title: String,
+    target_path: String,
+    target_title: String,
+    suggestion_type: String, // "unlinked_mention" | "semantic"
+    excerpt: String,
+    score: f32,
+}
+
+fn make_title_regex(title: &str) -> Result<Regex, String> {
+    let escaped = regex::escape(title);
+    let mut pattern = String::new();
+    
+    if let Some(first_char) = title.chars().next() {
+        if first_char.is_alphanumeric() || first_char == '_' {
+            pattern.push_str(r"\b");
+        }
+    }
+    
+    pattern.push_str(&escaped);
+    
+    if let Some(last_char) = title.chars().last() {
+        if last_char.is_alphanumeric() || last_char == '_' {
+            pattern.push_str(r"\b");
+        }
+    }
+    
+    Regex::new(&format!("(?i){}", pattern)).map_err(|e| e.to_string())
+}
+
+fn clean_wiki_links(text: &str) -> String {
+    let link_re = Regex::new(r"\[\[.*?\]\]").unwrap();
+    link_re.replace_all(text, |caps: &regex::Captures| {
+        let len = caps[0].len();
+        " ".repeat(len)
+    }).into_owned()
+}
+
+fn get_excerpt_around_match(content: &str, match_start: usize) -> String {
+    let mut line_starts = Vec::new();
+    let mut current_offset = 0;
+    for line in content.lines() {
+        line_starts.push(current_offset);
+        current_offset += line.len() + 1; // +1 for newline character
+    }
+    
+    let mut match_line_idx = 0;
+    for (i, &start) in line_starts.iter().enumerate() {
+        if match_start >= start {
+            match_line_idx = i;
+        } else {
+            break;
+        }
+    }
+    
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let start_line = match_line_idx.saturating_sub(1);
+    let end_line = std::cmp::min(match_line_idx + 1, lines.len().saturating_sub(1));
+    
+    lines[start_line..=end_line].join("\n")
+}
+
+fn cosine_similarity(vec_a: &[f32], vec_b: &[f32]) -> f32 {
+    if vec_a.len() != vec_b.len() || vec_a.is_empty() {
+        return 0.0;
+    }
+    let mut dot_product = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
+    for i in 0..vec_a.len() {
+        dot_product += vec_a[i] * vec_b[i];
+        norm_a += vec_a[i] * vec_a[i];
+        norm_b += vec_b[i] * vec_b[i];
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot_product / (norm_a.sqrt() * norm_b.sqrt())
+}
+
+#[tauri::command]
+fn get_backlink_suggestions(active_path: String, state: tauri::State<AppState>) -> Result<Vec<BacklinkSuggestion>, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    
+    let active_note = guard.notes.iter().find(|note| note.meta.path == active_path)
+        .ok_or_else(|| format!("Active note not found: {}", active_path))?;
+    let active_title = &active_note.meta.title;
+
+    let mut suggestions = Vec::new();
+
+    let cache_path = embeddings_cache_path(root);
+    let embeddings: HashMap<String, EmbeddingEntry> = if cache_path.exists() {
+        let content = fs::read_to_string(&cache_path).unwrap_or_default();
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    let active_vec = embeddings.get(&active_path).map(|entry| &entry.vector);
+    let mention_regex = make_title_regex(active_title)?;
+
+    for note in &guard.notes {
+        if note.meta.path == active_path {
+            continue;
+        }
+
+        let already_links = note.links.iter().any(|link| {
+            link.resolved_path.as_deref() == Some(&active_path)
+        });
+        if already_links {
+            continue;
+        }
+
+        // 1. Unlinked Mention Matcher
+        let cleaned_content = clean_wiki_links(&note.content);
+        if let Some(mat) = mention_regex.find(&cleaned_content) {
+            let excerpt = get_excerpt_around_match(&note.content, mat.start());
+            suggestions.push(BacklinkSuggestion {
+                id: format!("mention:{}:{}", note.meta.path, active_path),
+                source_path: note.meta.path.clone(),
+                source_title: note.meta.title.clone(),
+                target_path: active_path.clone(),
+                target_title: active_title.clone(),
+                suggestion_type: "unlinked_mention".to_string(),
+                excerpt,
+                score: 1.0,
+            });
+        }
+
+        // 2. Semantic Similarity Matcher
+        if let Some(active_v) = active_vec {
+            if let Some(node_entry) = embeddings.get(&note.meta.path) {
+                let similarity = cosine_similarity(active_v, &node_entry.vector);
+                if similarity >= 0.6 {
+                    let excerpt = note.content.lines().take(3).collect::<Vec<_>>().join("\n");
+                    suggestions.push(BacklinkSuggestion {
+                        id: format!("semantic:{}:{}", note.meta.path, active_path),
+                        source_path: note.meta.path.clone(),
+                        source_title: note.meta.title.clone(),
+                        target_path: active_path.clone(),
+                        target_title: active_title.clone(),
+                        suggestion_type: "semantic".to_string(),
+                        excerpt,
+                        score: similarity,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(suggestions)
+}
+
+#[tauri::command]
+fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: tauri::State<AppState>) -> Result<(), String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    
+    let source_full_path = root.join(&suggestion.source_path);
+    let content = fs::read_to_string(&source_full_path).map_err(|e| e.to_string())?;
+    
+    let new_content = if suggestion.suggestion_type == "unlinked_mention" {
+        let mention_regex = make_title_regex(&suggestion.target_title)?;
+        let cleaned_content = clean_wiki_links(&content);
+        if let Some(mat) = mention_regex.find(&cleaned_content) {
+            let start = mat.start();
+            let end = mat.end();
+            let mut updated = content.clone();
+            updated.replace_range(start..end, &format!("[[{}]]", suggestion.target_title));
+            updated
+        } else {
+            return Err("Mention not found in content".to_string());
+        }
+    } else {
+        if content.contains("## Links") {
+            content.replace("## Links", &format!("## Links\n\n- [[{}]]", suggestion.target_title))
+        } else {
+            let separator = if content.ends_with("\n\n") {
+                ""
+            } else if content.ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            format!("{}{}{}", content.trim_end(), separator, format!("## Links\n\n- [[{}]]\n", suggestion.target_title))
+        }
+    };
+    
+    fs::write(&source_full_path, &new_content).map_err(|e| e.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    
+    if guard.auto_git_enabled {
+        let _ = auto_commit(&root, &suggestion.source_path);
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn apply_note_metadata(
+    path: String,
+    frontmatter: HashMap<String, String>,
+    tags: Vec<String>,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    
+    let full_path = root.join(&path);
+    let raw = fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
+    
+    let (mut current_fm, body) = parse_frontmatter(&raw);
+    
+    for (k, v) in frontmatter {
+        current_fm.insert(k, v);
+    }
+    
+    let mut updated_body = body.clone();
+    let mut tags_to_append = Vec::new();
+    for tag in tags {
+        let tag_pattern = format!("#{}", tag);
+        if !updated_body.to_lowercase().contains(&tag_pattern.to_lowercase()) {
+            tags_to_append.push(tag_pattern);
+        }
+    }
+    if !tags_to_append.is_empty() {
+        let tags_str = tags_to_append.join(" ");
+        if updated_body.ends_with("\n\n") {
+            updated_body.push_str(&tags_str);
+            updated_body.push('\n');
+        } else if updated_body.ends_with('\n') {
+            updated_body.push_str(&format!("\n{}\n", tags_str));
+        } else {
+            updated_body.push_str(&format!("\n\n{}\n", tags_str));
+        }
+    }
+    
+    let mut new_content = String::new();
+    if !current_fm.is_empty() {
+        new_content.push_str("---\n");
+        let mut keys: Vec<&String> = current_fm.keys().collect();
+        keys.sort();
+        for key in keys {
+            let value = &current_fm[key];
+            new_content.push_str(&format!("{}: \"{}\"\n", key, value));
+        }
+        new_content.push_str("---\n");
+    }
+    new_content.push_str(&updated_body);
+    
+    fs::write(&full_path, &new_content).map_err(|e| e.to_string())?;
+    guard.notes = resolve_links(scan_vault(&root)?);
+    
+    if guard.auto_git_enabled {
+        let _ = auto_commit(&root, &path);
+    }
+    
+    Ok(())
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UnresolvedLinkSource {
     path: String,
     title: String,
@@ -1980,7 +2256,10 @@ pub fn run() {
             load_embeddings_cache,
             save_embeddings_cache,
             get_unresolved_links,
-            parse_proposed_edits
+            parse_proposed_edits,
+            get_backlink_suggestions,
+            apply_backlink_suggestion,
+            apply_note_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lattice");
@@ -2387,5 +2666,33 @@ mod tests {
         assert!(settings.hotkeys.is_some());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_cosine_similarity() {
+        let vec_a = vec![1.0, 0.0, 1.0];
+        let vec_b = vec![0.0, 1.0, 0.0];
+        let vec_c = vec![1.0, 0.0, 1.0];
+        assert_eq!(cosine_similarity(&vec_a, &vec_b), 0.0);
+        assert!((cosine_similarity(&vec_a, &vec_c) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_clean_wiki_links() {
+        let text = "This is a [[Wiki Link]] inside.";
+        let cleaned = clean_wiki_links(text);
+        assert_eq!(cleaned.len(), text.len());
+        assert!(!cleaned.contains("Wiki"));
+        assert!(!cleaned.contains("Link"));
+    }
+
+    #[test]
+    fn test_get_excerpt_around_match() {
+        let content = "Line 1\nLine 2 with match\nLine 3\nLine 4";
+        let excerpt = get_excerpt_around_match(content, 12);
+        assert!(excerpt.contains("Line 1"));
+        assert!(excerpt.contains("Line 2 with match"));
+        assert!(excerpt.contains("Line 3"));
+        assert!(!excerpt.contains("Line 4"));
     }
 }
