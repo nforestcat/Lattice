@@ -1522,5 +1522,62 @@ describe("App layout", () => {
     sendChatMessageSpy.mockRestore();
     applyMetadataSpy.mockRestore();
   });
+
+  it("fetches local models from Ollama and updates the datalist options", async () => {
+    const mockResponse = {
+      ok: true,
+      json: async () => ({
+        models: [
+          { name: "llama3:latest" },
+          { name: "mistral:latest" }
+        ]
+      })
+    };
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(mockResponse as Response);
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "ollama", model: "llama3", baseUrl: "http://localhost:11434" }
+    });
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Switch to Distill Workspace
+    const distillTabBtn = screen.getByRole("button", { name: "Distill" });
+    fireEvent.click(distillTabBtn);
+
+    // Switch to Chat sub-tab
+    const chatTabBtn = screen.getByRole("button", { name: "Chat with LLM" });
+    fireEvent.click(chatTabBtn);
+
+    // Open settings panel
+    const settingsBtn = screen.getByRole("button", { name: /LLM Settings/ });
+    fireEvent.click(settingsBtn);
+
+    // Locate the "Fetch Models" button
+    const fetchModelsBtn = screen.getByRole("button", { name: "Fetch Models" });
+    expect(fetchModelsBtn).toBeTruthy();
+
+    // Click "Fetch Models"
+    fireEvent.click(fetchModelsBtn);
+
+    // Wait for the fetch call to complete and verify fetch details
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith("http://localhost:11434/api/tags"));
+
+    // Verify datalist option values
+    await waitFor(() => {
+      const datalist = document.getElementById("available-models-list");
+      expect(datalist).toBeTruthy();
+      const options = Array.from(datalist!.querySelectorAll("option")).map((opt: any) => opt.value);
+      expect(options).toContain("llama3:latest");
+      expect(options).toContain("mistral:latest");
+    });
+
+    // Cleanup spies
+    fetchSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+  });
 });
 

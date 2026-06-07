@@ -353,6 +353,54 @@ export function App() {
   const [backlinkSuggestions, setBacklinkSuggestions] = useState<BacklinkSuggestion[]>([]);
   const [isLoadingBacklinkSuggestions, setIsLoadingBacklinkSuggestions] = useState(false);
 
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  async function fetchLocalModels() {
+    const provider = llmConfig.provider;
+    let url = "";
+    if (provider === "ollama") {
+      url = (llmConfig.baseUrl || "http://localhost:11434").replace(/\/+$/, "") + "/api/tags";
+    } else if (provider === "lm-studio") {
+      url = (llmConfig.baseUrl || "http://localhost:1234/v1").replace(/\/+$/, "") + "/models";
+    } else {
+      return;
+    }
+
+    setIsFetchingModels(true);
+    setStatus(`Fetching models from ${provider}...`);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+      const data = await response.json();
+      let modelsList: string[] = [];
+
+      if (provider === "ollama") {
+        if (data && Array.isArray(data.models)) {
+          modelsList = data.models.map((m: any) => String(m.name));
+        }
+      } else if (provider === "lm-studio") {
+        if (data && Array.isArray(data.data)) {
+          modelsList = data.data.map((m: any) => String(m.id));
+        }
+      }
+
+      setAvailableModels(modelsList);
+      if (modelsList.length > 0) {
+        setStatus(`Successfully fetched ${modelsList.length} models from ${provider}!`);
+      } else {
+        setStatus(`No models returned from ${provider}.`);
+      }
+    } catch (e) {
+      console.error("Failed to fetch local models", e);
+      setStatus(`Failed to fetch models: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  }
+
   async function refreshBacklinkSuggestions(path: string) {
     setIsLoadingBacklinkSuggestions(true);
     try {
@@ -2467,6 +2515,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                   model: defaultModels[prov],
                                   baseUrl: defaultBases[prov] || undefined
                                 }));
+                                setAvailableModels([]);
                               }}
                             >
                               <option value="openai">OpenAI</option>
@@ -2479,13 +2528,40 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                           </div>
 
                           <div className="formGroup">
-                            <label>Model</label>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                              <label style={{ margin: 0 }}>Model</label>
+                              {(llmConfig.provider === "ollama" || llmConfig.provider === "lm-studio") && (
+                                <button
+                                  type="button"
+                                  className="fetch-models-btn"
+                                  onClick={() => void fetchLocalModels()}
+                                  disabled={isFetchingModels}
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    color: "#3b82f6",
+                                    fontSize: "10px",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    padding: "2px 4px",
+                                    borderRadius: "4px",
+                                    transition: "background-color 0.2s"
+                                  }}
+                                >
+                                  {isFetchingModels ? "Fetching..." : "Fetch Models"}
+                                </button>
+                              )}
+                            </div>
                             <input
                               type="text"
                               value={llmConfig.model}
                               onChange={(e) => setLlmConfig(prev => ({ ...prev, model: e.target.value }))}
                               placeholder="e.g. gpt-4o, llama3"
+                              list="available-models-list"
                             />
+                            <datalist id="available-models-list">
+                              {availableModels.map(m => <option key={m} value={m} />)}
+                            </datalist>
                           </div>
 
                           {llmConfig.provider !== "ollama" && llmConfig.provider !== "lm-studio" && (

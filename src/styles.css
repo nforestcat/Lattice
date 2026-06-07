@@ -3122,5 +3122,11 @@ summary:hover .treeActions {
   font-style: italic;
 }
 
+.fetch-models-btn:hover:not(:disabled) {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  text-decoration: underline;
+}
+
+
 
 
