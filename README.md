@@ -25,7 +25,7 @@ Implemented so far:
 - Audit context bundles via the **Bundle Audit & Diff** view to inspect exactly why each note was included (connection reason), view heuristic quality badges (Useful, Redundant, Too Large, Stale), and trace differences (added/removed notes, token size delta) from the previous generation
 - Distill raw LLM conversations, inbox captures, or meeting notes into reviewable proposed wiki edits (`create`, `update`, `merge`, `delete`) that can be edited inline and applied with confirmation
 - Fast and optimized production bundling using Vite code-splitting manual chunks, isolating heavy dependencies (React Flow, CodeMirror, highlight.js, marked) to minimize main JS entry bundle size below 62 KB
-- Detect selected Obsidian vault metadata from `.obsidian` settings and import compatible appearance/readability hints such as readable line length, theme, accent color, enabled core plugin names, attachment folder path, enabled CSS snippets list, and custom hotkeys
+- Detect selected Obsidian vault metadata from `.obsidian` settings and import compatible appearance/readability hints such as readable line length, theme, accent color, enabled core plugin names, attachment folder path, enabled CSS snippets list, and custom hotkeys, applying the accent color and dark theme overrides dynamically to custom-theme the entire application and Markdown preview.
 - Capture loose ideas or LLM answers into daily Inbox notes
 - Triage Inbox captures (into new notes, append to existing notes, or mark processed)
 - Create snapshots and optionally auto-commit saves in existing Git vaults
