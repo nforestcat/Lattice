@@ -28,7 +28,7 @@ describe("App layout", () => {
 
     expect(screen.getByRole("button", { name: "Split" }).className).toContain("active");
     expect(document.querySelector(".editorSurface")).toBeTruthy();
-    expect(document.querySelector(".previewSurface")?.textContent).toContain("Welcome to the local vault.");
+    expect(document.querySelector(".previewSurface")?.textContent).toContain("Welcome to Lattice.");
   });
 
   it("uses model-agnostic context limit labels", async () => {

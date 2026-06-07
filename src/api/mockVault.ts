@@ -35,7 +35,7 @@ area: personal knowledge
 ---
 # Home
 
-Welcome to the local vault.
+Welcome to Lattice.
 
 Explore [[Projects/Obsidian Replacement]] and [[Research/Markdown Systems]].
 
