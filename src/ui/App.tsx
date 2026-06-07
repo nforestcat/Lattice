@@ -2312,6 +2312,16 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }
 
   const html = useMemo(() => ({ __html: renderMarkdownPreview(draft) }), [draft]);
+  const themeStyles = useMemo<React.CSSProperties>(() => {
+    const color = vault?.obsidianSettings?.accentColor;
+    if (color) {
+      return {
+        "--accent-color": color,
+        "--link-color": color
+      } as React.CSSProperties;
+    }
+    return {} as React.CSSProperties;
+  }, [vault]);
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
   const selectedContextCount = contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).length;
   const selectedContextCharacters = contextCandidates
@@ -2356,7 +2366,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }, [contextCandidates, selectedContextPaths, sortBy, filterBy]);
 
   return (
-    <main className="workspace">
+    <main className="workspace" style={themeStyles}>
       <aside className="sidebar">
         <div className="brand">
           <strong>Lattice</strong>
@@ -2515,7 +2525,9 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
           )}
           {(viewMode === "split" || viewMode === "preview") && (
             <article
-              className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""}`}
+              className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""} ${
+                vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "theme-dark" : ""
+              }`}
               dangerouslySetInnerHTML={html}
             />
           )}
