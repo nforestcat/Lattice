@@ -50,11 +50,17 @@ interface DistillWorkspaceProps {
   bulkDrafts: Record<string, { content: string; status: "done" | "drafting" | "error" }>;
   setBulkDrafts: React.Dispatch<React.SetStateAction<Record<string, { content: string; status: "done" | "drafting" | "error" }>>>;
   isBulkProcessing: boolean;
-  runUnresolvedLinksScan: () => Promise<void>;
+  runUnresolvedLinksScan: () => Promise<UnresolvedLinkGroup[]>;
   handleSelectAllToggle: (e: React.ChangeEvent<HTMLInputElement>) => void;
   runBulkDrafting: () => Promise<void>;
   createSelectedStubs: () => Promise<void>;
   draftStubNote: (target: string, sources: Array<{ path: string; title: string; excerpt: string }>) => Promise<void>;
+
+  healthReports: NoteHealthReport[];
+  isScanningHealth: boolean;
+  onRunHealthAudit: () => Promise<void>;
+  auditorSubTab: "health" | "links";
+  setAuditorSubTab: (tab: "health" | "links") => void;
 }
 
 export function DistillWorkspace({
@@ -102,25 +108,15 @@ export function DistillWorkspace({
   draftStubNote,
   onSelectNote,
   onRefreshVault,
+  healthReports,
+  isScanningHealth,
+  onRunHealthAudit,
+  auditorSubTab,
+  setAuditorSubTab,
 }: DistillWorkspaceProps) {
-  const [healthReports, setHealthReports] = useState<NoteHealthReport[]>([]);
-  const [isScanningHealth, setIsScanningHealth] = useState(false);
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
-  const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
 
-  const runHealthAudit = async () => {
-    setIsScanningHealth(true);
-    try {
-      const reports = await vaultApi.getWikiHealthReport();
-      reports.sort((a, b) => a.score - b.score);
-      setHealthReports(reports);
-    } catch (e) {
-      console.error("Failed to run health audit", e);
-    } finally {
-      setIsScanningHealth(false);
-    }
-  };
 
   const handleGenerateSummary = async (path: string) => {
     setGeneratingSummaryPath(path);
@@ -139,7 +135,7 @@ export function DistillWorkspace({
       await vaultApi.applyNoteMetadata(path, { summary: cleanSummary }, []);
       setStatus(`Successfully summarized and updated frontmatter for ${path}!`);
       
-      await runHealthAudit();
+      await onRunHealthAudit();
       if (onRefreshVault) {
         await onRefreshVault();
       }
@@ -160,7 +156,7 @@ export function DistillWorkspace({
 
   useEffect(() => {
     if (distillTab === "auditor") {
-      void runHealthAudit();
+      void onRunHealthAudit();
     }
   }, [distillTab, vault?.rootPath]);
 
@@ -186,7 +182,7 @@ export function DistillWorkspace({
               onClick={() => {
                 setDistillTab("auditor");
                 void runUnresolvedLinksScan();
-                void runHealthAudit();
+                void onRunHealthAudit();
               }}
             >
               Wiki Auditor
@@ -357,7 +353,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                     disabled={isScanningHealth || isScanningUnresolved}
                     onClick={() => {
                       void runUnresolvedLinksScan();
-                      void runHealthAudit();
+                      void onRunHealthAudit();
                     }}
                   >
                     {isScanningHealth || isScanningUnresolved ? "Scanning..." : "Re-Scan Vault"}

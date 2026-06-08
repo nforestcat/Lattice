@@ -1,5 +1,5 @@
 import { parseMarkdownNote } from "./markdown";
-import type { GraphData, NoteContext, NoteLink, ParsedNote, SearchFilters, SearchResult, VaultFile, VaultIndex } from "./types";
+import type { GraphData, GraphNode, NoteContext, NoteLink, ParsedNote, SearchFilters, SearchResult, VaultFile, VaultIndex } from "./types";
 
 export function buildVaultIndex(files: VaultFile[]): VaultIndex {
   const notes = files.map((file) => ({
@@ -73,23 +73,65 @@ function buildTargetResolver(notes: ParsedNote[]): Map<string, string> {
 }
 
 function buildGraph(notes: ParsedNote[]): GraphData {
-  return {
-    focusedPath: null,
-    nodes: notes.map((note) => ({
-      id: note.path,
-      label: note.title,
-      tags: note.tags
-    })),
-    edges: notes.flatMap((note) =>
-      note.links
-        .filter((link): link is NoteLink & { resolvedPath: string } => Boolean(link.resolvedPath))
-        .map((link) => ({
+  const nodes: GraphNode[] = notes.map((note) => ({
+    id: note.path,
+    label: note.title,
+    tags: note.tags,
+    kind: "note" as const
+  }));
+
+  const edges: any[] = [];
+  const unresolvedTargets = new Map<string, string>(); // normalized -> original
+  const seenUnresolvedEdges = new Set<string>(); // "source->target"
+
+  for (const note of notes) {
+    for (const link of note.links) {
+      if (link.resolvedPath) {
+        edges.push({
           id: `${note.path}->${link.resolvedPath}->${link.line}`,
           source: note.path,
           target: link.resolvedPath,
           isManaged: link.isManaged
-        }))
-    )
+        });
+      } else {
+        const targetRef = link.targetRef;
+        const normalized = normalizeRef(targetRef).trim();
+        const ghostId = `unresolved:${normalized}`;
+
+        // Track unique unresolved targets, preserving the first display ref we see
+        if (!unresolvedTargets.has(normalized)) {
+          unresolvedTargets.set(normalized, targetRef);
+        }
+
+        // Deduplicate edges to unresolved targets per source/target pair
+        const edgeKey = `${note.path}->${ghostId}`;
+        if (!seenUnresolvedEdges.has(edgeKey)) {
+          seenUnresolvedEdges.add(edgeKey);
+          edges.push({
+            id: edgeKey,
+            source: note.path,
+            target: ghostId,
+            isManaged: link.isManaged
+          });
+        }
+      }
+    }
+  }
+
+  // Add ghost nodes to the nodes list
+  for (const [normalized, original] of unresolvedTargets.entries()) {
+    nodes.push({
+      id: `unresolved:${normalized}`,
+      label: original,
+      tags: [],
+      kind: "unresolved" as const
+    });
+  }
+
+  return {
+    focusedPath: null,
+    nodes,
+    edges
   };
 }
 

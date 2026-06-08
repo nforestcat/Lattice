@@ -707,6 +707,22 @@ describe("App layout", () => {
     window.localStorage.clear();
   });
 
+  it("prefills a usable default OpenAI model when no LLM config is saved", async () => {
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({});
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat with LLM" }));
+    fireEvent.click(screen.getByRole("button", { name: /LLM Settings/ }));
+
+    expect(screen.getByDisplayValue("gpt-4o")).toBeTruthy();
+
+    getVaultConfigSpy.mockRestore();
+  });
+
   it("compiles template variables properly when template is selected", async () => {
     const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
       promptTemplates: [
@@ -2027,6 +2043,129 @@ participants: Antigravity, User
     readNoteSpy.mockRestore();
     saveEmbeddingsCacheSpy.mockRestore();
     fetchSpy.mockRestore();
+  });
+
+  it("renders global health badge in sidebar, navigates on click, and styles and filters GraphView by health", async () => {
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+
+    const mockReports = [
+      {
+        path: "Home.md",
+        title: "Home",
+        score: 100,
+        issues: [],
+        isOrphan: false,
+        isStale: false,
+        isTooBroad: false,
+        isDuplicated: false,
+        missingSummary: false,
+        weakBacklinks: false
+      },
+      {
+        path: "Unhealthy.md",
+        title: "Unhealthy Note",
+        score: 60,
+        issues: ["Orphan note", "Missing summary"],
+        isOrphan: true,
+        isStale: false,
+        isTooBroad: false,
+        isDuplicated: false,
+        missingSummary: true,
+        weakBacklinks: false
+      }
+    ];
+
+    const getWikiHealthReportSpy = vi.spyOn(vaultApi, "getWikiHealthReport").mockResolvedValue(mockReports);
+
+    const getGraphSpy = vi.spyOn(vaultApi, "getGraph").mockResolvedValue({
+      nodes: [
+        { id: "Home.md", label: "Home", tags: [] },
+        { id: "Unhealthy.md", label: "Unhealthy", tags: [] }
+      ],
+      edges: [],
+      focusedPath: "Home.md"
+    });
+
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" },
+        { path: "Unhealthy.md", title: "Unhealthy", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "456" }
+      ],
+      tree: []
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockImplementation(async (path) => {
+      return {
+        path,
+        content: "Dummy content for " + path,
+        revision: "1"
+      };
+    });
+
+    render(<App />);
+
+    // Wait for the app to load
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Verify global health score button is present in the sidebar and reflects the average score (80%)
+    const badgeButton = await screen.findByRole("button", { name: "Open Wiki Auditor" });
+    expect(badgeButton).toBeTruthy();
+    expect(badgeButton.textContent).toContain("80%");
+    expect(badgeButton.className).toContain("health-warning");
+
+    // Click badge to go to auditor
+    fireEvent.click(badgeButton);
+    await waitFor(() => {
+      expect(screen.getByText("Wiki Health Scorecard")).toBeTruthy();
+    });
+
+    // Go to Graph tab
+    const graphTabBtn = screen.getByRole("button", { name: "Graph" });
+    fireEvent.click(graphTabBtn);
+
+    // Toggle the filter panel open
+    const filterToggleBtn = screen.getByRole("button", { name: /Filter Graph/ });
+    fireEvent.click(filterToggleBtn);
+
+    // Verify health checkbox exists
+    const healthCheckbox = screen.getByLabelText("Show only notes with health issues") as HTMLInputElement;
+    expect(healthCheckbox).toBeTruthy();
+    expect(healthCheckbox.checked).toBe(false);
+
+    const getGraphNode = (path: string) => {
+      return document.querySelector(`[data-testid="rf__node-${path}"]`);
+    };
+
+    // Verify both nodes are rendered on the screen
+    await waitFor(() => {
+      expect(getGraphNode("Home.md")).toBeTruthy();
+      expect(getGraphNode("Unhealthy.md")).toBeTruthy();
+    });
+
+    // Verify health styling classes (Unhealthy.md should have health-critical since 60 < 70)
+    const unhealthyNodeEl = getGraphNode("Unhealthy.md");
+    expect(unhealthyNodeEl?.className).toContain("health-critical");
+
+    // Toggle "Show only notes with health issues" checkbox
+    fireEvent.click(healthCheckbox);
+    expect(healthCheckbox.checked).toBe(true);
+
+    // Verify Home.md is hidden/removed while Unhealthy.md remains
+    await waitFor(() => expect(getGraphNode("Home.md")).toBeNull());
+    expect(getGraphNode("Unhealthy.md")).toBeTruthy();
+
+    // Cleanup spies
+    getWikiHealthReportSpy.mockRestore();
+    getGraphSpy.mockRestore();
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 });
 

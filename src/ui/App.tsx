@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, NoteHealthReport } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -433,6 +433,8 @@ export function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor">("paste");
+  const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
+  const [activeUnresolvedTarget, setActiveUnresolvedTarget] = useState<string | null>(null);
   const [isLlmGenerating, setIsLlmGenerating] = useState(false);
   const [includeContext, setIncludeContext] = useState(true);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
@@ -449,6 +451,36 @@ export function App() {
 
   const [backlinkSuggestions, setBacklinkSuggestions] = useState<BacklinkSuggestion[]>([]);
   const [isLoadingBacklinkSuggestions, setIsLoadingBacklinkSuggestions] = useState(false);
+
+  const [healthReports, setHealthReports] = useState<NoteHealthReport[]>([]);
+  const [isScanningHealth, setIsScanningHealth] = useState(false);
+
+  async function runHealthAudit() {
+    setIsScanningHealth(true);
+    try {
+      const reports = await vaultApi.getWikiHealthReport();
+      reports.sort((a, b) => a.score - b.score);
+      setHealthReports(reports);
+    } catch (e) {
+      console.error("Failed to run background health audit", e);
+    } finally {
+      setIsScanningHealth(false);
+    }
+  }
+
+  const globalHealthScore = useMemo(() => {
+    if (isScanningHealth && healthReports.length === 0) {
+      return null;
+    }
+    if (!vault || vault.notes.length === 0) {
+      return 100;
+    }
+    if (healthReports.length === 0) {
+      return null;
+    }
+    const total = healthReports.reduce((sum, r) => sum + r.score, 0);
+    return Math.round(total / healthReports.length);
+  }, [healthReports, isScanningHealth, vault]);
 
   async function refreshBacklinkSuggestions(path: string) {
     setIsLoadingBacklinkSuggestions(true);
@@ -475,6 +507,7 @@ export function App() {
         await refreshContext(activePath);
         await refreshBacklinkSuggestions(activePath);
       }
+      void runHealthAudit();
     } catch (e) {
       console.error("Failed to apply backlink suggestion", e);
       setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -588,6 +621,7 @@ ${draft}
         setVault(nextVault);
       }
       await selectNote(activePath);
+      void runHealthAudit();
     } catch (e) {
       console.error("Failed to apply metadata suggestions", e);
       setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -844,6 +878,7 @@ Return the complete note content including any YAML frontmatter block at the ver
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
     void refreshArchiveStatus();
+    void runHealthAudit();
   }
 
   async function chooseVaultFolder() {
@@ -875,15 +910,47 @@ Return the complete note content including any YAML frontmatter block at the ver
       setInboxCaptures([]);
     }
     void refreshArchiveStatus();
+    void runHealthAudit();
   }
 
   async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig) {
+    setActiveUnresolvedTarget(null);
     const note = await vaultApi.readNote(path);
     setActivePath(path);
     setDocument(note);
     setDraft(note.content);
     setViewMode("split");
     await refreshContext(path, currentConfig, currentNotes, currentLlmConfig);
+  }
+
+  function normalizeRef(value: string): string {
+    return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
+  }
+
+  function openUnresolvedTarget(normalizedTargetRef: string) {
+    setActiveUnresolvedTarget(normalizedTargetRef);
+    setActivePath(null);
+    setDocument(null);
+    setDraft("");
+    setViewMode("distill");
+    setDistillTab("auditor");
+    setAuditorSubTab("links");
+
+    const group = unresolvedLinks.find(g => normalizeRef(g.target).trim() === normalizedTargetRef);
+    const displayName = group ? group.target : normalizedTargetRef;
+    setSelectedUnresolvedTargets(new Set([displayName]));
+  }
+
+  async function draftUnresolvedTarget(normalizedTargetRef: string) {
+    let currentLinks = unresolvedLinks;
+    if (currentLinks.length === 0) {
+      currentLinks = await runUnresolvedLinksScan();
+    }
+    const item = currentLinks.find(x => normalizeRef(x.target).trim() === normalizedTargetRef);
+    if (item) {
+      void draftStubNote(item.target, item.sources);
+    }
+    openUnresolvedTarget(normalizedTargetRef);
   }
 
   async function refreshContext(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig) {
@@ -935,6 +1002,7 @@ Return the complete note content including any YAML frontmatter block at the ver
     setDocument({ ...document, content: draft, revision: result.revision });
     setStatus(result.gitCommit ? `Saved and committed ${result.gitCommit}` : "Saved");
     await refreshContext(document.path);
+    void runHealthAudit();
   }
 
   async function handleSendChatMessage() {
@@ -1298,6 +1366,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     }
     setStatus("Graph link added to ## Links");
     await refreshContext(sourcePath);
+    void runHealthAudit();
   }
 
   async function deleteGraphLink(sourcePath: string, targetPath: string) {
@@ -1313,6 +1382,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     }
     setStatus("Managed graph link removed");
     await refreshContext(sourcePath);
+    void runHealthAudit();
   }
 
   async function createNoteInCurrentFolder() {
@@ -1328,6 +1398,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       if (result.selectedPath) {
         await selectNote(result.selectedPath);
       }
+      void runHealthAudit();
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -1364,6 +1435,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       } else {
         await refreshVault(activePath);
       }
+      void runHealthAudit();
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -1392,6 +1464,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
         setSelectedContextPaths(new Set());
         setInboxCaptures([]);
       }
+      void runHealthAudit();
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -1910,9 +1983,11 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       const list = await vaultApi.getUnresolvedLinks();
       setUnresolvedLinks(list);
       setStatus(`Scan complete: found ${list.length} unresolved link(s)`);
+      return list;
     } catch (err) {
       console.error(err);
       setStatus("Failed to scan unresolved links");
+      return [];
     } finally {
       setIsScanningUnresolved(false);
     }
@@ -2431,6 +2506,9 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
         isSearchingSemantic={isSearchingSemantic}
         semanticSearchError={semanticSearchError}
         results={results}
+        globalHealthScore={globalHealthScore}
+        isScanningHealth={isScanningHealth}
+        onGoToAuditor={() => { setViewMode("distill"); setDistillTab("auditor"); }}
       />
 
       <section className="editorPane">
@@ -2492,9 +2570,14 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
                 activePath={activePath}
                 embeddingsCache={embeddingsCache}
                 notes={vault?.notes || []}
+                healthReports={healthReports}
                 onOpen={(path) => void selectNote(path)}
                 onCreateLink={(targetPath) => activePath && void createGraphLink(activePath, targetPath)}
                 onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
+                activeUnresolvedTarget={activeUnresolvedTarget}
+                unresolvedLinks={unresolvedLinks}
+                onOpenUnresolved={openUnresolvedTarget}
+                onDraftUnresolved={draftUnresolvedTarget}
               />
             </section>
           )}
@@ -2514,6 +2597,8 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               contextBundle={contextBundle}
               distillTab={distillTab}
               setDistillTab={setDistillTab}
+              auditorSubTab={auditorSubTab}
+              setAuditorSubTab={setAuditorSubTab}
               distillInputText={distillInputText}
               setDistillInputText={setDistillInputText}
               proposedEdits={proposedEdits}
@@ -2545,6 +2630,9 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               draftStubNote={draftStubNote}
               onSelectNote={selectNote}
               onRefreshVault={async () => { await refreshVault(activePath); }}
+              healthReports={healthReports}
+              isScanningHealth={isScanningHealth}
+              onRunHealthAudit={runHealthAudit}
             />
           )}
         </div>

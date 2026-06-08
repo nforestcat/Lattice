@@ -1,21 +1,38 @@
 import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 import { cosineSimilarity, type VectorCache } from "../../api/embeddings";
-import type { GraphData, NoteMeta } from "../../api/types";
+import type { GraphData, NoteMeta, NoteHealthReport, UnresolvedLinkGroup } from "../../api/types";
 
 export function GraphView(props: {
   graph: GraphData;
   activePath: string | null;
   embeddingsCache: VectorCache;
   notes: NoteMeta[];
+  healthReports: NoteHealthReport[];
   onOpen(path: string): void;
   onCreateLink(path: string): void;
   onDeleteLink(path: string): void;
+  activeUnresolvedTarget: string | null;
+  unresolvedLinks: UnresolvedLinkGroup[];
+  onOpenUnresolved(target: string): void;
+  onDraftUnresolved(target: string): void;
 }) {
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
   const [excludedTags, setExcludedTags] = useState<Set<string>>(new Set());
   const [frontmatterQuery, setFrontmatterQuery] = useState("");
   const [semanticThreshold, setSemanticThreshold] = useState(0.5);
+  const [showOnlyUnhealthy, setShowOnlyUnhealthy] = useState(false);
+
+  const healthByPath = useMemo(() => {
+    const map = new Map<string, number>();
+    props.healthReports?.forEach(r => map.set(r.path, r.score));
+    return map;
+  }, [props.healthReports]);
+
+  const activeGhostNode = useMemo(() => {
+    if (!props.activeUnresolvedTarget) return null;
+    return props.graph.nodes.find(n => n.id === `unresolved:${props.activeUnresolvedTarget}`);
+  }, [props.graph.nodes, props.activeUnresolvedTarget]);
 
   const allUniqueTags = useMemo(() => {
     const set = new Set<string>();
@@ -28,6 +45,12 @@ export function GraphView(props: {
   const visibleNodeIds = useMemo(() => {
     const ids = new Set<string>();
     props.graph.nodes.forEach(node => {
+      // 0. Health filter check
+      if (showOnlyUnhealthy) {
+        const score = healthByPath.get(node.id);
+        if (score === undefined || score === 100) return;
+      }
+
       // 1. Tag check: if it contains any tag that is checked to be excluded
       const hasExcludedTag = node.tags.some(tag => excludedTags.has(tag));
       if (hasExcludedTag) return;
@@ -56,7 +79,7 @@ export function GraphView(props: {
       ids.add(node.id);
     });
     return ids;
-  }, [props.graph.nodes, props.notes, excludedTags, frontmatterQuery]);
+  }, [props.graph.nodes, props.notes, excludedTags, frontmatterQuery, showOnlyUnhealthy, healthByPath]);
 
   const nodes = useMemo<Node[]>(() => {
     // Only include visible nodes
@@ -172,17 +195,38 @@ export function GraphView(props: {
       const id = node.id;
       
       let cls = "graphNode";
-      if (id === props.activePath) {
-        cls = "graphNode active";
-      } else if (props.activePath) {
-        const vecActive = props.embeddingsCache[props.activePath]?.vector;
-        const vecNode = props.embeddingsCache[id]?.vector;
-        if (vecActive && vecNode) {
-          const sim = cosineSimilarity(vecActive, vecNode);
-          if (sim >= 0.7) {
-            cls = "graphNode semantic-high";
-          } else if (sim >= 0.5) {
-            cls = "graphNode semantic-medium";
+      
+      if (node.kind === "unresolved") {
+        cls += " ghost-node";
+      } else {
+        // Health style outline precedence
+        const score = healthByPath.get(id);
+        if (score !== undefined && score < 100) {
+          if (score < 70) {
+            cls += " health-critical";
+          } else {
+            cls += " health-warning";
+          }
+        }
+      }
+
+      if (node.kind === "unresolved") {
+        if (id === `unresolved:${props.activeUnresolvedTarget}`) {
+          cls += " active";
+        }
+      } else {
+        if (id === props.activePath) {
+          cls += " active";
+        } else if (props.activePath) {
+          const vecActive = props.embeddingsCache[props.activePath]?.vector;
+          const vecNode = props.embeddingsCache[id]?.vector;
+          if (vecActive && vecNode) {
+            const sim = cosineSimilarity(vecActive, vecNode);
+            if (sim >= 0.7) {
+              cls += " semantic-high";
+            } else if (sim >= 0.5) {
+              cls += " semantic-medium";
+            }
           }
         }
       }
@@ -194,7 +238,7 @@ export function GraphView(props: {
         className: cls
       };
     });
-  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
+  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold, healthByPath, props.healthReports, showOnlyUnhealthy, props.activeUnresolvedTarget]);
 
   const edges = useMemo<Edge[]>(() => {
     const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
@@ -241,7 +285,14 @@ export function GraphView(props: {
     return list;
   }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
 
-  const onNodeClick = useCallback((_: unknown, node: Node) => props.onOpen(node.id), [props]);
+  const onNodeClick = useCallback((_: unknown, node: Node) => {
+    if (node.id.startsWith("unresolved:")) {
+      const normalizedTarget = node.id.replace("unresolved:", "");
+      props.onOpenUnresolved(normalizedTarget);
+    } else {
+      props.onOpen(node.id);
+    }
+  }, [props]);
   const otherNodes = props.graph.nodes
     .filter((node) => node.id !== props.activePath)
     .filter((node) => visibleNodeIds.has(node.id));
@@ -274,6 +325,69 @@ export function GraphView(props: {
           🔍 Filter Graph
         </button>
       </div>
+
+      {activeGhostNode && (
+        <div className="ghost-node-banner" style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 16px",
+          background: "#f8fafc",
+          borderBottom: "1px solid #e2e8f0",
+          fontSize: "12px",
+          color: "#334155",
+          gap: "12px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{
+              display: "inline-block",
+              padding: "2px 6px",
+              background: "#e2e8f0",
+              color: "#475569",
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 700,
+              textTransform: "uppercase"
+            }}>Unresolved Page</span>
+            <span>
+              Note <strong>"{activeGhostNode.label}"</strong> is referenced but has not been created yet.
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              type="button"
+              className="smallButton"
+              onClick={() => props.onOpenUnresolved(props.activeUnresolvedTarget!)}
+              style={{
+                padding: "4px 8px",
+                fontSize: "11px",
+                cursor: "pointer",
+                background: "#fff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "4px"
+              }}
+            >
+              Open in Auditor
+            </button>
+            <button
+              type="button"
+              className="smallButton primary"
+              onClick={() => props.onDraftUnresolved(props.activeUnresolvedTarget!)}
+              style={{
+                padding: "4px 8px",
+                fontSize: "11px",
+                cursor: "pointer",
+                background: "#2563eb",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px"
+              }}
+            >
+              Draft AI Stub
+            </button>
+          </div>
+        </div>
+      )}
 
       {showFiltersPanel && (
         <div className="graphFiltersPanel" style={{
@@ -331,6 +445,19 @@ export function GraphView(props: {
             </div>
             
             <div style={{ flex: 1, minWidth: "180px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div>
+                <h4 style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#334155" }}>Filter by Health</h4>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "11px", cursor: "pointer", marginBottom: "8px" }}>
+                  <input
+                    type="checkbox"
+                    className="health-filter-checkbox"
+                    checked={showOnlyUnhealthy}
+                    onChange={(e) => setShowOnlyUnhealthy(e.target.checked)}
+                  />
+                  <span>Show only notes with health issues</span>
+                </label>
+              </div>
+
               <div>
                 <h4 style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#334155" }}>Filter by Metadata</h4>
                 <input

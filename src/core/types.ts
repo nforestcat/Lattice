@@ -40,6 +40,7 @@ export type GraphNode = {
   id: string;
   label: string;
   tags: string[];
+  kind?: "note" | "unresolved";
 };
 
 export type GraphEdge = {

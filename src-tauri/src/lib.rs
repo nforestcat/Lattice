@@ -124,6 +124,8 @@ struct GraphNode {
     id: String,
     label: String,
     tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2484,13 +2486,63 @@ fn parse_capture_time(captured_at: &str) -> Result<DateTime<Utc>, String> {
 }
 
 fn build_graph(notes: &[ParsedNote]) -> GraphData {
+    let mut nodes: Vec<GraphNode> = notes.iter().map(|note| GraphNode {
+        id: note.meta.path.clone(),
+        label: note.meta.title.clone(),
+        tags: note.meta.tags.clone(),
+        kind: Some("note".to_string()),
+    }).collect();
+
+    let mut edges = Vec::new();
+    let mut unresolved_targets = HashMap::new(); // normalized -> original
+    let mut seen_unresolved_edges = HashSet::new(); // (source, target)
+
+    for note in notes {
+        for link in &note.links {
+            if let Some(target) = &link.resolved_path {
+                edges.push(GraphEdge {
+                    id: format!("{}->{}->{}", note.meta.path, target, link.line),
+                    source: note.meta.path.clone(),
+                    target: target.clone(),
+                    is_managed: link.is_managed,
+                });
+            } else {
+                let target_ref = link.target_ref.clone();
+                let normalized = normalize_ref(&target_ref);
+                let ghost_id = format!("unresolved:{}", normalized);
+
+                // Track unique unresolved targets, keeping the first display reference we see
+                unresolved_targets.entry(normalized).or_insert(target_ref);
+
+                // Deduplicate edges to unresolved targets per source/target pair
+                let edge_key = (note.meta.path.clone(), ghost_id.clone());
+                if !seen_unresolved_edges.contains(&edge_key) {
+                    seen_unresolved_edges.insert(edge_key);
+                    edges.push(GraphEdge {
+                        id: format!("{}->{}", note.meta.path, ghost_id),
+                        source: note.meta.path.clone(),
+                        target: ghost_id,
+                        is_managed: link.is_managed,
+                    });
+                }
+            }
+        }
+    }
+
+    // Add ghost nodes to the nodes list
+    for (normalized, original) in unresolved_targets {
+        nodes.push(GraphNode {
+            id: format!("unresolved:{}", normalized),
+            label: original,
+            tags: vec![],
+            kind: Some("unresolved".to_string()),
+        });
+    }
+
     GraphData {
         focused_path: None,
-        nodes: notes.iter().map(|note| GraphNode { id: note.meta.path.clone(), label: note.meta.title.clone(), tags: note.meta.tags.clone() }).collect(),
-        edges: notes.iter().flat_map(|note| note.links.iter().filter_map(|link| {
-            let target = link.resolved_path.clone()?;
-            Some(GraphEdge { id: format!("{}->{}->{}", note.meta.path, target, link.line), source: note.meta.path.clone(), target, is_managed: link.is_managed })
-        })).collect(),
+        nodes,
+        edges,
     }
 }
 

@@ -22,6 +22,9 @@ interface SidebarProps {
   isSearchingSemantic: boolean;
   semanticSearchError: string | null;
   results: Array<{ path: string; title: string; similarity?: number }>;
+  globalHealthScore: number | null;
+  isScanningHealth: boolean;
+  onGoToAuditor: () => void;
 }
 
 export function Sidebar({
@@ -46,12 +49,41 @@ export function Sidebar({
   isSearchingSemantic,
   semanticSearchError,
   results,
+  globalHealthScore,
+  isScanningHealth,
+  onGoToAuditor,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <strong>Lattice</strong>
-        <span>{vault?.rootPath ?? "No vault"}</span>
+      <div className="brand" style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center", width: "100%", gap: "8px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+          <strong>Lattice</strong>
+          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={vault?.rootPath ?? undefined}>
+            {vault?.rootPath ?? "No vault"}
+          </span>
+        </div>
+        {vault && (() => {
+          const isLoading = isScanningHealth || globalHealthScore === null;
+          let badgeClass = "health-loading";
+          if (!isLoading && globalHealthScore !== null) {
+            if (globalHealthScore >= 90) badgeClass = "health-perfect";
+            else if (globalHealthScore >= 70) badgeClass = "health-warning";
+            else badgeClass = "health-critical";
+          }
+          const badgeText = isLoading ? "Health --" : `❤️ ${globalHealthScore}%`;
+
+          return (
+            <button 
+              className={`globalHealthBadgeButton ${badgeClass}`} 
+              aria-label="Open Wiki Auditor"
+              onClick={onGoToAuditor}
+              title={isLoading ? "Auditing vault health..." : `Global Health Score: ${globalHealthScore}%. Click to view details in Auditor.`}
+            >
+              {isLoading && <span style={{ marginRight: "4px" }}>⌛</span>}
+              {badgeText}
+            </button>
+          );
+        })()}
       </div>
       <button className="primary" onClick={() => void chooseVaultFolder()}>Open vault</button>
       <SearchPanel

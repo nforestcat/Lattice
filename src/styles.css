@@ -2576,6 +2576,74 @@ summary:hover .treeActions {
   background: #f0fdf4 !important;
 }
 
+/* Health-Aware Graph Node Styles */
+.graphNode.health-warning {
+  border: 1.5px solid #d97706 !important;
+  background: #fffbeb !important;
+  box-shadow: 0 0 6px rgba(217, 119, 6, 0.3) !important;
+}
+
+.graphNode.health-critical {
+  border: 1.5px solid #dc2626 !important;
+  background: #fef2f2 !important;
+  box-shadow: 0 0 6px rgba(220, 38, 38, 0.3) !important;
+}
+
+.graphNode.active {
+  outline: 3px solid #2563eb !important;
+  outline-offset: 2px;
+}
+
+.graphNode.active:not(.health-warning):not(.health-critical) {
+  background: #dde9ff !important;
+  border: 2px solid #2563eb !important;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.5) !important;
+}
+
+/* Global Health Badge Button Styles */
+.globalHealthBadgeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  border: 1px solid transparent;
+  outline: none;
+}
+
+.globalHealthBadgeButton:hover {
+  transform: scale(1.05);
+}
+
+.globalHealthBadgeButton.health-loading {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+.globalHealthBadgeButton.health-perfect,
+.globalHealthBadgeButton.health-good {
+  background-color: #e6f4ea;
+  color: #137333;
+  border: 1px solid #34a853;
+}
+
+.globalHealthBadgeButton.health-warning {
+  background-color: #fff4e5;
+  color: #b06000;
+  border: 1px solid #fbbc04;
+}
+
+.globalHealthBadgeButton.health-critical {
+  background-color: #fce8e6;
+  color: #c5221f;
+  border: 1px solid #ea4335;
+}
+
 /* Wiki Link Auditor & AI Stub Note Drafter Styles */
 .distillAuditorArea {
   display: flex;
