@@ -86,6 +86,53 @@ export const PRESETS: Record<PresetType, { label: string; purpose: string; mode:
 };
 
 const VAULT_CONFIG_VERSION = 1;
+const DEFAULT_LLM_CONFIG: LlmConfig = { provider: "openai", apiKey: "", model: "gpt-4o" };
+
+function llmApiKeyStorageKey(provider: LlmProvider): string {
+  return `lattice:llm-api-key:${provider}`;
+}
+
+function readStoredLlmApiKey(provider: LlmProvider): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return window.localStorage.getItem(llmApiKeyStorageKey(provider)) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveStoredLlmApiKey(provider: LlmProvider, apiKey: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const key = apiKey.trim();
+    if (key) {
+      window.localStorage.setItem(llmApiKeyStorageKey(provider), key);
+    } else {
+      window.localStorage.removeItem(llmApiKeyStorageKey(provider));
+    }
+  } catch {
+    // localStorage may be unavailable in hardened or test environments.
+  }
+}
+
+function redactLlmConfig(config: LlmConfig): LlmConfig {
+  return { ...config, apiKey: "" };
+}
+
+function hydrateLlmConfigSecrets(config: LlmConfig): LlmConfig {
+  return { ...config, apiKey: readStoredLlmApiKey(config.provider) || config.apiKey || "" };
+}
+
+function sanitizeVaultConfig(config: VaultConfig): VaultConfig {
+  return {
+    ...config,
+    llmConfig: config.llmConfig ? redactLlmConfig(config.llmConfig) : config.llmConfig
+  };
+}
 
 export const BUILTIN_TEMPLATES: PromptTemplate[] = [
   {
@@ -126,7 +173,7 @@ function normalizeLlmConfig(value: any): LlmConfig | undefined {
   }
   return {
     provider: typeof value.provider === "string" && ["openai", "anthropic", "gemini", "ollama", "custom", "lm-studio"].includes(value.provider) ? value.provider as LlmProvider : "openai",
-    apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+    apiKey: "",
     model: typeof value.model === "string" ? value.model : "",
     baseUrl: typeof value.baseUrl === "string" ? value.baseUrl : undefined,
     embeddingModel: typeof value.embeddingModel === "string" ? value.embeddingModel : undefined
@@ -367,7 +414,7 @@ export function App() {
   const [currentPromptHash, setCurrentPromptHash] = useState<string | null>(null);
   const [distillInputText, setDistillInputText] = useState("");
   const [proposedEdits, setProposedEdits] = useState<ProposedEdit[]>([]);
-  const [llmConfig, setLlmConfig] = useState<LlmConfig>({ provider: "openai", apiKey: "", model: "gpt-4o" });
+  const [llmConfig, setLlmConfig] = useState<LlmConfig>(DEFAULT_LLM_CONFIG);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor">("paste");
@@ -474,7 +521,7 @@ export function App() {
 
   async function generateMetadataSuggestions() {
     if (!activePath || !document) return;
-    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    const config = llmConfig;
     if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       setStatus("Please configure LLM settings first");
       return;
@@ -584,7 +631,7 @@ ${draft}
 
   async function autofillActiveNoteWithTemplate(templateName: string) {
     if (!activePath || !document) return;
-    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    const config = llmConfig;
     if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       setStatus("Please configure LLM settings first");
       return;
@@ -623,11 +670,11 @@ Return the complete note content including any YAML frontmatter block at the ver
   }
 
   const updateVaultConfig = async (updates: Partial<VaultConfig>) => {
-    const nextConfig: VaultConfig = {
+    const nextConfig: VaultConfig = sanitizeVaultConfig({
       version: VAULT_CONFIG_VERSION,
       ...vaultConfigRef.current,
       ...updates
-    };
+    });
     vaultConfigRef.current = nextConfig;
     setVaultConfig(nextConfig);
     try {
@@ -694,7 +741,7 @@ Return the complete note content including any YAML frontmatter block at the ver
 
   // Real-time Background Embedding Synchronization
   useEffect(() => {
-    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    const config = llmConfig;
     if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       return;
     }
@@ -761,9 +808,16 @@ Return the complete note content including any YAML frontmatter block at the ver
     setStatus(`Opened ${nextVault.rootPath}`);
 
     let loadedConfig: VaultConfig = {};
+    let runtimeLlmConfig: LlmConfig = DEFAULT_LLM_CONFIG;
     try {
       const rawConfig = await vaultApi.getVaultConfig();
       loadedConfig = normalizeVaultConfig(rawConfig);
+      const rawLlmConfig = rawConfig?.llmConfig;
+      if (rawLlmConfig && typeof rawLlmConfig === "object" && typeof rawLlmConfig.apiKey === "string" && rawLlmConfig.apiKey.trim()) {
+        const provider = loadedConfig.llmConfig?.provider || DEFAULT_LLM_CONFIG.provider;
+        saveStoredLlmApiKey(provider, rawLlmConfig.apiKey);
+        await vaultApi.saveVaultConfig(sanitizeVaultConfig(loadedConfig));
+      }
       vaultConfigRef.current = loadedConfig;
       setVaultConfig(loadedConfig);
 
@@ -780,7 +834,8 @@ Return the complete note content including any YAML frontmatter block at the ver
       const mode = normalizeBundleMode(loadedConfig.bundleMode, PRESETS[preset].mode);
       setBundleMode(mode);
 
-      const llmCfg = loadedConfig.llmConfig || { provider: "openai", apiKey: "", model: "gpt-4o" };
+      const llmCfg = hydrateLlmConfigSecrets(loadedConfig.llmConfig || DEFAULT_LLM_CONFIG);
+      runtimeLlmConfig = llmCfg;
       setLlmConfig(llmCfg);
 
       const rawCache = await vaultApi.loadEmbeddingsCache();
@@ -801,7 +856,7 @@ Return the complete note content including any YAML frontmatter block at the ver
       setStatus("Imported Obsidian settings");
     }
     if (nextVault.notes[0]) {
-      await selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes);
+      await selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes, runtimeLlmConfig);
     }
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
@@ -839,16 +894,16 @@ Return the complete note content including any YAML frontmatter block at the ver
     void refreshArchiveStatus();
   }
 
-  async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[]) {
+  async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig) {
     const note = await vaultApi.readNote(path);
     setActivePath(path);
     setDocument(note);
     setDraft(note.content);
     setViewMode("split");
-    await refreshContext(path, currentConfig, currentNotes);
+    await refreshContext(path, currentConfig, currentNotes, currentLlmConfig);
   }
 
-  async function refreshContext(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[]) {
+  async function refreshContext(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig) {
     setMetadataSuggestions(null);
     setContext(await vaultApi.getNoteContext(path));
     setSnapshots(await vaultApi.listSnapshots(path));
@@ -875,7 +930,7 @@ Return the complete note content including any YAML frontmatter block at the ver
       const note = await vaultApi.readNote(path);
       const notesForSuggestions = currentNotes ?? vault?.notes ?? [];
       updateLinkSuggestions(note.content, notesForSuggestions);
-      void updateSemanticRecommendations(path, configToUse.llmConfig || llmConfig, notesForSuggestions);
+      void updateSemanticRecommendations(path, currentLlmConfig ?? llmConfig, notesForSuggestions);
     } catch (e) {
       console.error("Failed to read note for suggestions/semantics", e);
     }
@@ -1148,7 +1203,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       return;
     }
 
-    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    const config = llmConfig;
     if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       setSemanticSearchError("Please configure LLM API key / Ollama / LM Studio in the Distill Settings first.");
       return;
@@ -1557,7 +1612,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       const currentPrompts = vaultConfigRef.current.promptInstructions ?? {};
       const presetForUi = normalizeLegacyPreset(run.preset);
 
-      const nextConfig: VaultConfig = {
+      const nextConfig: VaultConfig = sanitizeVaultConfig({
         ...vaultConfigRef.current,
         version: VAULT_CONFIG_VERSION,
         bundlePreset: presetForUi,
@@ -1571,7 +1626,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
           ...currentPrompts,
           [run.activePath]: run.question
         }
-      };
+      });
 
       vaultConfigRef.current = nextConfig;
       setVaultConfig(nextConfig);
@@ -1727,10 +1782,10 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
         return age <= msLimit;
       });
 
-      const updated = {
+      const updated = sanitizeVaultConfig({
         ...currentConfig,
         promptRuns: nextRuns
-      };
+      });
 
       await vaultApi.saveVaultConfig(updated);
       setVaultConfig(updated);
@@ -1881,7 +1936,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }
 
   async function draftStubNote(targetTitle: string, sources: { path: string; title: string; excerpt: string }[]) {
-    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    const config = llmConfig;
     if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
       setStatus("Please configure LLM settings first");
       return;
@@ -1959,7 +2014,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     }
     setBulkDrafts(nextDrafts);
 
-    const config = vaultConfigRef.current.llmConfig || llmConfig;
+    const config = llmConfig;
 
     for (const target of targets) {
       const item = unresolvedLinks.find(x => x.target === target);
@@ -2685,6 +2740,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                 setLlmConfig(prev => ({
                                   ...prev,
                                   provider: prov,
+                                  apiKey: readStoredLlmApiKey(prov),
                                   model: defaultModels[prov],
                                   baseUrl: defaultBases[prov] || undefined
                                 }));
@@ -2806,9 +2862,10 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                             type="button"
                             className="primary btnSaveSettings"
                             onClick={() => {
-                              void updateVaultConfig({ llmConfig });
+                              saveStoredLlmApiKey(llmConfig.provider, llmConfig.apiKey);
+                              void updateVaultConfig({ llmConfig: redactLlmConfig(llmConfig) });
                               setShowLlmSettings(false);
-                              setStatus("LLM settings saved to vault config");
+                              setStatus("LLM settings saved; API key kept in local app storage");
                             }}
                           >
                             Save Settings

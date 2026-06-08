@@ -646,7 +646,12 @@ describe("App layout", () => {
       promptTemplates: [
         { id: "ok", name: "OK", template: "Template {active_note}" },
         { id: "bad", name: 123, template: null }
-      ]
+      ],
+      llmConfig: {
+        provider: "openai",
+        apiKey: "sk-should-not-be-stored",
+        model: "gpt-4o"
+      }
     });
     expect(migratedConfig.version).toBe(1);
     expect(migratedConfig.selectedPaths?.["Home.md"]).toEqual(["Home.md"]);
@@ -660,6 +665,46 @@ describe("App layout", () => {
     expect(migratedConfig.promptTemplates).toEqual([
       { id: "ok", name: "OK", template: "Template {active_note}", isSystem: false }
     ]);
+    expect(migratedConfig.llmConfig).toEqual(expect.objectContaining({
+      provider: "openai",
+      apiKey: "",
+      model: "gpt-4o"
+    }));
+  });
+
+  it("keeps LLM API keys out of vault config when saving settings", async () => {
+    window.localStorage.clear();
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "", model: "gpt-4o" }
+    });
+    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue();
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat with LLM" }));
+    fireEvent.click(screen.getByRole("button", { name: /LLM Settings/ }));
+
+    const apiKeyInput = screen.getByPlaceholderText("Enter API Key");
+    fireEvent.change(apiKeyInput, { target: { value: "sk-live-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => {
+      expect(saveVaultConfigSpy).toHaveBeenCalledWith(expect.objectContaining({
+        llmConfig: expect.objectContaining({
+          provider: "openai",
+          apiKey: "",
+          model: "gpt-4o"
+        })
+      }));
+    });
+    expect(window.localStorage.getItem("lattice:llm-api-key:openai")).toBe("sk-live-secret");
+
+    getVaultConfigSpy.mockRestore();
+    saveVaultConfigSpy.mockRestore();
+    window.localStorage.clear();
   });
 
   it("compiles template variables properly when template is selected", async () => {
