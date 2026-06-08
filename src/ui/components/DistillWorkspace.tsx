@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport } from "../../api/types";
+import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview } from "../../api/types";
 import type { ChatMessage } from "../../api/llm";
 import { vaultApi } from "../../api";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
@@ -47,14 +47,18 @@ interface DistillWorkspaceProps {
   isScanningUnresolved: boolean;
   selectedUnresolvedTargets: Set<string>;
   setSelectedUnresolvedTargets: React.Dispatch<React.SetStateAction<Set<string>>>;
-  bulkDrafts: Record<string, { content: string; status: "done" | "drafting" | "error" }>;
-  setBulkDrafts: React.Dispatch<React.SetStateAction<Record<string, { content: string; status: "done" | "drafting" | "error" }>>>;
+  bulkDrafts: Record<string, StubDraftReview>;
+  setBulkDrafts: React.Dispatch<React.SetStateAction<Record<string, StubDraftReview>>>;
   isBulkProcessing: boolean;
   runUnresolvedLinksScan: () => Promise<UnresolvedLinkGroup[]>;
   handleSelectAllToggle: (e: React.ChangeEvent<HTMLInputElement>) => void;
   runBulkDrafting: () => Promise<void>;
   createSelectedStubs: () => Promise<void>;
   draftStubNote: (target: string, sources: Array<{ path: string; title: string; excerpt: string }>) => Promise<void>;
+  approveDraft: (target: string) => void;
+  rejectDraft: (target: string) => void;
+  approveAllDrafts: () => void;
+  rejectAllDrafts: () => void;
 
   healthReports: NoteHealthReport[];
   isScanningHealth: boolean;
@@ -113,9 +117,20 @@ export function DistillWorkspace({
   onRunHealthAudit,
   auditorSubTab,
   setAuditorSubTab,
+  approveDraft,
+  rejectDraft,
+  approveAllDrafts,
+  rejectAllDrafts,
 }: DistillWorkspaceProps) {
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
+
+  const approvedCount = Array.from(selectedUnresolvedTargets).filter(t => {
+    const draft = bulkDrafts[t];
+    return draft?.status === "done" && draft?.approved;
+  }).length;
+
+  const hasDoneDrafts = Object.values(bulkDrafts).some(d => d.status === "done");
 
 
   const handleGenerateSummary = async (path: string) => {
@@ -583,14 +598,33 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                 type="button"
                                 className="smallButton successButton"
                                 disabled={
-                                  selectedUnresolvedTargets.size === 0 ||
                                   isBulkProcessing ||
-                                  Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done").length === 0
+                                  approvedCount === 0
                                 }
                                 onClick={() => void createSelectedStubs()}
                               >
-                                Create Selected
+                                Create Approved ({approvedCount})
                               </button>
+                              {hasDoneDrafts && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="smallButton"
+                                    disabled={isBulkProcessing}
+                                    onClick={approveAllDrafts}
+                                  >
+                                    Approve All
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="smallButton"
+                                    disabled={isBulkProcessing}
+                                    onClick={rejectAllDrafts}
+                                  >
+                                    Reject All
+                                  </button>
+                                </>
+                              )}
                               {Object.keys(bulkDrafts).length > 0 && (
                                 <button
                                   type="button"
@@ -609,8 +643,9 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
 
                           {unresolvedLinks.map((item) => {
                             const draftState = bulkDrafts[item.target];
+                            const isRejected = draftState?.status === "done" && draftState.approved === false;
                             return (
-                              <div key={item.target} className="unresolvedLinkCard">
+                              <div key={item.target} className={`unresolvedLinkCard ${isRejected ? "rejected" : ""}`}>
                                 <div className="unresolvedLinkHeader">
                                   <label className="checkboxLabel">
                                     <input
@@ -630,9 +665,38 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                     <strong>[[{item.target}]]</strong>
                                   </label>
 
-                                  <div className="cardHeaderActions">
+                                  <div className="cardHeaderActions" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                                     {draftState?.status === "drafting" && <span className="statusText drafting">⌛ Drafting...</span>}
-                                    {draftState?.status === "done" && <span className="statusText success">✓ Draft Ready</span>}
+                                    {draftState?.status === "done" && (
+                                      <>
+                                        {draftState.approved ? (
+                                          <>
+                                            <span className="reviewBadge approved">✓ Approved</span>
+                                            <button
+                                              type="button"
+                                              className="smallButton"
+                                              style={{ background: "#fee2e2", borderColor: "#fecaca", color: "#991b1b" }}
+                                              disabled={isBulkProcessing}
+                                              onClick={() => rejectDraft(item.target)}
+                                            >
+                                              Reject
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span className="reviewBadge rejected">✗ Rejected</span>
+                                            <button
+                                              type="button"
+                                              className="smallButton primary"
+                                              disabled={isBulkProcessing}
+                                              onClick={() => approveDraft(item.target)}
+                                            >
+                                              Approve
+                                            </button>
+                                          </>
+                                        )}
+                                      </>
+                                    )}
                                     {draftState?.status === "error" && <span className="statusText error">❌ Failed</span>}
 
                                     {!draftState && (
@@ -653,6 +717,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                     <textarea
                                       className="stubPreviewTextarea"
                                       value={draftState.content}
+                                      disabled={!draftState.approved}
                                       onChange={(e) => {
                                         setBulkDrafts(prev => ({
                                           ...prev,

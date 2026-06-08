@@ -257,3 +257,10 @@ export type ProposedEdit = {
   applied: boolean;
   checked?: boolean;
 };
+
+export type StubDraftReview = {
+  content: string;
+  status: "done" | "drafting" | "error";
+  approved: boolean;
+};
+

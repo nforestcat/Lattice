@@ -1365,15 +1365,14 @@ describe("App layout", () => {
     // Click Draft Stub button
     const draftStubBtn = screen.getByRole("button", { name: "Draft Stub" });
     fireEvent.click(draftStubBtn);
-
     // Verify draft stub loading, then draft content preview shows up
-    await waitFor(() => expect(screen.getByText("✓ Draft Ready")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("✓ Approved")).toBeTruthy());
     const textarea = document.querySelector(".stubPreviewTextarea") as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
     expect(textarea.value).toBe("This is the drafted AI stub note content.");
 
     // Click Create Selected button (since single stub drafting uses bulk creation flow)
-    const createSelectedBtn = screen.getByRole("button", { name: "Create Selected" });
+    const createSelectedBtn = screen.getByRole("button", { name: "Create Approved (1)" });
     fireEvent.click(createSelectedBtn);
 
     // Verify vaultApi.createNote and saveNote were called
@@ -1486,9 +1485,8 @@ describe("App layout", () => {
 
     // Verify sendChatMessage is called
     await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalled());
-
     // Verify both drafts are loaded and textareas appear with the draft content
-    await waitFor(() => expect(screen.getAllByText("✓ Draft Ready").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("✓ Approved").length).toBe(2));
 
     const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
     expect(textareas.length).toBe(2);
@@ -1496,7 +1494,7 @@ describe("App layout", () => {
     expect(textareas[1].value).toBe("This is the drafted AI stub note content.");
 
     // Click "Create Selected" button to write them to the vault
-    const createSelectedBtn = screen.getByRole("button", { name: "Create Selected" });
+    const createSelectedBtn = screen.getByRole("button", { name: "Create Approved (2)" });
     fireEvent.click(createSelectedBtn);
 
     // Verify createNote and saveNote were called for both
@@ -1505,6 +1503,125 @@ describe("App layout", () => {
       expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing Two");
       expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
       expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
+    });
+
+    // Cleanup spies
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
+    getUnresolvedLinksSpy.mockRestore();
+  });
+
+  it("allows individual approval and rejection of drafts before creation", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" }
+      ],
+      tree: []
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links.",
+      revision: "rev-123"
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "test-key", model: "gpt-4o" }
+    });
+
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue("This is the drafted AI stub note content.");
+
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockImplementation(async (dir, name) => {
+      return {
+        vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+        selectedPath: `${name}.md`
+      };
+    });
+
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
+      saved: true,
+      revision: "rev-456",
+      conflict: false,
+      snapshotId: null,
+      gitCommit: null
+    });
+
+    const getUnresolvedLinksSpy = vi.spyOn(vaultApi, "getUnresolvedLinks").mockResolvedValue([
+      {
+        target: "Missing One",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links." }
+        ]
+      },
+      {
+        target: "Missing Two",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links." }
+        ]
+      }
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // Switch to Distill Workspace
+    const distillTabBtn = screen.getByRole("button", { name: "Distill" });
+    fireEvent.click(distillTabBtn);
+
+    // Click on Wiki Auditor tab
+    const auditorTabBtn = screen.getByRole("button", { name: "Wiki Auditor" });
+    fireEvent.click(auditorTabBtn);
+
+    // Switch to Dead Links Scanner sub-tab
+    const deadLinksSubTabBtn = screen.getByRole("button", { name: "Dead Links Scanner" });
+    fireEvent.click(deadLinksSubTabBtn);
+
+    // Verify it performs the scan and shows the unresolved link targets
+    await waitFor(() => expect(screen.getByText("[[Missing One]]")).toBeTruthy());
+
+    // Click "Select All"
+    const selectAllCheckbox = document.querySelector(".bulkActionsBar input[type='checkbox']") as HTMLInputElement;
+    fireEvent.click(selectAllCheckbox);
+
+    // Click "Draft Selected (2)" button
+    const draftSelectedBtn = screen.getByRole("button", { name: "Draft Selected (2)" });
+    fireEvent.click(draftSelectedBtn);
+
+    // Verify both drafts are loaded and marked Approved by default
+    await waitFor(() => expect(screen.getAllByText("✓ Approved").length).toBe(2));
+
+    // Find the cards. Card 1: Missing One, Card 2: Missing Two
+    // Reject Card 2 ("Missing Two")
+    const rejectButtons = screen.getAllByRole("button", { name: "Reject" });
+    expect(rejectButtons.length).toBe(2);
+    fireEvent.click(rejectButtons[1]); // Click reject on "Missing Two"
+
+    // Verify Card 2 changes to "✗ Rejected"
+    await waitFor(() => expect(screen.getByText("✗ Rejected")).toBeTruthy());
+    expect(screen.getByText("✓ Approved")).toBeTruthy(); // Missing One is still approved
+
+    // Verify textareas - Missing Two textarea should be disabled
+    const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
+    expect(textareas.length).toBe(2);
+    expect(textareas[0].disabled).toBe(false);
+    expect(textareas[1].disabled).toBe(true);
+
+    // Verify Create button says "Create Approved (1)"
+    const createBtn = screen.getByRole("button", { name: "Create Approved (1)" });
+    fireEvent.click(createBtn);
+
+    // Verify only "Missing One" was created, not "Missing Two"
+    await waitFor(() => {
+      expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing One");
+      expect(createNoteSpy).not.toHaveBeenCalledWith(null, "Missing Two");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).not.toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
     });
 
     // Cleanup spies

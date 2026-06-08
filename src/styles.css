@@ -3245,6 +3245,56 @@ summary:hover .treeActions {
   text-decoration: underline;
 }
 
+/* Dead Link Resolution Workspace */
+.reviewBadge {
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.reviewBadge.approved {
+  color: #059669;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+
+.reviewBadge.rejected {
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+}
+
+.unresolvedLinkCard.rejected {
+  opacity: 0.55;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  box-shadow: none;
+}
+
+.unresolvedLinkCard.rejected:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: #cbd5e1;
+}
+
+.unresolvedLinkCard.rejected .unresolvedLinkSources {
+  display: none;
+}
+
+.stubPreviewTextarea:disabled {
+  background: #cbd5e1;
+  color: #64748b;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+
 
 
 

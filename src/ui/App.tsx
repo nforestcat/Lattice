@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, NoteHealthReport } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, NoteHealthReport, StubDraftReview } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -446,7 +446,7 @@ export function App() {
   const [draftedContent, setDraftedContent] = useState<string | null>(null);
   const [isDraftingStub, setIsDraftingStub] = useState(false);
   const [selectedUnresolvedTargets, setSelectedUnresolvedTargets] = useState<Set<string>>(new Set());
-  const [bulkDrafts, setBulkDrafts] = useState<Record<string, { content: string; status: "done" | "drafting" | "error" }>>({});
+  const [bulkDrafts, setBulkDrafts] = useState<Record<string, StubDraftReview>>({});
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
   const [backlinkSuggestions, setBacklinkSuggestions] = useState<BacklinkSuggestion[]>([]);
@@ -2009,7 +2009,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
     setBulkDrafts(prev => ({
       ...prev,
-      [targetTitle]: { content: "", status: "drafting" }
+      [targetTitle]: { content: "", status: "drafting", approved: true }
     }));
     setSelectedUnresolvedTargets(prev => {
       const next = new Set(prev);
@@ -2030,14 +2030,14 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       const response = await sendChatMessage(config, payload);
       setBulkDrafts(prev => ({
         ...prev,
-        [targetTitle]: { content: response, status: "done" }
+        [targetTitle]: { content: response, status: "done", approved: true }
       }));
       setStatus(`Drafted AI stub for "${targetTitle}"`);
     } catch (err) {
       console.error(err);
       setBulkDrafts(prev => ({
         ...prev,
-        [targetTitle]: { content: "", status: "error" }
+        [targetTitle]: { content: "", status: "error", approved: false }
       }));
       setStatus("Failed to draft AI stub");
     }
@@ -2067,15 +2067,19 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }
 
   async function runBulkDrafting() {
-    const targets = Array.from(selectedUnresolvedTargets);
-    if (targets.length === 0) return;
+    // Only draft stubs that do not already have a successful draft to avoid overwriting user edits
+    const targets = Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status !== "done");
+    if (targets.length === 0) {
+      setStatus("No new stubs to draft");
+      return;
+    }
 
     setIsBulkProcessing(true);
     setStatus(`Bulk drafting ${targets.length} stub(s)...`);
 
     const nextDrafts = { ...bulkDrafts };
     for (const t of targets) {
-      nextDrafts[t] = { content: "", status: "drafting" };
+      nextDrafts[t] = { content: "", status: "drafting", approved: true };
     }
     setBulkDrafts(nextDrafts);
 
@@ -2098,13 +2102,13 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
         const response = await sendChatMessage(config, payload);
         setBulkDrafts(prev => ({
           ...prev,
-          [target]: { content: response, status: "done" }
+          [target]: { content: response, status: "done", approved: true }
         }));
       } catch (err) {
         console.error(err);
         setBulkDrafts(prev => ({
           ...prev,
-          [target]: { content: "", status: "error" }
+          [target]: { content: "", status: "error", approved: false }
         }));
       }
     }
@@ -2114,7 +2118,10 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }
 
   async function createSelectedStubs() {
-    const targets = Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done");
+    const targets = Array.from(selectedUnresolvedTargets).filter(t => {
+      const draft = bulkDrafts[t];
+      return draft?.status === "done" && draft?.approved;
+    });
     if (targets.length === 0) return;
 
     setStatus(`Creating ${targets.length} note(s)...`);
@@ -2122,7 +2129,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     try {
       for (const target of targets) {
         const draft = bulkDrafts[target];
-        if (!draft || draft.status !== "done") continue;
+        if (!draft || draft.status !== "done" || !draft.approved) continue;
 
         try {
           const result = await vaultApi.createNote(null, target);
@@ -2130,6 +2137,11 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
           if (newPath) {
             await vaultApi.saveNote(newPath, draft.content, "");
             successCount++;
+            
+            // Clear activeUnresolvedTarget if this created note was the active ghost
+            if (activeUnresolvedTarget && normalizeRef(target) === activeUnresolvedTarget) {
+              setActiveUnresolvedTarget(null);
+            }
           }
         } catch (err) {
           console.error(`Failed to create stub for ${target}:`, err);
@@ -2137,8 +2149,16 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       }
 
       setStatus(`Successfully created ${successCount} stub note(s).`);
-      setSelectedUnresolvedTargets(new Set());
-      setBulkDrafts({});
+      
+      // Keep rejected/unprocessed targets in selection, remove successfully created ones
+      const remainingTargets = new Set(selectedUnresolvedTargets);
+      targets.forEach(t => remainingTargets.delete(t));
+      setSelectedUnresolvedTargets(remainingTargets);
+      
+      // Clean up successfully created drafts
+      const remainingDrafts = { ...bulkDrafts };
+      targets.forEach(t => delete remainingDrafts[t]);
+      setBulkDrafts(remainingDrafts);
       
       if (vault) {
         await refreshVault(activePath);
@@ -2156,6 +2176,44 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     } else {
       setSelectedUnresolvedTargets(new Set(unresolvedLinks.map(item => item.target)));
     }
+  }
+
+  function approveDraft(target: string) {
+    setBulkDrafts(prev => prev[target] ? {
+      ...prev,
+      [target]: { ...prev[target], approved: true }
+    } : prev);
+  }
+
+  function rejectDraft(target: string) {
+    setBulkDrafts(prev => prev[target] ? {
+      ...prev,
+      [target]: { ...prev[target], approved: false }
+    } : prev);
+  }
+
+  function approveAllDrafts() {
+    setBulkDrafts(prev => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (next[k].status === "done") {
+          next[k] = { ...next[k], approved: true };
+        }
+      }
+      return next;
+    });
+  }
+
+  function rejectAllDrafts() {
+    setBulkDrafts(prev => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (next[k].status === "done") {
+          next[k] = { ...next[k], approved: false };
+        }
+      }
+      return next;
+    });
   }
 
   async function loadPromptDiff(run: PromptRun) {
@@ -2635,6 +2693,10 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               handleSelectAllToggle={handleSelectAllToggle}
               runBulkDrafting={runBulkDrafting}
               createSelectedStubs={createSelectedStubs}
+              approveDraft={approveDraft}
+              rejectDraft={rejectDraft}
+              approveAllDrafts={approveAllDrafts}
+              rejectAllDrafts={rejectAllDrafts}
               draftStubNote={draftStubNote}
               onSelectNote={selectNote}
               onRefreshVault={async () => { await refreshVault(activePath); }}
