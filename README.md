@@ -47,7 +47,7 @@ Implemented so far:
 - Route LLM chat messages and embeddings via Rust backend Tauri commands using `reqwest` to bypass CORS restrictions and eliminate client-side headers like `dangerously-allow-browser`
 - Query available model lists dynamically from providers (Ollama, OpenAI, Gemini, LM Studio) directly from the backend
 - Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`Sidebar`, `EditorToolbar`, `InspectorPanel`, `LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
-- Render unresolved (dead) page links as dashed gray "ghost nodes" in the Graph View, connect them with deduplicated edges, and show a dedicated graph toolbar banner for opening the Dead Links scanner or drafting AI stubs
+- Render unresolved (dead) page links as dashed gray "ghost nodes" in the Graph View, connect them with deduplicated edges, and provide a review-first "Dead Link Resolution Workspace" to review, edit, approve/reject, and bulk-create draft stubs
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.
