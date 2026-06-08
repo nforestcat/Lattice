@@ -941,6 +941,13 @@ Return the complete note content including any YAML frontmatter block at the ver
     setSelectedUnresolvedTargets(new Set([displayName]));
   }
 
+  function selectUnresolvedTarget(normalizedTargetRef: string) {
+    setActiveUnresolvedTarget(normalizedTargetRef);
+    setActivePath(null);
+    setDocument(null);
+    setDraft("");
+  }
+
   async function draftUnresolvedTarget(normalizedTargetRef: string) {
     let currentLinks = unresolvedLinks;
     if (currentLinks.length === 0) {
@@ -2576,6 +2583,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
                 onDeleteLink={(targetPath) => activePath && void deleteGraphLink(activePath, targetPath)}
                 activeUnresolvedTarget={activeUnresolvedTarget}
                 unresolvedLinks={unresolvedLinks}
+                onSelectUnresolved={selectUnresolvedTarget}
                 onOpenUnresolved={openUnresolvedTarget}
                 onDraftUnresolved={draftUnresolvedTarget}
               />

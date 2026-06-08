@@ -2167,5 +2167,55 @@ participants: Antigravity, User
     readNoteSpy.mockRestore();
     vi.unstubAllGlobals();
   });
+
+  it("selects graph ghost nodes in place and keeps them out of link management dropdowns", async () => {
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+
+    const getGraphSpy = vi.spyOn(vaultApi, "getGraph").mockResolvedValue({
+      nodes: [
+        { id: "Home.md", label: "Home", tags: [], kind: "note" },
+        { id: "unresolved:missing page", label: "Missing Page", tags: [], kind: "unresolved" }
+      ],
+      edges: [
+        { id: "Home.md->unresolved:missing page", source: "Home.md", target: "unresolved:missing page", isManaged: false }
+      ],
+      focusedPath: "Home.md"
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+
+    const getGraphNode = (path: string) => document.querySelector(`[data-testid="rf__node-${path}"]`);
+    await waitFor(() => expect(getGraphNode("unresolved:missing page")).toBeTruthy());
+
+    const selects = Array.from(document.querySelectorAll("select")) as HTMLSelectElement[];
+    const graphSelects = selects.filter((select) => {
+      const first = select.querySelector("option")?.textContent;
+      return first === "Add link from current note" || first === "Remove managed link";
+    });
+    expect(graphSelects.length).toBe(2);
+    for (const select of graphSelects) {
+      const optionValues = Array.from(select.querySelectorAll("option")).map((option) => option.value);
+      expect(optionValues).not.toContain("unresolved:missing page");
+    }
+
+    fireEvent.click(getGraphNode("unresolved:missing page")!);
+
+    await waitFor(() => expect(screen.getByText("Unresolved Page")).toBeTruthy());
+    expect(screen.getAllByText(/Missing Page/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Open in Auditor" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Draft AI Stub" })).toBeTruthy();
+    expect(screen.queryByText("Wiki Health Scorecard")).toBeNull();
+
+    getGraphSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
 });
 

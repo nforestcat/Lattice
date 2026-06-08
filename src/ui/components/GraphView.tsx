@@ -14,6 +14,7 @@ export function GraphView(props: {
   onDeleteLink(path: string): void;
   activeUnresolvedTarget: string | null;
   unresolvedLinks: UnresolvedLinkGroup[];
+  onSelectUnresolved(target: string): void;
   onOpenUnresolved(target: string): void;
   onDraftUnresolved(target: string): void;
 }) {
@@ -288,12 +289,13 @@ export function GraphView(props: {
   const onNodeClick = useCallback((_: unknown, node: Node) => {
     if (node.id.startsWith("unresolved:")) {
       const normalizedTarget = node.id.replace("unresolved:", "");
-      props.onOpenUnresolved(normalizedTarget);
+      props.onSelectUnresolved(normalizedTarget);
     } else {
       props.onOpen(node.id);
     }
   }, [props]);
   const otherNodes = props.graph.nodes
+    .filter((node) => node.kind !== "unresolved")
     .filter((node) => node.id !== props.activePath)
     .filter((node) => visibleNodeIds.has(node.id));
 
