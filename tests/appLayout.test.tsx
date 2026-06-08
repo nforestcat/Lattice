@@ -1515,6 +1515,103 @@ describe("App layout", () => {
     getUnresolvedLinksSpy.mockRestore();
   });
 
+  it("keeps failed bulk stub creations available for retry", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" }
+      ],
+      tree: []
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links.",
+      revision: "rev-123"
+    });
+
+    const getVaultConfigSpy = vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({
+      llmConfig: { provider: "openai", apiKey: "test-key", model: "gpt-4o" }
+    });
+
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue("This is the drafted AI stub note content.");
+
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockImplementation(async (_dir, name) => ({
+      vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+      selectedPath: `${name}.md`
+    }));
+
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote")
+      .mockResolvedValueOnce({
+        saved: true,
+        revision: "rev-456",
+        conflict: false,
+        snapshotId: null,
+        gitCommit: null
+      })
+      .mockResolvedValueOnce({
+        saved: false,
+        revision: "rev-789",
+        conflict: false,
+        snapshotId: null,
+        gitCommit: null
+      });
+
+    const getUnresolvedLinksSpy = vi.spyOn(vaultApi, "getUnresolvedLinks").mockResolvedValue([
+      {
+        target: "Missing One",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links." }
+        ]
+      },
+      {
+        target: "Missing Two",
+        sources: [
+          { path: "Home.md", title: "Home", excerpt: "Welcome, see the [[Missing One]] and [[Missing Two]] dead links." }
+        ]
+      }
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wiki Auditor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dead Links Scanner" }));
+
+    await waitFor(() => expect(screen.getByText("[[Missing One]]")).toBeTruthy());
+    const selectAllCheckbox = document.querySelector(".bulkActionsBar input[type='checkbox']") as HTMLInputElement;
+    fireEvent.click(selectAllCheckbox);
+    fireEvent.click(screen.getByRole("button", { name: "Draft Selected (2)" }));
+
+    await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(document.querySelectorAll(".reviewBadge.approved").length).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "Create Approved (2)" }));
+
+    await waitFor(() => {
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wiki Auditor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dead Links Scanner" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create Approved (1)" })).toBeTruthy());
+
+    const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
+    expect(textareas.length).toBe(1);
+    expect(textareas[0].value).toBe("This is the drafted AI stub note content.");
+
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getVaultConfigSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
+    getUnresolvedLinksSpy.mockRestore();
+  });
+
   it("allows individual approval and rejection of drafts before creation", async () => {
     const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
       rootPath: "Demo Vault",

@@ -2067,8 +2067,11 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   }
 
   async function runBulkDrafting() {
-    // Only draft stubs that do not already have a successful draft to avoid overwriting user edits
-    const targets = Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status !== "done");
+    // Preserve approved drafts so user edits are not overwritten, but allow rejected drafts to be regenerated.
+    const targets = Array.from(selectedUnresolvedTargets).filter(t => {
+      const draft = bulkDrafts[t];
+      return !(draft?.status === "done" && draft.approved);
+    });
     if (targets.length === 0) {
       setStatus("No new stubs to draft");
       return;
@@ -2126,6 +2129,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
     setStatus(`Creating ${targets.length} note(s)...`);
     let successCount = 0;
+    const createdTargets: string[] = [];
     try {
       for (const target of targets) {
         const draft = bulkDrafts[target];
@@ -2135,8 +2139,12 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
           const result = await vaultApi.createNote(null, target);
           const newPath = result.selectedPath;
           if (newPath) {
-            await vaultApi.saveNote(newPath, draft.content, "");
+            const saveResult = await vaultApi.saveNote(newPath, draft.content, "");
+            if (!saveResult.saved) {
+              throw new Error("Failed to save stub content");
+            }
             successCount++;
+            createdTargets.push(target);
             
             // Clear activeUnresolvedTarget if this created note was the active ghost
             if (activeUnresolvedTarget && normalizeRef(target) === activeUnresolvedTarget) {
@@ -2152,12 +2160,12 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       
       // Keep rejected/unprocessed targets in selection, remove successfully created ones
       const remainingTargets = new Set(selectedUnresolvedTargets);
-      targets.forEach(t => remainingTargets.delete(t));
+      createdTargets.forEach(t => remainingTargets.delete(t));
       setSelectedUnresolvedTargets(remainingTargets);
       
       // Clean up successfully created drafts
       const remainingDrafts = { ...bulkDrafts };
-      targets.forEach(t => delete remainingDrafts[t]);
+      createdTargets.forEach(t => delete remainingDrafts[t]);
       setBulkDrafts(remainingDrafts);
       
       if (vault) {
