@@ -379,9 +379,9 @@ fn save_api_key(app_handle: tauri::AppHandle, provider: String, key: String) -> 
 }
 
 #[tauri::command]
-fn get_api_key(app_handle: tauri::AppHandle, provider: String) -> Result<Option<String>, String> {
+fn get_api_key(app_handle: tauri::AppHandle, provider: String) -> Result<String, String> {
     let secrets = load_secrets(&app_handle);
-    Ok(secrets.api_keys.get(&provider).cloned())
+    Ok(secrets.api_keys.get(&provider).cloned().unwrap_or_default())
 }
 
 #[tauri::command]
@@ -448,8 +448,9 @@ async fn send_llm_chat_message(
                 .map_err(|e| format!("API fetch error: {}", e))?;
                 
             if !response.status().is_success() {
+                let status = response.status();
                 let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("API error status {}: {}", response.status(), err_text));
+                return Err(format!("API error status {}: {}", status, err_text));
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
@@ -490,8 +491,9 @@ async fn send_llm_chat_message(
                 .map_err(|e| format!("Gemini API fetch error: {}", e))?;
                 
             if !response.status().is_success() {
+                let status = response.status();
                 let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("Gemini API error status {}: {}", response.status(), err_text));
+                return Err(format!("Gemini API error status {}: {}", status, err_text));
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
@@ -531,8 +533,9 @@ async fn send_llm_chat_message(
                 .map_err(|e| format!("Anthropic API fetch error: {}", e))?;
                 
             if !response.status().is_success() {
+                let status = response.status();
                 let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("Anthropic API error status {}: {}", response.status(), err_text));
+                return Err(format!("Anthropic API error status {}: {}", status, err_text));
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
@@ -620,8 +623,9 @@ async fn get_llm_embedding(
                 .map_err(|e| format!("Embedding fetch error: {}", e))?;
                 
             if !response.status().is_success() {
+                let status = response.status();
                 let err_text = response.text().await.unwrap_or_default();
-                return Err(format!("Embedding status error {}: {}", response.status(), err_text));
+                return Err(format!("Embedding status error {}: {}", status, err_text));
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
