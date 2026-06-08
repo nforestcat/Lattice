@@ -1,9 +1,13 @@
-import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup } from "../../api/types";
+import { useState, useEffect } from "react";
+import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport } from "../../api/types";
 import type { ChatMessage } from "../../api/llm";
 import { vaultApi } from "../../api";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
+import { sendChatMessage } from "../../api/llm";
 
 interface DistillWorkspaceProps {
+  onSelectNote?: (path: string) => Promise<void>;
+  onRefreshVault?: () => Promise<void>;
   vault: VaultSnapshot | null;
   activePath: string | null;
   llmConfig: LlmConfig;
@@ -96,7 +100,70 @@ export function DistillWorkspace({
   runBulkDrafting,
   createSelectedStubs,
   draftStubNote,
+  onSelectNote,
+  onRefreshVault,
 }: DistillWorkspaceProps) {
+  const [healthReports, setHealthReports] = useState<NoteHealthReport[]>([]);
+  const [isScanningHealth, setIsScanningHealth] = useState(false);
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+  const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
+  const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
+
+  const runHealthAudit = async () => {
+    setIsScanningHealth(true);
+    try {
+      const reports = await vaultApi.getWikiHealthReport();
+      reports.sort((a, b) => a.score - b.score);
+      setHealthReports(reports);
+    } catch (e) {
+      console.error("Failed to run health audit", e);
+    } finally {
+      setIsScanningHealth(false);
+    }
+  };
+
+  const handleGenerateSummary = async (path: string) => {
+    setGeneratingSummaryPath(path);
+    setStatus(`Reading note ${path}...`);
+    try {
+      const doc = await vaultApi.readNote(path);
+      setStatus(`Generating summary for ${path} using LLM...`);
+      const prompt = `Below is the content of a wiki note. Please write a concise, one-sentence summary of this note to be stored in its frontmatter. Return ONLY the summary text, with no preamble, no markdown formatting, and no quotes.\n\nNote Content:\n${doc.content}`;
+      
+      const summary = await sendChatMessage(llmConfig, [
+        { role: "user", content: prompt }
+      ]);
+      
+      const cleanSummary = summary.replace(/^["'\s]+|["'\s]+$/g, "").trim();
+      setStatus(`Applying summary to frontmatter of ${path}...`);
+      await vaultApi.applyNoteMetadata(path, { summary: cleanSummary }, []);
+      setStatus(`Successfully summarized and updated frontmatter for ${path}!`);
+      
+      await runHealthAudit();
+      if (onRefreshVault) {
+        await onRefreshVault();
+      }
+    } catch (e) {
+      console.error(e);
+      setStatus(`Failed to generate summary: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGeneratingSummaryPath(null);
+    }
+  };
+
+  const handleFindLinkSuggestions = async (path: string) => {
+    if (onSelectNote) {
+      await onSelectNote(path);
+    }
+    setStatus(`Selected note ${path} to inspect link recommendations.`);
+  };
+
+  useEffect(() => {
+    if (distillTab === "auditor") {
+      void runHealthAudit();
+    }
+  }, [distillTab, vault?.rootPath]);
+
   return (
     <section className="distillSurface">
       <div className="distillWorkspaceLayout">
@@ -119,6 +186,7 @@ export function DistillWorkspace({
               onClick={() => {
                 setDistillTab("auditor");
                 void runUnresolvedLinksScan();
+                void runHealthAudit();
               }}
             >
               Wiki Auditor
@@ -278,159 +346,345 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
               </div>
             </div>
           )}
-
-          {distillTab === "auditor" && (
+               {distillTab === "auditor" && (
             <div className="distillAuditorArea">
-              <div className="auditorHeader">
-                <h3>Wiki Link Auditor</h3>
+              <div className="auditorHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <h3>Wiki Auditor</h3>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    className="smallButton"
+                    disabled={isScanningHealth || isScanningUnresolved}
+                    onClick={() => {
+                      void runUnresolvedLinksScan();
+                      void runHealthAudit();
+                    }}
+                  >
+                    {isScanningHealth || isScanningUnresolved ? "Scanning..." : "Re-Scan Vault"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="auditorSubTabs" style={{ display: "flex", gap: "12px", borderBottom: "1px solid #e2e8f0", marginBottom: "16px", paddingBottom: "8px" }}>
                 <button
                   type="button"
-                  className="smallButton"
-                  disabled={isScanningUnresolved}
-                  onClick={() => void runUnresolvedLinksScan()}
+                  className={`subTabButton ${auditorSubTab === "health" ? "active" : ""}`}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    borderBottom: auditorSubTab === "health" ? "2px solid #2563eb" : "2px solid transparent",
+                    padding: "6px 12px",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    color: auditorSubTab === "health" ? "#2563eb" : "#475569"
+                  }}
+                  onClick={() => setAuditorSubTab("health")}
                 >
-                  {isScanningUnresolved ? "Scanning..." : "Re-Scan Vault"}
+                  Wiki Health Scorecard
+                </button>
+                <button
+                  type="button"
+                  className={`subTabButton ${auditorSubTab === "links" ? "active" : ""}`}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    borderBottom: auditorSubTab === "links" ? "2px solid #2563eb" : "2px solid transparent",
+                    padding: "6px 12px",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    color: auditorSubTab === "links" ? "#2563eb" : "#475569"
+                  }}
+                  onClick={() => setAuditorSubTab("links")}
+                >
+                  Dead Links Scanner
                 </button>
               </div>
 
-              {isScanningUnresolved && (
-                <div className="auditorLoading">
-                  <span className="spinner">⌛</span> Scanning all vault notes for unresolved wiki links...
-                </div>
-              )}
-
-              {!isScanningUnresolved && (
-                <div className="unresolvedLinksList">
-                  {unresolvedLinks.length === 0 ? (
-                    <div className="auditorSuccessState">
-                      <span className="successCheck">✓</span>
-                      <p>All wiki links are resolved! No dead links found in the vault.</p>
+              {auditorSubTab === "health" && (
+                <div className="healthScorecardSection">
+                  {isScanningHealth ? (
+                    <div className="auditorLoading">
+                      <span className="spinner">⌛</span> Auditing vault health & quality metrics...
                     </div>
                   ) : (
                     <>
-                      <p className="hint" style={{ marginBottom: "12px" }}>
-                        The following wiki links exist in note contents but do not resolve to any existing note file. Select links to draft and resolve stubs in bulk.
-                      </p>
+                      {(() => {
+                        const averageScore = healthReports.length > 0
+                          ? Math.round(healthReports.reduce((acc, r) => acc + r.score, 0) / healthReports.length)
+                          : 100;
+                        const unhealthyNotes = healthReports.filter(r => r.score < 100).length;
 
-                      <div className="bulkActionsBar">
-                        <label className="checkboxLabel">
-                          <input
-                            type="checkbox"
-                            checked={unresolvedLinks.length > 0 && selectedUnresolvedTargets.size === unresolvedLinks.length}
-                            onChange={handleSelectAllToggle}
-                            disabled={isBulkProcessing}
-                          />
-                          <span>Select All ({selectedUnresolvedTargets.size} / {unresolvedLinks.length})</span>
-                        </label>
-                        <div className="bulkActionButtons">
-                          <button
-                            type="button"
-                            className="smallButton primary"
-                            disabled={selectedUnresolvedTargets.size === 0 || isBulkProcessing}
-                            onClick={() => void runBulkDrafting()}
-                          >
-                            {isBulkProcessing ? "Drafting..." : `Draft Selected (${selectedUnresolvedTargets.size})`}
-                          </button>
-                          <button
-                            type="button"
-                            className="smallButton successButton"
-                            disabled={
-                              selectedUnresolvedTargets.size === 0 ||
-                              isBulkProcessing ||
-                              Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done").length === 0
-                            }
-                            onClick={() => void createSelectedStubs()}
-                          >
-                            Create Selected
-                          </button>
-                          {Object.keys(bulkDrafts).length > 0 && (
-                            <button
-                              type="button"
-                              className="smallButton"
-                              disabled={isBulkProcessing}
-                              onClick={() => {
-                                setBulkDrafts({});
-                                setSelectedUnresolvedTargets(new Set());
-                              }}
-                            >
-                              Clear Drafts
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {unresolvedLinks.map((item) => {
-                        const draftState = bulkDrafts[item.target];
                         return (
-                          <div key={item.target} className="unresolvedLinkCard">
-                            <div className="unresolvedLinkHeader">
-                              <label className="checkboxLabel">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedUnresolvedTargets.has(item.target)}
-                                  onChange={(e) => {
-                                    const next = new Set(selectedUnresolvedTargets);
-                                    if (e.target.checked) {
-                                      next.add(item.target);
-                                    } else {
-                                      next.delete(item.target);
-                                    }
-                                    setSelectedUnresolvedTargets(next);
-                                  }}
-                                  disabled={isBulkProcessing}
-                                />
-                                <strong>[[{item.target}]]</strong>
-                              </label>
-
-                              <div className="cardHeaderActions">
-                                {draftState?.status === "drafting" && <span className="statusText drafting">⌛ Drafting...</span>}
-                                {draftState?.status === "done" && <span className="statusText success">✓ Draft Ready</span>}
-                                {draftState?.status === "error" && <span className="statusText error">❌ Failed</span>}
-
-                                {!draftState && (
-                                  <button
-                                    type="button"
-                                    className="smallButton primary"
-                                    disabled={isBulkProcessing}
-                                    onClick={() => void draftStubNote(item.target, item.sources)}
-                                  >
-                                    Draft Stub
-                                  </button>
-                                )}
+                          <>
+                            <div className="healthStatsContainer" style={{ display: "flex", gap: "16px", marginBottom: "20px" }}>
+                              <div className="healthStatCard" style={{ flex: 1, padding: "16px", borderRadius: "8px", border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", textAlign: "center" }}>
+                                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>Global Health Score</div>
+                                <div style={{ fontSize: "32px", fontWeight: 800, color: averageScore >= 90 ? "#10b981" : averageScore >= 70 ? "#d97706" : "#dc2626" }}>
+                                  {averageScore}%
+                                </div>
+                              </div>
+                              <div className="healthStatCard" style={{ flex: 1, padding: "16px", borderRadius: "8px", border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", textAlign: "center" }}>
+                                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>Notes Scanned</div>
+                                <div style={{ fontSize: "32px", fontWeight: 800, color: "#1e293b" }}>
+                                  {healthReports.length}
+                                </div>
+                              </div>
+                              <div className="healthStatCard" style={{ flex: 1, padding: "16px", borderRadius: "8px", border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", textAlign: "center" }}>
+                                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>Issues Pending</div>
+                                <div style={{ fontSize: "32px", fontWeight: 800, color: unhealthyNotes > 0 ? "#d97706" : "#10b981" }}>
+                                  {unhealthyNotes}
+                                </div>
                               </div>
                             </div>
 
-                            {draftState?.status === "done" && (
-                              <div className="cardDraftPreview">
-                                <textarea
-                                  className="stubPreviewTextarea"
-                                  value={draftState.content}
-                                  onChange={(e) => {
-                                    setBulkDrafts(prev => ({
-                                      ...prev,
-                                      [item.target]: { ...prev[item.target], content: e.target.value }
-                                    }));
-                                  }}
-                                  placeholder="Edit drafted stub content..."
-                                />
-                              </div>
-                            )}
-
-                            <div className="unresolvedLinkSources">
-                              <span>Referenced in:</span>
-                              {item.sources.map((source) => (
-                                <div key={source.path} className="sourceExcerptCard">
-                                  <div className="sourceTitle">
-                                    {source.title} (<code>{source.path}</code>)
-                                  </div>
-                                  <pre className="sourceExcerpt">{source.excerpt}</pre>
+                            <div className="healthReportsList" style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                              {healthReports.length === 0 ? (
+                                <div style={{ textAlign: "center", padding: "24px", color: "#64748b" }}>
+                                  No notes found in this vault to audit.
                                 </div>
-                              ))}
+                              ) : (
+                                healthReports.map((report) => {
+                                  const isExpanded = expandedNotes.has(report.path);
+                                  return (
+                                    <div key={report.path} className="healthReportCard" style={{ border: "1px solid #e2e8f0", borderRadius: "8px", padding: "14px", backgroundColor: "#ffffff" }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                                          <span style={{ fontWeight: 600, fontSize: "14px", color: "#0f172a" }}>{report.title}</span>
+                                          <span style={{ fontSize: "11px", color: "#64748b", fontFamily: "monospace" }}>{report.path}</span>
+                                        </div>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                                          <span style={{
+                                            fontSize: "12px",
+                                            fontWeight: 700,
+                                            padding: "3px 10px",
+                                            borderRadius: "12px",
+                                            backgroundColor: report.score >= 90 ? "#ecfdf5" : report.score >= 70 ? "#fffbeb" : "#fef2f2",
+                                            color: report.score >= 90 ? "#047857" : report.score >= 70 ? "#b45309" : "#b91c1c",
+                                            border: `1px solid ${report.score >= 90 ? "#a7f3d0" : report.score >= 70 ? "#fde68a" : "#fca5a5"}`
+                                          }}>
+                                            {report.score}/100
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="smallButton"
+                                            onClick={() => {
+                                              const next = new Set(expandedNotes);
+                                              if (next.has(report.path)) {
+                                                next.delete(report.path);
+                                              } else {
+                                                next.add(report.path);
+                                              }
+                                              setExpandedNotes(next);
+                                            }}
+                                          >
+                                            {isExpanded ? "Hide Details" : `Issues (${report.issues.length})`}
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {isExpanded && (
+                                        <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed #e2e8f0" }}>
+                                          {report.issues.length === 0 ? (
+                                            <div style={{ fontSize: "12px", color: "#10b981", fontWeight: 600, marginBottom: "8px" }}>
+                                              ✓ No quality issues detected for this note.
+                                            </div>
+                                          ) : (
+                                            <ul style={{ margin: "0 0 14px 0", paddingLeft: "18px", fontSize: "12px", color: "#475569", lineHeight: "1.5" }}>
+                                              {report.issues.map((issue, idx) => (
+                                                <li key={idx} style={{ marginBottom: "6px" }}>{issue}</li>
+                                              ))}
+                                            </ul>
+                                          )}
+
+                                          <div style={{ display: "flex", gap: "8px" }}>
+                                            {report.missingSummary && (
+                                              <button
+                                                type="button"
+                                                className="smallButton primary"
+                                                disabled={generatingSummaryPath === report.path}
+                                                onClick={() => void handleGenerateSummary(report.path)}
+                                              >
+                                                {generatingSummaryPath === report.path ? "Generating..." : "Generate Summary"}
+                                              </button>
+                                            )}
+                                            <button
+                                              type="button"
+                                              className="smallButton"
+                                              onClick={() => void handleFindLinkSuggestions(report.path)}
+                                            >
+                                              Find Link Suggestions
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="smallButton"
+                                              onClick={async () => {
+                                                if (onSelectNote) {
+                                                  await onSelectNote(report.path);
+                                                }
+                                              }}
+                                            >
+                                              Open Note
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {auditorSubTab === "links" && (
+                <div className="unresolvedLinksSection">
+                  {isScanningUnresolved && (
+                    <div className="auditorLoading">
+                      <span className="spinner">⌛</span> Scanning all vault notes for unresolved wiki links...
+                    </div>
+                  )}
+
+                  {!isScanningUnresolved && (
+                    <div className="unresolvedLinksList">
+                      {unresolvedLinks.length === 0 ? (
+                        <div className="auditorSuccessState">
+                          <span className="successCheck">✓</span>
+                          <p>All wiki links are resolved! No dead links found in the vault.</p>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="hint" style={{ marginBottom: "12px" }}>
+                            The following wiki links exist in note contents but do not resolve to any existing note file. Select links to draft and resolve stubs in bulk.
+                          </p>
+
+                          <div className="bulkActionsBar">
+                            <label className="checkboxLabel">
+                              <input
+                                type="checkbox"
+                                checked={unresolvedLinks.length > 0 && selectedUnresolvedTargets.size === unresolvedLinks.length}
+                                onChange={handleSelectAllToggle}
+                                disabled={isBulkProcessing}
+                              />
+                              <span>Select All ({selectedUnresolvedTargets.size} / {unresolvedLinks.length})</span>
+                            </label>
+                            <div className="bulkActionButtons">
+                              <button
+                                type="button"
+                                className="smallButton primary"
+                                disabled={selectedUnresolvedTargets.size === 0 || isBulkProcessing}
+                                onClick={() => void runBulkDrafting()}
+                              >
+                                {isBulkProcessing ? "Drafting..." : `Draft Selected (${selectedUnresolvedTargets.size})`}
+                              </button>
+                              <button
+                                type="button"
+                                className="smallButton successButton"
+                                disabled={
+                                  selectedUnresolvedTargets.size === 0 ||
+                                  isBulkProcessing ||
+                                  Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done").length === 0
+                                }
+                                onClick={() => void createSelectedStubs()}
+                              >
+                                Create Selected
+                              </button>
+                              {Object.keys(bulkDrafts).length > 0 && (
+                                <button
+                                  type="button"
+                                  className="smallButton"
+                                  disabled={isBulkProcessing}
+                                  onClick={() => {
+                                    setBulkDrafts({});
+                                    setSelectedUnresolvedTargets(new Set());
+                                  }}
+                                >
+                                  Clear Drafts
+                                </button>
+                              )}
                             </div>
                           </div>
-                        );
-                      })}
-                    </>
+
+                          {unresolvedLinks.map((item) => {
+                            const draftState = bulkDrafts[item.target];
+                            return (
+                              <div key={item.target} className="unresolvedLinkCard">
+                                <div className="unresolvedLinkHeader">
+                                  <label className="checkboxLabel">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedUnresolvedTargets.has(item.target)}
+                                      onChange={(e) => {
+                                        const next = new Set(selectedUnresolvedTargets);
+                                        if (e.target.checked) {
+                                          next.add(item.target);
+                                        } else {
+                                          next.delete(item.target);
+                                        }
+                                        setSelectedUnresolvedTargets(next);
+                                      }}
+                                      disabled={isBulkProcessing}
+                                    />
+                                    <strong>[[{item.target}]]</strong>
+                                  </label>
+
+                                  <div className="cardHeaderActions">
+                                    {draftState?.status === "drafting" && <span className="statusText drafting">⌛ Drafting...</span>}
+                                    {draftState?.status === "done" && <span className="statusText success">✓ Draft Ready</span>}
+                                    {draftState?.status === "error" && <span className="statusText error">❌ Failed</span>}
+
+                                    {!draftState && (
+                                      <button
+                                        type="button"
+                                        className="smallButton primary"
+                                        disabled={isBulkProcessing}
+                                        onClick={() => void draftStubNote(item.target, item.sources)}
+                                      >
+                                        Draft Stub
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {draftState?.status === "done" && (
+                                  <div className="cardDraftPreview">
+                                    <textarea
+                                      className="stubPreviewTextarea"
+                                      value={draftState.content}
+                                      onChange={(e) => {
+                                        setBulkDrafts(prev => ({
+                                          ...prev,
+                                          [item.target]: { ...prev[item.target], content: e.target.value }
+                                        }));
+                                      }}
+                                      placeholder="Edit drafted stub content..."
+                                    />
+                                  </div>
+                                )}
+
+                                <div className="unresolvedLinkSources">
+                                  <span>Referenced in:</span>
+                                  {item.sources.map((source) => (
+                                    <div key={source.path} className="sourceExcerptCard">
+                                      <div className="sourceTitle">
+                                        {source.title} (<code>{source.path}</code>)
+                                      </div>
+                                      <pre className="sourceExcerpt">{source.excerpt}</pre>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

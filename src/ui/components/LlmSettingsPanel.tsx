@@ -30,6 +30,17 @@ export function LlmSettingsPanel({
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
+  const getModelPlaceholder = (provider: LlmProvider) => {
+    switch (provider) {
+      case "openai": return "e.g. gpt-4o, gpt-4-turbo";
+      case "anthropic": return "e.g. claude-3-5-sonnet-latest";
+      case "gemini": return "e.g. gemini-1.5-pro, gemini-1.5-flash";
+      case "ollama": return "e.g. llama3, mistral, phi3";
+      case "lm-studio": return "e.g. qwen2.5-coder-7b";
+      default: return "e.g. gpt-4o, llama3";
+    }
+  };
+
   async function fetchModels() {
     setIsFetchingModels(true);
     setStatus(`Fetching models for ${llmConfig.provider}...`);
@@ -58,14 +69,6 @@ export function LlmSettingsPanel({
           value={llmConfig.provider}
           onChange={(e) => {
             const prov = e.target.value as LlmProvider;
-            const defaultModels: Record<LlmProvider, string> = {
-              openai: "gpt-4o",
-              anthropic: "claude-3-5-sonnet-20240620",
-              gemini: "gemini-1.5-pro",
-              ollama: "llama3",
-              custom: "gpt-4o",
-              "lm-studio": "qwen2.5-coder-7b"
-            };
             const defaultBases: Record<LlmProvider, string> = {
               openai: "",
               anthropic: "",
@@ -78,7 +81,7 @@ export function LlmSettingsPanel({
               ...prev,
               provider: prov,
               apiKey: readStoredLlmApiKey(prov),
-              model: defaultModels[prov],
+              model: prev.model,
               baseUrl: defaultBases[prov] || undefined
             }));
             setAvailableModels([]);
@@ -120,7 +123,7 @@ export function LlmSettingsPanel({
           type="text"
           value={llmConfig.model}
           onChange={(e) => setLlmConfig(prev => ({ ...prev, model: e.target.value }))}
-          placeholder="e.g. gpt-4o, llama3"
+          placeholder={getModelPlaceholder(llmConfig.provider)}
           list="available-models-list"
         />
         <datalist id="available-models-list">

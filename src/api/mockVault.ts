@@ -22,7 +22,8 @@ import type {
   VaultConfig,
   UnresolvedLinkGroup,
   ProposedEdit,
-  BacklinkSuggestion
+  BacklinkSuggestion,
+  NoteHealthReport
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
@@ -725,6 +726,109 @@ export function createMockVaultApi(): VaultApi {
       } else {
         return [];
       }
+    },
+    async getWikiHealthReport(): Promise<NoteHealthReport[]> {
+      const linkedPaths = new Set<string>();
+      for (const note of index.notes) {
+        for (const link of note.links) {
+          if (link.resolvedPath) {
+            linkedPaths.add(link.resolvedPath);
+          }
+        }
+      }
+
+      const now = new Date();
+      const reports: NoteHealthReport[] = [];
+
+      for (const note of index.notes) {
+        if (note.path.endsWith(".lattice-folder.md")) {
+          continue;
+        }
+
+        const issues: string[] = [];
+        let isOrphan = false;
+        let isStale = false;
+        let isTooBroad = false;
+        let isDuplicated = false;
+        let missingSummary = false;
+        let weakBacklinks = false;
+
+        // 1. Orphan check
+        if (note.path !== "Home.md" && !linkedPaths.has(note.path)) {
+          isOrphan = true;
+          issues.push("Orphan note: No other notes link to this note.");
+        }
+
+        // 2. Stale check
+        if (note.modifiedAt) {
+          const modTime = new Date(note.modifiedAt);
+          const diffTime = Math.abs(now.getTime() - modTime.getTime());
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          if (diffDays > 30) {
+            isStale = true;
+            issues.push(`Stale: Last modified ${diffDays} days ago.`);
+          }
+        }
+
+        // 3. Too broad check
+        if (note.content.length > 5000) {
+          isTooBroad = true;
+          issues.push(`Too broad: Content length is very high (${note.content.length} characters). Consider splitting.`);
+        }
+
+        // 4. Missing summary check
+        if (!note.frontmatter || !("summary" in note.frontmatter)) {
+          missingSummary = true;
+          issues.push("Missing summary: Note does not have a 'summary' property in its frontmatter.");
+        }
+
+        // 5. Weak backlinks check
+        const resolvedOutLinksCount = note.links.filter((l) => l.resolvedPath).length;
+        const backlinkCount = index.notes
+          .filter((n) => n.path !== note.path)
+          .filter((n) => n.links.some((l) => l.resolvedPath === note.path))
+          .length;
+        if (resolvedOutLinksCount > 3 && backlinkCount === 0) {
+          weakBacklinks = true;
+          issues.push("Weak backlinks: Note references multiple pages but has no backlinks.");
+        }
+
+        // 6. Duplicate check
+        for (const other of index.notes) {
+          if (other.path !== note.path) {
+            if (other.content.trim() === note.content.trim() && note.content.trim().length > 0) {
+              isDuplicated = true;
+              issues.push(`Duplicate content: Identical to note [[${other.title}]].`);
+              break;
+            }
+          }
+        }
+
+        // Compute quality score
+        let score = 100;
+        if (isOrphan) score -= 15;
+        if (isStale) score -= 10;
+        if (isTooBroad) score -= 15;
+        if (isDuplicated) score -= 30;
+        if (missingSummary) score -= 15;
+        if (weakBacklinks) score -= 10;
+        if (score < 0) score = 0;
+
+        reports.push({
+          path: note.path,
+          title: note.title,
+          score,
+          issues,
+          isOrphan,
+          isStale,
+          isTooBroad,
+          isDuplicated,
+          missingSummary,
+          weakBacklinks
+        });
+      }
+
+      return reports;
     }
   };
 }

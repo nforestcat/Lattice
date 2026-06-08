@@ -18,7 +18,8 @@ import type {
   VaultConfig,
   UnresolvedLinkGroup,
   ProposedEdit,
-  BacklinkSuggestion
+  BacklinkSuggestion,
+  NoteHealthReport
 } from "./types";
 
 export function createTauriVaultApi(): VaultApi {
@@ -76,6 +77,7 @@ export function createTauriVaultApi(): VaultApi {
       invoke<void>("apply_note_metadata", { path, frontmatter, tags }),
     saveApiKey: (provider: string, key: string) => invoke<void>("save_api_key", { provider, key }),
     getApiKey: (provider: string) => invoke<string>("get_api_key", { provider }),
-    fetchProviderModels: (provider: string, baseUrl?: string) => invoke<string[]>("fetch_provider_models", { provider, baseUrl })
+    fetchProviderModels: (provider: string, baseUrl?: string) => invoke<string[]>("fetch_provider_models", { provider, baseUrl }),
+    getWikiHealthReport: () => invoke<NoteHealthReport[]>("get_wiki_health_report")
   };
 }

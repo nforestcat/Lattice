@@ -166,6 +166,20 @@ export type VaultApi = {
   saveApiKey(provider: string, key: string): Promise<void>;
   getApiKey(provider: string): Promise<string>;
   fetchProviderModels(provider: string, baseUrl?: string): Promise<string[]>;
+  getWikiHealthReport(): Promise<NoteHealthReport[]>;
+};
+
+export type NoteHealthReport = {
+  path: string;
+  title: string;
+  score: number;
+  issues: string[];
+  isOrphan: boolean;
+  isStale: boolean;
+  isTooBroad: boolean;
+  isDuplicated: boolean;
+  missingSummary: boolean;
+  weakBacklinks: boolean;
 };
 
 export type BacklinkSuggestion = {

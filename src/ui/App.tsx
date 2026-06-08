@@ -14,6 +14,9 @@ import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 import { GraphView } from "./components/GraphView";
 import { PromptHistoryPanel } from "./components/PromptHistoryPanel";
 import { DistillWorkspace } from "./components/DistillWorkspace";
+import { Sidebar } from "./components/Sidebar";
+import { InspectorPanel } from "./components/InspectorPanel";
+import { EditorToolbar } from "./components/EditorToolbar";
 
 export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
   {
@@ -2406,130 +2409,42 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
   return (
     <main className="workspace" style={themeStyles}>
-      <aside className="sidebar">
-        <div className="brand">
-          <strong>Lattice</strong>
-          <span>{vault?.rootPath ?? "No vault"}</span>
-        </div>
-        <button className="primary" onClick={() => void chooseVaultFolder()}>Open vault</button>
-        <SearchPanel
-          query={query}
-          tagFilter={tagFilter}
-          propertyFilter={propertyFilter}
-          tags={allTags}
-          searchMode={searchMode}
-          onSearchModeChange={(mode) => {
-            setSearchMode(mode);
-            void runSearch(query, tagFilter, propertyFilter, mode);
-          }}
-          onSubmit={() => {
-            void runSearch(query, tagFilter, propertyFilter);
-          }}
-          onQuery={(value) => {
-            setQuery(value);
-            if (searchMode === "keyword") {
-              void runSearch(value, tagFilter, propertyFilter);
-            }
-          }}
-          onTag={(value) => {
-            setTagFilter(value);
-            void runSearch(query, value, propertyFilter);
-          }}
-          onProperty={(value) => {
-            setPropertyFilter(value);
-            void runSearch(query, tagFilter, value);
-          }}
-        />
-        <section className="tree">
-          <div className="sectionHeader">
-            <h2>Files</h2>
-            <div className="inlineActions">
-              <button title="New note" onClick={() => void createNoteInCurrentFolder()}>+</button>
-              <button title="New folder" onClick={() => void createFolderInCurrentFolder()}>Folder</button>
-            </div>
-          </div>
-          {vault?.tree.map((node) => (
-            <TreeNode
-              key={node.path}
-              node={node}
-              activePath={activePath}
-              onSelect={(path) => void selectNote(path)}
-              onRename={(path) => void renameTreeEntry(path)}
-              onDelete={(path, kind) => void deleteTreeEntry(path, kind)}
-            />
-          ))}
-        </section>
-        <section className="results">
-          <h2>Search {searchMode === "semantic" ? "(Semantic)" : ""}</h2>
-          {isSearchingSemantic && (
-            <div className="searchLoadingText">
-              <span className="spinner">⌛</span> Searching semantically...
-            </div>
-          )}
-          {semanticSearchError && (
-            <div className="searchErrorText">{semanticSearchError}</div>
-          )}
-          {!isSearchingSemantic && results.length === 0 && query.trim() !== "" && (
-            <div className="muted" style={{ padding: "4px 0" }}>No notes found.</div>
-          )}
-          {!isSearchingSemantic && results.map((note) => (
-            <button key={note.path} className="result" onClick={() => void selectNote(note.path)}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-                <strong>{note.title}</strong>
-                {note.similarity !== undefined && (
-                  <span className="similarityBadge">
-                    {Math.round(note.similarity * 100)}% Match
-                  </span>
-                )}
-              </div>
-              <span>{note.path}</span>
-            </button>
-          ))}
-        </section>
-      </aside>
+      <Sidebar
+        vault={vault}
+        chooseVaultFolder={chooseVaultFolder}
+        query={query}
+        tagFilter={tagFilter}
+        propertyFilter={propertyFilter}
+        allTags={allTags}
+        searchMode={searchMode}
+        setSearchMode={setSearchMode}
+        runSearch={runSearch}
+        setQuery={setQuery}
+        setTagFilter={setTagFilter}
+        setPropertyFilter={setPropertyFilter}
+        createNoteInCurrentFolder={createNoteInCurrentFolder}
+        createFolderInCurrentFolder={createFolderInCurrentFolder}
+        activePath={activePath}
+        selectNote={selectNote}
+        renameTreeEntry={renameTreeEntry}
+        deleteTreeEntry={deleteTreeEntry}
+        isSearchingSemantic={isSearchingSemantic}
+        semanticSearchError={semanticSearchError}
+        results={results}
+      />
 
       <section className="editorPane">
-        <header className="topbar">
-          <div>
-            <strong>{viewMode === "distill" ? "LLM Distill Workspace" : (context?.note.title ?? "Select a note")}</strong>
-            <span>{viewMode === "distill" ? "Compounding Memory Pipeline" : activePath}</span>
-          </div>
-          <div className="segmented">
-            <button className={viewMode === "split" ? "active" : ""} onClick={() => setViewMode("split")}>Split</button>
-            <button className={viewMode === "edit" ? "active" : ""} onClick={() => setViewMode("edit")}>Edit</button>
-            <button className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>Preview</button>
-            <button className={viewMode === "graph" ? "active" : ""} onClick={() => setViewMode("graph")}>Graph</button>
-            <button className={viewMode === "distill" ? "active" : ""} onClick={() => setViewMode("distill")}>Distill</button>
-          </div>
-          {viewMode !== "distill" && activePath && (
-            <div className="templateSelectorContainer" style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
-              <select
-                className="templateSelect"
-                value=""
-                onChange={(e) => {
-                  const tName = e.target.value;
-                  if (tName) void autofillActiveNoteWithTemplate(tName);
-                }}
-                disabled={isAutofillingTemplate}
-                style={{
-                  fontSize: "12px",
-                  padding: "4px 8px",
-                  borderRadius: "6px",
-                  border: "1px solid #cbd5e1"
-                }}
-              >
-                <option value="">{isAutofillingTemplate ? "Autofilling..." : "Apply Template..."}</option>
-                {(vaultConfig.noteTemplates || DEFAULT_NOTE_TEMPLATES).map((t) => (
-                  <option key={t.name} value={t.name}>{t.name}</option>
-                ))}
-              </select>
-              <button className="primary" onClick={() => void saveActiveNote()}>Save</button>
-            </div>
-          )}
-          {viewMode !== "distill" && !activePath && (
-            <button className="primary" disabled>Save</button>
-          )}
-        </header>
+        <EditorToolbar
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          context={context}
+          activePath={activePath}
+          vaultConfig={vaultConfig}
+          DEFAULT_NOTE_TEMPLATES={DEFAULT_NOTE_TEMPLATES}
+          isAutofillingTemplate={isAutofillingTemplate}
+          autofillActiveNoteWithTemplate={autofillActiveNoteWithTemplate}
+          saveActiveNote={saveActiveNote}
+        />
 
         <div className={`editorWorkspace ${viewMode === "split" ? "split" : "single"}`}>
           {(viewMode === "split" || viewMode === "edit") && (
@@ -2628,417 +2543,63 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               runBulkDrafting={runBulkDrafting}
               createSelectedStubs={createSelectedStubs}
               draftStubNote={draftStubNote}
+              onSelectNote={selectNote}
+              onRefreshVault={async () => { await refreshVault(activePath); }}
             />
           )}
         </div>
       </section>
 
       <aside className="contextPane">
-        <section>
-          <h2>LLM Context</h2>
-          <div className="bundleSummary">
-            <span>{selectedContextCount}/{contextCandidates.length} notes</span>
-            <span>{selectedContextCharacters} chars</span>
-          </div>
-
-          <div className="budgetSection">
-            <div className="budgetsHeader">
-              <span>{selectedContextTokens.toLocaleString()} / {contextLimit.toLocaleString()} tokens</span>
-              <span className="budgetPercent">{Math.min(100, Math.round((selectedContextTokens / contextLimit) * 100))}%</span>
-            </div>
-            
-            <div className="progressBarOuter">
-              <div 
-                className={`progressBarInner ${selectedContextTokens > contextLimit ? "overLimit" : ""}`}
-                style={{ width: `${Math.min(100, (selectedContextTokens / contextLimit) * 100)}%` }}
-              />
-            </div>
-
-            {selectedContextTokens > contextLimit && (
-              <div className="budgetWarning">
-                <p style={{ margin: 0, marginBottom: "8px" }}>
-                  ⚠️ Exceeded target limit by {(selectedContextTokens - contextLimit).toLocaleString()} tokens.
-                </p>
-                <div className="warningActions">
-                  {contextCandidates.some((c) => selectedContextPaths.has(c.path) && c.reason === "Recommended") && (
-                    <button className="warningButton" onClick={() => void autoPruneCandidates()}>
-                      Auto-prune Recommended
-                    </button>
-                  )}
-                  {bundleMode !== "short" && (
-                    <button className="warningButton" onClick={() => void switchToShortMode()}>
-                      Switch to Short Mode
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div className="limitConfig">
-              <label htmlFor="context-limit-select">Limit</label>
-              <div className="limitInputs">
-                <select
-                  id="context-limit-select"
-                  value={isCustomLimit ? "custom" : contextLimit}
-                  onChange={(event) => {
-                    const val = event.target.value;
-                    if (val === "custom") {
-                      setIsCustomLimit(true);
-                    } else {
-                      setIsCustomLimit(false);
-                      handleLimitChange(parseInt(val, 10));
-                    }
-                  }}
-                >
-                  <option value={8000}>Small - 8K</option>
-                  <option value={32000}>Medium - 32K</option>
-                  <option value={128000}>Large - 128K</option>
-                  <option value={200000}>Huge - 200K</option>
-                  <option value="custom">Custom...</option>
-                </select>
-
-                {isCustomLimit && (
-                  <input
-                    type="number"
-                    className="customLimitField"
-                    placeholder="Tokens..."
-                    value={contextLimit}
-                    onChange={(event) => {
-                      const val = parseInt(event.target.value, 10);
-                      handleLimitChange(isNaN(val) ? 0 : val);
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="bundleOptions">
-            <div className="optionGroup">
-              <label htmlFor="bundle-preset">Preset</label>
-              <select
-                id="bundle-preset"
-                value={bundlePreset}
-                onChange={(event) => handlePresetChange(event.target.value)}
-              >
-                {Object.entries(PRESETS).map(([key, config]) => (
-                  <option key={key} value={key}>
-                    {config.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="optionGroup">
-              <label htmlFor="bundle-purpose">Purpose</label>
-              <input
-                id="bundle-purpose"
-                type="text"
-                placeholder="e.g. Summarize or refactor..."
-                value={bundlePurpose}
-                onChange={(event) => {
-                  const val = event.target.value;
-                  const nextPreset = presetForSettings(val, bundleMode);
-                  setBundlePurpose(val);
-                  setBundlePreset(nextPreset);
-                  void updateVaultConfig({ bundlePurpose: val, bundlePreset: nextPreset });
-                  setContextBundle(null);
-                }}
-              />
-            </div>
-            <div className="optionGroup">
-              <label htmlFor="bundle-mode">Mode</label>
-              <select
-                id="bundle-mode"
-                value={bundleMode}
-                onChange={(event) => {
-                  const val = normalizeBundleMode(event.target.value, bundleMode);
-                  const nextPreset = presetForSettings(bundlePurpose, val);
-                  setBundleMode(val);
-                  setBundlePreset(nextPreset);
-                  void updateVaultConfig({ bundleMode: val, bundlePreset: nextPreset });
-                  setContextBundle(null);
-                }}
-              >
-                <option value="short">Short (Excerpt)</option>
-                <option value="standard">Standard (Full)</option>
-                <option value="full">Full (Full + Links)</option>
-              </select>
-            </div>
-          </div>
-          <div className="candidatesSectionHeader">
-            <h3>
-              Related Candidates ({displayedCandidates.length})
-              {embeddingStatus && <span className="embeddingStatusText"> ({embeddingStatus})</span>}
-            </h3>
-            <div className="candidatesFilterControls">
-              <div className="filterGroup">
-                <label htmlFor="candidates-sort">Sort</label>
-                <select
-                  id="candidates-sort"
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
-                >
-                  <option value="score">Score</option>
-                  <option value="title">Title</option>
-                  <option value="reason">Reason</option>
-                </select>
-              </div>
-              <div className="filterGroup">
-                <label htmlFor="candidates-filter">Filter</label>
-                <select
-                  id="candidates-filter"
-                  value={filterBy}
-                  onChange={(e) => setFilterBy(e.target.value)}
-                >
-                  <option value="all">All</option>
-                  <option value="selected">Selected</option>
-                  <option value="focus">Focus</option>
-                  <option value="outgoing">Outgoing</option>
-                  <option value="backlink">Backlink</option>
-                  <option value="recommended">Recommended</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div className="candidateList">
-            {displayedCandidates.map((candidate) => {
-              const scoreColorClass = 
-                candidate.score >= 9.0 ? "score-high" :
-                candidate.score >= 7.0 ? "score-medium" : "score-low";
-              const reasonClass = `reason-badge reason-${candidate.reason.toLowerCase()}`;
-
-              return (
-                <div key={candidate.path} className="candidateRow">
-                  <div className="candidateTop">
-                    <label className="candidateLabel">
-                      <input
-                        type="checkbox"
-                        checked={selectedContextPaths.has(candidate.path)}
-                        onChange={() => toggleContextCandidate(candidate.path)}
-                      />
-                      <strong>{candidate.title}</strong>
-                    </label>
-                    <div className="candidateBadges">
-                      <span className={reasonClass}>{candidate.reason}</span>
-                      <span className={`score-badge ${scoreColorClass}`}>{candidate.score.toFixed(1)}</span>
-                    </div>
-                  </div>
-                  <div className="candidateDetails">
-                    <p className="reasonDetail">{candidate.reasonDetail}</p>
-                    {candidate.excerpt && <p className="candidateExcerpt">{candidate.excerpt}</p>}
-                    <span className="candidateMeta">{candidate.characterCount} chars · ~{candidate.tokenEstimate.toLocaleString()} tokens · {candidate.path}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <button onClick={() => void generateContextBundle()} disabled={!activePath || selectedContextCount === 0}>Generate bundle</button>
-          {contextBundle && (
-            <div className="bundleBox">
-              <p className="muted">
-                {contextBundle.notePaths.length} notes · {contextBundle.markdown.length} chars · ~{contextBundle.estimatedTokens.toLocaleString()} tokens
-              </p>
-              {contextBundle.estimatedTokens > contextLimit && (
-                <div className="budgetWarning" style={{ marginBottom: "8px" }}>
-                  <p style={{ margin: 0, marginBottom: "8px" }}>
-                    ⚠️ Generated bundle exceeds target limit by {(contextBundle.estimatedTokens - contextLimit).toLocaleString()} tokens.
-                  </p>
-                  <div className="warningActions">
-                    {contextCandidates.some((c) => selectedContextPaths.has(c.path) && c.reason === "Recommended") && (
-                      <button className="warningButton" onClick={() => void autoPruneCandidates()}>
-                        Auto-prune & Regenerate
-                      </button>
-                    )}
-                    {bundleMode !== "short" && (
-                      <button className="warningButton" onClick={() => void switchToShortMode()}>
-                        Switch to Short Mode
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-              <details className="bundleAuditDetails">
-                <summary>🔍 Context Bundle Audit & Diff</summary>
-                <div className="bundleAuditContent">
-                  {prevContextBundle && (
-                    <div className="bundleDiffSection">
-                      <h4>Changes from Previous Bundle</h4>
-                      <div className="bundleDiffMetrics">
-                        <span className={`tokenDeltaBadge ${contextBundle.estimatedTokens - prevContextBundle.estimatedTokens > 0 ? "positive" : contextBundle.estimatedTokens - prevContextBundle.estimatedTokens < 0 ? "negative" : "zero"}`}>
-                          {contextBundle.estimatedTokens - prevContextBundle.estimatedTokens > 0 ? `+${(contextBundle.estimatedTokens - prevContextBundle.estimatedTokens).toLocaleString()}` : (contextBundle.estimatedTokens - prevContextBundle.estimatedTokens).toLocaleString()} tokens
-                        </span>
-                        {contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).length === 0 &&
-                         prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).length === 0 && (
-                          <span className="muted italic" style={{ marginLeft: "8px" }}>No note list changes</span>
-                        )}
-                      </div>
-                      
-                      {contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).length > 0 && (
-                        <div className="diffGroup">
-                          <span className="diffLabel added">Added ({contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).length}):</span>
-                          <div className="diffNotesList">
-                            {contextBundle.notePaths.filter(p => !new Set(prevContextBundle.notePaths).has(p)).map(p => (
-                              <span key={p} className="diffNoteName added">+{p.split('/').pop() || p}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).length > 0 && (
-                        <div className="diffGroup">
-                          <span className="diffLabel removed">Removed ({prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).length}):</span>
-                          <div className="diffNotesList">
-                            {prevContextBundle.notePaths.filter(p => !new Set(contextBundle.notePaths).has(p)).map(p => (
-                              <span key={p} className="diffNoteName removed">-{p.split('/').pop() || p}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="bundleBreakdownSection">
-                    <h4>Included Notes Breakdown</h4>
-                    <div className="auditBreakdownList">
-                      {contextBundle.notePaths.map(path => {
-                        const isFocus = path === activePath;
-                        const cand = contextCandidates.find(c => c.path === path);
-                        const title = cand?.title || path.split('/').pop() || path;
-                        const reason = isFocus ? "Focus" : (cand?.reason || "Linked");
-                        const reasonDetail = isFocus ? "This is the active note of your workspace." : (cand?.reasonDetail || "Referenced note");
-                        
-                        // Quality flags calculation
-                        const characterCount = isFocus ? draft.length : (cand?.characterCount || 0);
-                        const isTooLarge = characterCount > 10000 || (cand ? cand.tokenEstimate > 2500 : false);
-                        
-                        const noteMeta = vault?.notes.find(n => n.path === path);
-                        const modifiedAtStr = noteMeta?.modifiedAt;
-                        let isStale = false;
-                        if (modifiedAtStr) {
-                          const modifiedDate = new Date(modifiedAtStr);
-                          const diffTime = Date.now() - modifiedDate.getTime();
-                          const diffDays = diffTime / (1000 * 60 * 60 * 24);
-                          isStale = diffDays > 30;
-                        }
-                        
-                        const isUseful = isFocus || reason === "Outgoing" || reason === "Backlink" || (cand ? cand.score >= 7.5 : false);
-                        const isRedundant = cand ? (cand.reason === "Recommended" && cand.score < 5.0) : false;
-                        
-                        const qualityBadges: { type: string; label: string }[] = [];
-                        if (isUseful) qualityBadges.push({ type: "useful", label: "Useful" });
-                        if (isRedundant) qualityBadges.push({ type: "redundant", label: "Redundant" });
-                        if (isTooLarge) qualityBadges.push({ type: "large", label: "Too Large" });
-                        if (isStale) qualityBadges.push({ type: "stale", label: "Stale" });
-                        
-                        return (
-                          <div key={path} className="auditNoteRow">
-                            <div className="auditNoteHeader">
-                              <span className="auditNoteTitle" title={path}>{title}</span>
-                              <span className={`reason-badge reason-${reason.toLowerCase()}`}>{reason}</span>
-                            </div>
-                            <div className="auditNoteDetail">{reasonDetail}</div>
-                            {qualityBadges.length > 0 && (
-                              <div className="qualityBadges">
-                                {qualityBadges.map(badge => (
-                                  <span key={badge.type} className={`qualityBadge ${badge.type}`}>
-                                    {badge.label}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </details>
-
-              <div className="promptWorkspace">
-                <h3>Prompt Workspace</h3>
-                <div className="optionGroup" style={{ marginTop: "4px" }}>
-                  <div className="promptWorkspaceHeader">
-                    <label htmlFor="prompt-instruction">Question / Instructions</label>
-                    <div className="templateSelectorContainer">
-                      <button 
-                        className="smallButton" 
-                        onClick={() => setShowTemplates(!showTemplates)}
-                        style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
-                      >
-                        Templates ▾
-                      </button>
-                      <button 
-                        className="smallButton" 
-                        onClick={() => void saveAsTemplate()} 
-                        disabled={!promptInstruction.trim()}
-                        title="Save current instructions as template"
-                      >
-                        Save as Template
-                      </button>
-
-                      {showTemplates && (
-                        <div className="templatesDropdownMenu">
-                          <div className="templatesDropdownHeader">System Templates</div>
-                          {BUILTIN_TEMPLATES.map((tmpl) => (
-                            <div 
-                              key={tmpl.id} 
-                              className="templatesDropdownItem"
-                              onClick={() => {
-                                handlePromptInstructionChange(compileTemplate(tmpl.template));
-                                setShowTemplates(false);
-                              }}
-                            >
-                              <span>{tmpl.name}</span>
-                            </div>
-                          ))}
-                          {vaultConfig.promptTemplates && vaultConfig.promptTemplates.length > 0 && (
-                            <>
-                              <div className="templatesDropdownHeader">Custom Templates</div>
-                              {vaultConfig.promptTemplates.map((tmpl) => (
-                                <div 
-                                  key={tmpl.id} 
-                                  className="templatesDropdownItem customTemplateItem"
-                                  onClick={() => {
-                                    handlePromptInstructionChange(compileTemplate(tmpl.template));
-                                    setShowTemplates(false);
-                                  }}
-                                >
-                                  <span>{tmpl.name}</span>
-                                  <button 
-                                    className="deleteTemplateBtn"
-                                    onClick={(e) => void deleteTemplate(tmpl.id, e)}
-                                    title="Delete custom template"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                              ))}
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <textarea
-                    id="prompt-instruction"
-                    placeholder="Ask a question or specify the task for the LLM..."
-                    value={promptInstruction}
-                    onChange={(e) => handlePromptInstructionChange(e.target.value)}
-                    style={{ minHeight: "80px" }}
-                  />
-                </div>
-                <div className="workspaceActions">
-                  <button className="primary" onClick={() => void copyCombinedPrompt()}>
-                    Copy Final Prompt
-                  </button>
-                  <button onClick={() => void copyContextBundle()}>
-                    Copy Bundle Only
-                  </button>
-                </div>
-              </div>
-              <textarea readOnly value={contextBundle.markdown} />
-            </div>
-          )}
-        </section>
+        <InspectorPanel
+          vault={vault}
+          activePath={activePath}
+          draft={draft}
+          selectedContextCount={selectedContextCount}
+          selectedContextCharacters={selectedContextCharacters}
+          selectedContextTokens={selectedContextTokens}
+          contextLimit={contextLimit}
+          isCustomLimit={isCustomLimit}
+          setIsCustomLimit={setIsCustomLimit}
+          handleLimitChange={handleLimitChange}
+          bundlePreset={bundlePreset}
+          handlePresetChange={handlePresetChange}
+          setBundlePreset={setBundlePreset}
+          PRESETS={PRESETS}
+          bundlePurpose={bundlePurpose}
+          setBundlePurpose={setBundlePurpose}
+          bundleMode={bundleMode}
+          setBundleMode={setBundleMode}
+          updateVaultConfig={updateVaultConfig}
+          setContextBundle={setContextBundle}
+          displayedCandidates={displayedCandidates}
+          embeddingStatus={embeddingStatus}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          filterBy={filterBy}
+          setFilterBy={setFilterBy}
+          selectedContextPaths={selectedContextPaths}
+          toggleContextCandidate={toggleContextCandidate}
+          autoPruneCandidates={autoPruneCandidates}
+          switchToShortMode={switchToShortMode}
+          generateContextBundle={generateContextBundle}
+          contextBundle={contextBundle}
+          prevContextBundle={prevContextBundle}
+          contextCandidates={contextCandidates}
+          showTemplates={showTemplates}
+          setShowTemplates={setShowTemplates}
+          promptInstruction={promptInstruction}
+          handlePromptInstructionChange={handlePromptInstructionChange}
+          BUILTIN_TEMPLATES={BUILTIN_TEMPLATES}
+          vaultConfig={vaultConfig}
+          compileTemplate={compileTemplate}
+          deleteTemplate={deleteTemplate}
+          saveAsTemplate={saveAsTemplate}
+          copyCombinedPrompt={copyCombinedPrompt}
+          copyContextBundle={copyContextBundle}
+          presetForSettings={presetForSettings}
+          normalizeBundleMode={normalizeBundleMode}
+        />
         <PromptHistoryPanel
           vaultConfig={vaultConfig}
           activePath={activePath}
@@ -3303,122 +2864,6 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
   );
 }
 
-function SearchPanel(props: {
-  query: string;
-  tagFilter: string;
-  propertyFilter: string;
-  tags: string[];
-  searchMode: "keyword" | "semantic";
-  onSearchModeChange(mode: "keyword" | "semantic"): void;
-  onSubmit(): void;
-  onQuery(value: string): void;
-  onTag(value: string): void;
-  onProperty(value: string): void;
-}) {
-  return (
-    <section className="searchPanel">
-      <div className="searchModeToggle">
-        <button
-          type="button"
-          className={props.searchMode === "keyword" ? "active" : ""}
-          onClick={() => props.onSearchModeChange("keyword")}
-        >
-          Keyword
-        </button>
-        <button
-          type="button"
-          className={props.searchMode === "semantic" ? "active" : ""}
-          onClick={() => props.onSearchModeChange("semantic")}
-        >
-          Semantic
-        </button>
-      </div>
-      <div className="searchInputContainer">
-        <input
-          value={props.query}
-          onChange={(event) => props.onQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              props.onSubmit();
-            }
-          }}
-          placeholder={props.searchMode === "semantic" ? "Semantic query (Enter)..." : "Search notes"}
-        />
-        {props.searchMode === "semantic" && (
-          <button type="button" onClick={props.onSubmit} className="btnSemanticSearch">
-            Go
-          </button>
-        )}
-      </div>
-      {props.searchMode === "keyword" && (
-        <>
-          <select value={props.tagFilter} onChange={(event) => props.onTag(event.target.value)}>
-            <option value="">All tags</option>
-            {props.tags.map((tag) => <option key={tag} value={tag}>#{tag}</option>)}
-          </select>
-          <input value={props.propertyFilter} onChange={(event) => props.onProperty(event.target.value)} placeholder="status=draft" />
-        </>
-      )}
-    </section>
-  );
-}
-
-function TreeNode({
-  node,
-  activePath,
-  onSelect,
-  onRename,
-  onDelete
-}: {
-  node: FileTreeNode;
-  activePath: string | null;
-  onSelect(path: string): void;
-  onRename(path: string): void;
-  onDelete(path: string, kind: FileTreeNode["kind"]): void;
-}) {
-  const actions = (
-    <span className="treeActions">
-      <button title={`Rename ${node.name}`} onClick={(event) => {
-        event.stopPropagation();
-        onRename(node.path);
-      }}>Rename</button>
-      <button title={`Delete ${node.name}`} onClick={(event) => {
-        event.stopPropagation();
-        onDelete(node.path, node.kind);
-      }}>Delete</button>
-    </span>
-  );
-
-  if (node.kind === "note") {
-    return (
-      <div className={node.path === activePath ? "treeRow active" : "treeRow"}>
-        <button className="treeItem" onClick={() => onSelect(node.path)}>{node.name}</button>
-        {actions}
-      </div>
-    );
-  }
-
-  return (
-    <details open>
-      <summary>
-        <span>{node.name}</span>
-        {actions}
-      </summary>
-      <div className="treeChildren">
-        {node.children.map((child) => (
-          <TreeNode
-            key={child.path}
-            node={child}
-            activePath={activePath}
-            onSelect={onSelect}
-            onRename={onRename}
-            onDelete={onDelete}
-          />
-        ))}
-      </div>
-    </details>
-  );
-}
 
 
 function parsePropertyFilter(value: string): Record<string, string> {

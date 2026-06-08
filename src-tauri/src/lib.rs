@@ -7,7 +7,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
-use tauri::Manager;
 use walkdir::WalkDir;
 
 #[derive(Default)]
@@ -331,32 +330,54 @@ struct VaultConfig {
     note_templates: Option<Vec<NoteTemplate>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct Secrets {
-    api_keys: HashMap<String, String>,
-}
+static FALLBACK_KEYS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-fn load_secrets(app_handle: &tauri::AppHandle) -> Secrets {
-    if let Ok(config_dir) = app_handle.path().app_config_dir() {
-        let secrets_path = config_dir.join("lattice_secrets.json");
-        if secrets_path.exists() {
-            if let Ok(content) = fs::read_to_string(secrets_path) {
-                if let Ok(secrets) = serde_json::from_str::<Secrets>(&content) {
-                    return secrets;
+fn save_api_key_in_keyring(provider: &str, key: &str) -> Result<(), String> {
+    let key_trimmed = key.trim();
+    
+    if key_trimmed.is_empty() {
+        let mut guard = FALLBACK_KEYS.lock().unwrap();
+        if let Some(map) = guard.as_mut() {
+            map.remove(provider);
+        }
+    }
+
+    match keyring::Entry::new("lattice", provider) {
+        Ok(entry) => {
+            if key_trimmed.is_empty() {
+                let _ = entry.delete_password();
+            } else {
+                if let Err(_) = entry.set_password(key_trimmed) {
+                    let mut guard = FALLBACK_KEYS.lock().unwrap();
+                    let map = guard.get_or_insert_with(HashMap::new);
+                    map.insert(provider.to_string(), key_trimmed.to_string());
                 }
             }
         }
+        Err(_) => {
+            let mut guard = FALLBACK_KEYS.lock().unwrap();
+            let map = guard.get_or_insert_with(HashMap::new);
+            if key_trimmed.is_empty() {
+                map.remove(provider);
+            } else {
+                map.insert(provider.to_string(), key_trimmed.to_string());
+            }
+        }
     }
-    Secrets::default()
+    Ok(())
 }
 
-fn save_secrets(app_handle: &tauri::AppHandle, secrets: &Secrets) -> Result<(), String> {
-    let config_dir = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
-    let secrets_path = config_dir.join("lattice_secrets.json");
-    let content = serde_json::to_string_pretty(secrets).map_err(|e| e.to_string())?;
-    fs::write(secrets_path, content).map_err(|e| e.to_string())?;
-    Ok(())
+fn get_api_key_from_keyring(provider: &str) -> Option<String> {
+    if let Ok(entry) = keyring::Entry::new("lattice", provider) {
+        if let Ok(pass) = entry.get_password() {
+            return Some(pass);
+        }
+    }
+    let guard = FALLBACK_KEYS.lock().unwrap();
+    if let Some(map) = guard.as_ref() {
+        return map.get(provider).cloned();
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,31 +388,21 @@ struct ChatMessage {
 }
 
 #[tauri::command]
-fn save_api_key(app_handle: tauri::AppHandle, provider: String, key: String) -> Result<(), String> {
-    let mut secrets = load_secrets(&app_handle);
-    let key_trimmed = key.trim();
-    if key_trimmed.is_empty() {
-        secrets.api_keys.remove(&provider);
-    } else {
-        secrets.api_keys.insert(provider, key_trimmed.to_string());
-    }
-    save_secrets(&app_handle, &secrets)
+fn save_api_key(provider: String, key: String) -> Result<(), String> {
+    save_api_key_in_keyring(&provider, &key)
 }
 
 #[tauri::command]
-fn get_api_key(app_handle: tauri::AppHandle, provider: String) -> Result<String, String> {
-    let secrets = load_secrets(&app_handle);
-    Ok(secrets.api_keys.get(&provider).cloned().unwrap_or_default())
+fn get_api_key(provider: String) -> Result<String, String> {
+    Ok(get_api_key_from_keyring(&provider).unwrap_or_default())
 }
 
 #[tauri::command]
 async fn send_llm_chat_message(
-    app_handle: tauri::AppHandle,
     config: LlmConfig,
     messages: Vec<ChatMessage>,
 ) -> Result<String, String> {
-    let secrets = load_secrets(&app_handle);
-    let api_key = secrets.api_keys.get(&config.provider).cloned().unwrap_or(config.api_key);
+    let api_key = get_api_key_from_keyring(&config.provider).unwrap_or(config.api_key);
     
     let client = reqwest::Client::new();
     
@@ -548,12 +559,10 @@ async fn send_llm_chat_message(
 
 #[tauri::command]
 async fn get_llm_embedding(
-    app_handle: tauri::AppHandle,
     config: LlmConfig,
     text: String,
 ) -> Result<Vec<f32>, String> {
-    let secrets = load_secrets(&app_handle);
-    let api_key = secrets.api_keys.get(&config.provider).cloned().unwrap_or(config.api_key);
+    let api_key = get_api_key_from_keyring(&config.provider).unwrap_or(config.api_key);
     
     let client = reqwest::Client::new();
     let model = config.embedding_model.clone().unwrap_or_else(|| {
@@ -641,12 +650,10 @@ async fn get_llm_embedding(
 
 #[tauri::command]
 async fn fetch_provider_models(
-    app_handle: tauri::AppHandle,
     provider: String,
     base_url: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let secrets = load_secrets(&app_handle);
-    let api_key = secrets.api_keys.get(&provider).cloned().unwrap_or_default();
+    let api_key = get_api_key_from_keyring(&provider).unwrap_or_default();
     let client = reqwest::Client::new();
     
     match provider.as_str() {
@@ -2652,6 +2659,132 @@ fn auto_commit(root: &Path, path: &str) -> Result<String, String> {
     git_output(root, &["rev-parse", "--short", "HEAD"])
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteHealthReport {
+    path: String,
+    title: String,
+    score: usize,
+    issues: Vec<String>,
+    is_orphan: bool,
+    is_stale: bool,
+    is_too_broad: bool,
+    is_duplicated: bool,
+    missing_summary: bool,
+    weak_backlinks: bool,
+}
+
+#[tauri::command]
+fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Vec<NoteHealthReport>, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let notes = &guard.notes;
+    
+    let mut reports = Vec::new();
+    
+    let mut linked_paths = HashSet::new();
+    for note in notes {
+        for link in &note.links {
+            if let Some(ref resolved) = link.resolved_path {
+                linked_paths.insert(resolved.clone());
+            }
+        }
+    }
+    
+    let now = Utc::now();
+    
+    for note in notes {
+        let mut issues = Vec::new();
+        let mut is_orphan = false;
+        let mut is_stale = false;
+        let mut is_too_broad = false;
+        let mut is_duplicated = false;
+        let mut missing_summary = false;
+        let mut weak_backlinks = false;
+        
+        let note_path = &note.meta.path;
+        
+        if note_path.ends_with(".lattice-folder.md") {
+            continue;
+        }
+
+        // 1. Orphan check
+        if note_path != "Home.md" && !linked_paths.contains(note_path) {
+            is_orphan = true;
+            issues.push("Orphan note: No other notes link to this note.".to_string());
+        }
+        
+        // 2. Stale check
+        if let Some(ref mod_time_str) = note.meta.modified_at {
+            if let Ok(mod_time) = DateTime::parse_from_rfc3339(mod_time_str) {
+                let mod_time_utc: DateTime<Utc> = mod_time.with_timezone(&Utc);
+                let duration = now.signed_duration_since(mod_time_utc);
+                if duration.num_days() > 30 {
+                    is_stale = true;
+                    issues.push(format!("Stale: Last modified {} days ago.", duration.num_days()));
+                }
+            }
+        }
+        
+        // 3. Too broad check
+        if note.content.chars().count() > 5000 {
+            is_too_broad = true;
+            issues.push(format!("Too broad: Content length is very high ({} characters). Consider splitting.", note.content.chars().count()));
+        }
+        
+        // 4. Missing summary check
+        if !note.meta.frontmatter.contains_key("summary") {
+            missing_summary = true;
+            issues.push("Missing summary: Note does not have a 'summary' property in its frontmatter.".to_string());
+        }
+        
+        // 5. Weak backlinks check
+        let resolved_out_links_count = note.links.iter().filter(|l| l.resolved_path.is_some()).count();
+        let backlink_count = notes.iter()
+            .filter(|n| n.meta.path != note.meta.path)
+            .filter(|n| n.links.iter().any(|l| l.resolved_path.as_ref() == Some(note_path)))
+            .count();
+        if resolved_out_links_count > 3 && backlink_count == 0 {
+            weak_backlinks = true;
+            issues.push("Weak backlinks: Note references multiple pages but has no backlinks.".to_string());
+        }
+        
+        // 6. Duplicate check
+        for other in notes {
+            if other.meta.path != note.meta.path {
+                if other.content.trim() == note.content.trim() && !note.content.trim().is_empty() {
+                    is_duplicated = true;
+                    issues.push(format!("Duplicate content: Identical to note [[{}]].", other.meta.title));
+                    break;
+                }
+            }
+        }
+        
+        // Compute quality score
+        let mut score: usize = 100;
+        if is_orphan { score = score.saturating_sub(15); }
+        if is_stale { score = score.saturating_sub(10); }
+        if is_too_broad { score = score.saturating_sub(15); }
+        if is_duplicated { score = score.saturating_sub(30); }
+        if missing_summary { score = score.saturating_sub(15); }
+        if weak_backlinks { score = score.saturating_sub(10); }
+        
+        reports.push(NoteHealthReport {
+            path: note.meta.path.clone(),
+            title: note.meta.title.clone(),
+            score,
+            issues,
+            is_orphan,
+            is_stale,
+            is_too_broad,
+            is_duplicated,
+            missing_summary,
+            weak_backlinks,
+        });
+    }
+    
+    Ok(reports)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -2698,7 +2831,8 @@ pub fn run() {
             get_api_key,
             send_llm_chat_message,
             get_llm_embedding,
-            fetch_provider_models
+            fetch_provider_models,
+            get_wiki_health_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lattice");

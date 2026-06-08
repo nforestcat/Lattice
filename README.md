@@ -38,14 +38,15 @@ Implemented so far:
 - Render an interactive **Semantic Graph View** powered by a custom 2D Spring Force Layout simulation that pulls structurally linked and semantically similar notes closer together
 - Color code graph nodes dynamically based on their embedding similarity to the active selected note (with glowing emerald border highlights for similarity >= 0.7) and draw animated dotted green connection lines labeled with exact match percentages (e.g., `85% Match`)
 - Scan the vault for unresolved (dead) wiki links, draft context-aware Markdown stub note entries using the integrated LLM Copilot (incorporating referring context excerpts), and create/write the note to the vault in one click to resolve the links
+- Audit vault quality with a **Wiki Health Scorecard** that flags orphan notes, stale notes, overly broad notes, duplicate content, missing summaries, and weak backlink patterns with per-note scores
 - Recommend bidirectional backlink suggestions (both unlinked mentions and semantically similar notes) with inline excerpts and a one-click apply button to add links
 - Generate AI-powered metadata suggestions (tags and YAML frontmatter properties) for the active note, allowing users to interactively toggle and apply recommendations
 - Filter graph view nodes interactively by tags, frontmatter metadata properties (using key-value or query inputs), and semantic similarity threshold range slider
 - Keep the vector embeddings cache fresh by indexing semantic recommendations from the currently opened vault notes and using a debounced synchronization hook that recalculates active note embeddings only after the draft content changes and the user stops typing
-- Securely store LLM API keys in `lattice_secrets.json` under the Tauri secure OS roaming application config folder (separate from the git note vault)
+- Securely store LLM API keys in the operating system keyring when available, with an in-memory fallback for sessions where the keyring backend is unavailable
 - Route LLM chat messages and embeddings via Rust backend Tauri commands using `reqwest` to bypass CORS restrictions and eliminate client-side headers like `dangerously-allow-browser`
 - Query available model lists dynamically from providers (Ollama, OpenAI, Gemini, LM Studio) directly from the backend
-- Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
+- Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`Sidebar`, `EditorToolbar`, `InspectorPanel`, `LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.

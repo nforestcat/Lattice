@@ -1337,6 +1337,10 @@ describe("App layout", () => {
     const auditorTabBtn = screen.getByRole("button", { name: "Wiki Auditor" });
     fireEvent.click(auditorTabBtn);
 
+    // Switch to Dead Links Scanner sub-tab
+    const deadLinksSubTabBtn = screen.getByRole("button", { name: "Dead Links Scanner" });
+    fireEvent.click(deadLinksSubTabBtn);
+
     // Verify it performs the scan and shows the unresolved link target
     await waitFor(() => expect(screen.getByText("[[Missing Target]]")).toBeTruthy());
     expect(screen.getByText("Referenced in:")).toBeTruthy();
@@ -1437,6 +1441,10 @@ describe("App layout", () => {
     const auditorTabBtn = screen.getByRole("button", { name: "Wiki Auditor" });
     fireEvent.click(auditorTabBtn);
 
+    // Switch to Dead Links Scanner sub-tab
+    const deadLinksSubTabBtn = screen.getByRole("button", { name: "Dead Links Scanner" });
+    fireEvent.click(deadLinksSubTabBtn);
+
     // Verify it performs the scan and shows the unresolved link targets
     await waitFor(() => expect(screen.getByText("[[Missing One]]")).toBeTruthy());
     expect(screen.getByText("[[Missing Two]]")).toBeTruthy();
@@ -1505,6 +1513,32 @@ describe("App layout", () => {
       score: 1.0
     };
 
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" },
+        { path: "Projects/Obsidian Replacement.md", title: "Obsidian Replacement", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "456" }
+      ],
+      tree: [
+        { kind: "note", name: "Home.md", path: "Home.md", children: [] },
+        {
+          kind: "folder",
+          name: "Projects",
+          path: "Projects",
+          children: [
+            { kind: "note", name: "Obsidian Replacement.md", path: "Projects/Obsidian Replacement.md", children: [] }
+          ]
+        }
+      ],
+      obsidianSettings: null
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Projects/Obsidian Replacement.md",
+      content: "Build a local-first Markdown app with backlinks, search, and graph editing.",
+      revision: "rev-456"
+    });
+
     const getSuggestionsSpy = vi.spyOn(vaultApi, "getBacklinkSuggestions").mockResolvedValue([mockSuggestion]);
     const applySuggestionSpy = vi.spyOn(vaultApi, "applyBacklinkSuggestion").mockResolvedValue();
 
@@ -1534,6 +1568,8 @@ describe("App layout", () => {
     // Verify applyBacklinkSuggestion is called
     await waitFor(() => expect(applySuggestionSpy).toHaveBeenCalledWith(mockSuggestion));
 
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
     getSuggestionsSpy.mockRestore();
     applySuggestionSpy.mockRestore();
   });
