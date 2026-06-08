@@ -7,6 +7,7 @@ import type {
   FileTreeNode,
   GitSettings,
   GitStatus,
+  GitFileChange,
   EntryMutationResult,
   ContextBundle,
   ContextBundleCandidate,
@@ -363,12 +364,64 @@ export function createMockVaultApi(): VaultApi {
         isRepo: true,
         autoGitEnabled,
         branch: "main",
-        hasChanges: false
+        hasChanges: true
       };
     },
     async setAutoGit(enabled: boolean): Promise<GitSettings> {
       autoGitEnabled = enabled;
       return { autoGitEnabled };
+    },
+    async getGitChanges(): Promise<GitFileChange[]> {
+      return [
+        { path: "Home.md", status: "modified", staged: false },
+        { path: "Project.md", status: "modified", staged: true },
+        { path: "untracked-note.md", status: "untracked", staged: false },
+        { path: "deleted-note.md", status: "deleted", staged: false }
+      ];
+    },
+    async getGitDiff(path: string, staged: boolean): Promise<string> {
+      if (staged) {
+        return `diff --git a/${path} b/${path}
+index 1234567..89abcde 100644
+--- a/${path}
++++ b/${path}
+@@ -1,3 +1,4 @@
+ Welcome to mock note!
+-Old draft content.
++New edited draft content.
++Another line.`;
+      } else {
+        // Untracked/unstaged diff mock
+        if (path === "untracked-note.md") {
+          return `--- /dev/null
++++ b/untracked-note.md
+@@ -0,0 +1,2 @@
++This is a newly created untracked note in mock vault.
++It contains some test content.`;
+        }
+        return `diff --git a/${path} b/${path}
+index 89abcde..1234567 100644
+--- a/${path}
++++ b/${path}
+@@ -1,2 +1,3 @@
+ Welcome to mock note!
++Unstaged change line.`;
+      }
+    },
+    async gitStageAll(): Promise<void> {
+      // Mock stage all success
+    },
+    async gitCommit(message: string): Promise<string> {
+      if (!message.trim()) {
+        throw new Error("Commit message cannot be empty");
+      }
+      return `[main abc1234] ${message}`;
+    },
+    async gitPull(): Promise<string> {
+      return "Already up to date.";
+    },
+    async gitPush(): Promise<string> {
+      return "Everything up-to-date";
     },
     async getVaultConfig(): Promise<VaultConfig> {
       const saved = localStorage.getItem(`lattice:mock_config:${openRoot}`);

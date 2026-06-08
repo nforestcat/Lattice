@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, NoteHealthReport, StubDraftReview } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, GitStatus, NoteDocument, Snapshot, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, NoteHealthReport, StubDraftReview, GitFileChange } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { getEmbedding, cosineSimilarity, type VectorCache } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -432,7 +432,14 @@ export function App() {
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(DEFAULT_LLM_CONFIG);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor">("paste");
+  const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git">("paste");
+  const [gitChanges, setGitChanges] = useState<GitFileChange[]>([]);
+  const [selectedGitFile, setSelectedGitFile] = useState<string | null>(null);
+  const [selectedGitFileStaged, setSelectedGitFileStaged] = useState<boolean>(false);
+  const [activeDiff, setActiveDiff] = useState<string | null>(null);
+  const [commitMessage, setCommitMessage] = useState<string>("");
+  const [isGitLoading, setIsGitLoading] = useState<boolean>(false);
+  const [gitOutputLog, setGitOutputLog] = useState<string | null>(null);
   const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
   const [activeUnresolvedTarget, setActiveUnresolvedTarget] = useState<string | null>(null);
   const [isLlmGenerating, setIsLlmGenerating] = useState(false);
@@ -877,6 +884,11 @@ Return the complete note content including any YAML frontmatter block at the ver
     }
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
+    setGitChanges([]);
+    setSelectedGitFile(null);
+    setActiveDiff(null);
+    setCommitMessage("");
+    setGitOutputLog(null);
     void refreshArchiveStatus();
     void runHealthAudit();
   }
@@ -899,7 +911,7 @@ Return the complete note content including any YAML frontmatter block at the ver
     setGraph(await vaultApi.getGraph());
     setGitStatus(await vaultApi.getGitStatus());
     if (selectedPath) {
-      await selectNote(selectedPath, undefined, nextVault.notes);
+      await selectNote(selectedPath, undefined, nextVault.notes, undefined, true);
     } else {
       setActivePath(null);
       setDocument(null);
@@ -913,13 +925,110 @@ Return the complete note content including any YAML frontmatter block at the ver
     void runHealthAudit();
   }
 
-  async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig) {
+  async function refreshGitWorkspace() {
+    setIsGitLoading(true);
+    try {
+      const status = await vaultApi.getGitStatus();
+      setGitStatus(status);
+      if (status.isRepo) {
+        const changes = await vaultApi.getGitChanges();
+        setGitChanges(changes);
+      } else {
+        setGitChanges([]);
+        setSelectedGitFile(null);
+        setActiveDiff(null);
+      }
+    } catch (err: any) {
+      setGitOutputLog(`Error checking Git status: ${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function loadGitDiff(path: string, staged: boolean) {
+    setActiveDiff(null);
+    try {
+      const diff = await vaultApi.getGitDiff(path, staged);
+      setActiveDiff(diff);
+    } catch (err: any) {
+      setActiveDiff(`Error loading diff: ${err?.message || err}`);
+    }
+  }
+
+  async function handleGitStageAll() {
+    setIsGitLoading(true);
+    try {
+      await vaultApi.gitStageAll();
+      setGitOutputLog("All changes staged.");
+      await refreshGitWorkspace();
+      await refreshVault(activePath);
+    } catch (err: any) {
+      setGitOutputLog(`Error staging changes: ${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handleGitCommit(message: string) {
+    if (!message.trim()) {
+      setGitOutputLog("Error: Commit message cannot be empty.");
+      return;
+    }
+    setIsGitLoading(true);
+    try {
+      const output = await vaultApi.gitCommit(message);
+      setGitOutputLog(output);
+      setCommitMessage("");
+      setSelectedGitFile(null);
+      setActiveDiff(null);
+      await refreshGitWorkspace();
+      await refreshVault(activePath);
+    } catch (err: any) {
+      setGitOutputLog(`Commit failed:\n${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handleGitPull() {
+    setIsGitLoading(true);
+    try {
+      setGitOutputLog("Pulling from remote repository...");
+      const output = await vaultApi.gitPull();
+      setGitOutputLog(output);
+      await refreshGitWorkspace();
+      await refreshVault(activePath);
+    } catch (err: any) {
+      setGitOutputLog(`Pull failed:\n${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handleGitPush() {
+    setIsGitLoading(true);
+    try {
+      setGitOutputLog("Pushing to remote repository...");
+      const output = await vaultApi.gitPush();
+      setGitOutputLog(output);
+      await refreshGitWorkspace();
+      await refreshVault(activePath);
+    } catch (err: any) {
+      setGitOutputLog(`Push failed:\n${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig, preserveViewMode = false) {
     setActiveUnresolvedTarget(null);
     const note = await vaultApi.readNote(path);
     setActivePath(path);
     setDocument(note);
     setDraft(note.content);
-    setViewMode("split");
+    if (!preserveViewMode) {
+      setViewMode("split");
+    }
     await refreshContext(path, currentConfig, currentNotes, currentLlmConfig);
   }
 
@@ -2711,6 +2820,24 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               healthReports={healthReports}
               isScanningHealth={isScanningHealth}
               onRunHealthAudit={runHealthAudit}
+              gitStatus={gitStatus}
+              gitChanges={gitChanges}
+              selectedGitFile={selectedGitFile}
+              selectedGitFileStaged={selectedGitFileStaged}
+              activeDiff={activeDiff}
+              commitMessage={commitMessage}
+              isGitLoading={isGitLoading}
+              gitOutputLog={gitOutputLog}
+              setCommitMessage={setCommitMessage}
+              setSelectedGitFile={setSelectedGitFile}
+              setSelectedGitFileStaged={setSelectedGitFileStaged}
+              setGitOutputLog={setGitOutputLog}
+              onRefreshGit={refreshGitWorkspace}
+              onStageAll={handleGitStageAll}
+              onCommit={handleGitCommit}
+              onPull={handleGitPull}
+              onPush={handleGitPush}
+              onLoadDiff={loadGitDiff}
             />
           )}
         </div>

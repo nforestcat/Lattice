@@ -3294,6 +3294,350 @@ summary:hover .treeActions {
   cursor: not-allowed;
 }
 
+/* Git Workspace Layout */
+.gitWorkspaceLayout {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  height: calc(100vh - 170px);
+  box-sizing: border-box;
+}
+
+.gitLeftCol {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.gitRightCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+/* Non-Repo Warnings */
+.gitNonRepoContainer {
+  padding: 40px;
+  text-align: center;
+  max-width: 500px;
+  margin: 80px auto;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.gitNonRepoContainer h3 {
+  margin: 12px 0 8px 0;
+  font-size: 18px;
+  color: #1e293b;
+}
+
+.gitNonRepoContainer p {
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.gitNonRepoContainer p.subtext {
+  margin-top: 16px;
+  font-size: 12px;
+}
+
+.gitNonRepoContainer .initCode {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.gitWarningIcon {
+  font-size: 28px;
+  color: #eab308;
+}
+
+/* Repo Info */
+.gitRepoInfo {
+  padding: 10px 14px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gitBranchLabel {
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* Git Actions */
+.gitActionsSection {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gitActionsRow {
+  display: flex;
+  gap: 8px;
+}
+
+.gitCommitBox {
+  display: flex;
+  flex-direction: column;
+}
+
+.gitCommitMessageTextarea {
+  width: 100%;
+  height: 60px;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  resize: none;
+  font-size: 13px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.gitCommitMessageTextarea:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+.gitSyncBox {
+  border-top: 1px solid #f1f5f9;
+  padding-top: 10px;
+}
+
+.gitSyncBox .boxLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+/* Changes List */
+.gitChangesList {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.gitChangesGroup h4 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #64748b;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+
+.gitEmptyState {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 6px 0;
+  font-style: italic;
+}
+
+.gitFileItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  margin-bottom: 2px;
+}
+
+.gitFileItem:hover {
+  background: #f1f5f9;
+}
+
+.gitFileItem.active {
+  background: #e2e8f0;
+}
+
+.gitFileItem .filePath {
+  font-size: 13px;
+  color: #1e293b;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.gitFileItem .statusIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 3px;
+  text-align: center;
+}
+
+.gitFileItem .statusIcon.modified {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.gitFileItem .statusIcon.added,
+.gitFileItem .statusIcon.untracked {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.gitFileItem .statusIcon.deleted {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.gitFileItem .statusIcon.renamed {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+/* Console Output Card */
+.gitConsoleCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: auto;
+}
+
+.gitConsoleHeader {
+  background: #f1f5f9;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.gitConsoleLog {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 12px;
+  margin: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* Diff Panel */
+.gitDiffHeader {
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gitDiffHeader h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.gitDiffHeader .diffFilePath {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.gitDiffBody {
+  flex: 1;
+  overflow: auto;
+  background: #f8fafc;
+}
+
+.gitDiffPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #94a3b8;
+  gap: 8px;
+  text-align: center;
+  padding: 24px;
+}
+
+.gitDiffPlaceholder .placeholderIcon {
+  font-size: 28px;
+}
+
+.gitDiffPlaceholder p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.gitDiffPre {
+  margin: 0;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #ffffff;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.gitDiffLine {
+  white-space: pre;
+  padding: 0 4px;
+}
+
+.gitDiffLine.diff-add {
+  background: #e6ffed;
+  color: #1e7e34;
+}
+
+.gitDiffLine.diff-del {
+  background: #ffeef0;
+  color: #d73a49;
+}
+
+.gitDiffLine.diff-hunk {
+  background: #f1f8ff;
+  color: #0366d6;
+  font-weight: 600;
+}
+
+.gitDiffLine.diff-context {
+  color: #24292e;
+}
+
 
 
 

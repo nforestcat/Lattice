@@ -1102,11 +1102,14 @@ fn get_git_status(state: tauri::State<AppState>) -> Result<GitStatus, String> {
     let Some(root) = &guard.root_path else {
         return Ok(GitStatus { is_repo: false, auto_git_enabled: false, branch: None, has_changes: false });
     };
+    let is_repo = git_output(root, &["rev-parse", "--is-inside-work-tree"])
+        .map(|value| value == "true")
+        .unwrap_or(false);
     Ok(GitStatus {
-        is_repo: root.join(".git").exists(),
+        is_repo,
         auto_git_enabled: guard.auto_git_enabled,
-        branch: git_output(root, &["branch", "--show-current"]).ok(),
-        has_changes: git_output(root, &["status", "--porcelain"]).map(|value| !value.trim().is_empty()).unwrap_or(false),
+        branch: if is_repo { git_output(root, &["branch", "--show-current"]).ok() } else { None },
+        has_changes: if is_repo { git_output(root, &["status", "--porcelain"]).map(|value| !value.trim().is_empty()).unwrap_or(false) } else { false },
     })
 }
 
@@ -1115,6 +1118,161 @@ fn set_auto_git(enabled: bool, state: tauri::State<AppState>) -> Result<GitSetti
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     guard.auto_git_enabled = enabled;
     Ok(GitSettings { auto_git_enabled: enabled })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitFileChange {
+    path: String,
+    status: String, // "modified" | "added" | "deleted" | "untracked" | "renamed"
+    staged: bool,
+}
+
+#[tauri::command]
+fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Ok(Vec::new());
+    };
+    let is_repo = git_output(root, &["rev-parse", "--is-inside-work-tree"])
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    if !is_repo {
+        return Ok(Vec::new());
+    }
+    
+    let output = git_output(root, &["status", "--porcelain"]).unwrap_or_default();
+    let mut changes = Vec::new();
+    for line in output.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let x = line.chars().nth(0).unwrap_or(' ');
+        let y = line.chars().nth(1).unwrap_or(' ');
+        let path = line[3..].to_string();
+        
+        if x == '?' && y == '?' {
+            changes.push(GitFileChange {
+                path,
+                status: "untracked".to_string(),
+                staged: false,
+            });
+        } else {
+            // Check staged (index)
+            if x != ' ' {
+                let status = match x {
+                    'M' => "modified",
+                    'A' => "added",
+                    'D' => "deleted",
+                    'R' => "renamed",
+                    _ => "modified",
+                };
+                changes.push(GitFileChange {
+                    path: path.clone(),
+                    status: status.to_string(),
+                    staged: true,
+                });
+            }
+            // Check unstaged (working tree)
+            if y != ' ' {
+                let status = match y {
+                    'M' => "modified",
+                    'D' => "deleted",
+                    _ => "modified",
+                };
+                changes.push(GitFileChange {
+                    path,
+                    status: status.to_string(),
+                    staged: false,
+                });
+            }
+        }
+    }
+    Ok(changes)
+}
+
+#[tauri::command]
+fn get_git_diff(path: String, staged: bool, state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    let full_path = resolve_vault_path(root, &path)?;
+    if staged {
+        git_output(root, &["diff", "--cached", "--", &path])
+    } else {
+        let is_untracked = full_path.exists() && git_output(root, &["status", "--porcelain", &path]).map(|s| s.starts_with("??")).unwrap_or(false);
+        if is_untracked {
+            match std::fs::read_to_string(&full_path) {
+                Ok(content) => {
+                    let mut diff = vec![
+                        "--- /dev/null".to_string(),
+                        format!("+++ b/{}", path),
+                        format!("@@ -0,0 +1,{} @@", content.lines().count()),
+                    ];
+                    for line in content.lines() {
+                        diff.push(format!("+{}", line));
+                    }
+                    Ok(diff.join("\n"))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            git_output(root, &["diff", "--", &path])
+        }
+    }
+}
+
+#[tauri::command]
+fn git_stage_all(state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_output(root, &["add", "-A"])?;
+    Ok(())
+}
+
+#[tauri::command]
+fn git_commit(message: String, state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    if message.trim().is_empty() {
+        return Err("Commit message cannot be empty".to_string());
+    }
+    let porcelain = git_output(root, &["status", "--porcelain"]).unwrap_or_default();
+    let has_staged = porcelain.lines().any(|line| {
+        if line.len() >= 2 {
+            let x = line.chars().next().unwrap_or(' ');
+            x != ' ' && x != '?'
+        } else {
+            false
+        }
+    });
+    if !has_staged {
+        return Err("No staged changes to commit. Please stage changes first.".to_string());
+    }
+    git_output(root, &["commit", "-m", &message])
+}
+
+#[tauri::command]
+fn git_pull(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_output_all(root, &["pull"])
+}
+
+#[tauri::command]
+fn git_push(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_output_all(root, &["push"])
 }
 
 fn migrate_config(mut config: VaultConfig) -> VaultConfig {
@@ -2705,6 +2863,25 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+fn git_output_all(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git").args(args).current_dir(root).output().map_err(|error| error.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let mut combined = Vec::new();
+    if !stdout.is_empty() {
+        combined.push(stdout);
+    }
+    if !stderr.is_empty() {
+        combined.push(stderr);
+    }
+    let combined_str = combined.join("\n");
+    if output.status.success() {
+        Ok(combined_str)
+    } else {
+        Err(combined_str)
+    }
+}
+
 fn auto_commit(root: &Path, path: &str) -> Result<String, String> {
     git_output(root, &["add", path])?;
     git_output(root, &["commit", "-m", &format!("Update {}", path)])?;
@@ -2865,6 +3042,12 @@ pub fn run() {
             restore_snapshot,
             get_git_status,
             set_auto_git,
+            get_git_changes,
+            get_git_diff,
+            git_stage_all,
+            git_commit,
+            git_pull,
+            git_push,
             get_vault_config,
             save_vault_config,
             archive_prompt_run,

@@ -19,7 +19,8 @@ import type {
   UnresolvedLinkGroup,
   ProposedEdit,
   BacklinkSuggestion,
-  NoteHealthReport
+  NoteHealthReport,
+  GitFileChange
 } from "./types";
 
 export function createTauriVaultApi(): VaultApi {
@@ -58,6 +59,12 @@ export function createTauriVaultApi(): VaultApi {
     restoreSnapshot: (snapshotId: string) => invoke("restore_snapshot", { snapshotId }),
     getGitStatus: () => invoke("get_git_status"),
     setAutoGit: (enabled: boolean) => invoke<GitSettings>("set_auto_git", { enabled }),
+    getGitChanges: () => invoke<GitFileChange[]>("get_git_changes"),
+    getGitDiff: (path: string, staged: boolean) => invoke<string>("get_git_diff", { path, staged }),
+    gitStageAll: () => invoke<void>("git_stage_all"),
+    gitCommit: (message: string) => invoke<string>("git_commit", { message }),
+    gitPull: () => invoke<string>("git_pull"),
+    gitPush: () => invoke<string>("git_push"),
     getVaultConfig: () => invoke<VaultConfig>("get_vault_config"),
     saveVaultConfig: (config: VaultConfig) => invoke<void>("save_vault_config", { config }),
     archivePromptRun: (runId: string, content: string) => invoke<string>("archive_prompt_run", { runId, content }),

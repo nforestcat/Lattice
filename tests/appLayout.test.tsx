@@ -2431,5 +2431,83 @@ participants: Antigravity, User
     getGraphSpy.mockRestore();
     vi.unstubAllGlobals();
   });
+
+  it("displays the Git Workspace, lists changes, reviews diffs, stages, and commits", async () => {
+    const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "feature-branch",
+      hasChanges: true
+    });
+    const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
+      { path: "ModifiedNote.md", status: "modified", staged: false },
+      { path: "StagedNote.md", status: "modified", staged: true },
+      { path: "UntrackedNote.md", status: "untracked", staged: false }
+    ]);
+    const getGitDiffSpy = vi.spyOn(vaultApi, "getGitDiff").mockResolvedValue(
+      "--- a/ModifiedNote.md\n+++ b/ModifiedNote.md\n@@ -1,1 +1,2 @@\n-Old Line\n+New Line\n+Another Line"
+    );
+    const gitStageAllSpy = vi.spyOn(vaultApi, "gitStageAll").mockResolvedValue();
+    const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit").mockResolvedValue("[feature-branch abc1234] Test Commit Message");
+
+    render(<App />);
+
+    // Open Distill View
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+
+    // Click on Git Workspace Tab
+    const gitTabBtn = screen.getByRole("button", { name: "Git Workspace" });
+    fireEvent.click(gitTabBtn);
+
+    // Verify repository status info is rendered
+    await waitFor(() => expect(screen.getByText("feature-branch")).toBeTruthy());
+    expect(screen.getByText("Staged Changes (1)")).toBeTruthy();
+    expect(screen.getByText("Unstaged Changes (2)")).toBeTruthy();
+    expect(screen.getByText("ModifiedNote.md")).toBeTruthy();
+    expect(screen.getByText("StagedNote.md")).toBeTruthy();
+
+    // Select ModifiedNote.md to load diff
+    const modifiedItem = screen.getByText("ModifiedNote.md");
+    fireEvent.click(modifiedItem);
+
+    // Verify getGitDiff was called and rendering color styled lines
+    await waitFor(() => {
+      expect(getGitDiffSpy).toHaveBeenCalledWith("ModifiedNote.md", false);
+      expect(screen.getByText("+New Line")).toBeTruthy();
+      expect(screen.getByText("-Old Line")).toBeTruthy();
+    });
+
+    // Test Stage All
+    const stageAllBtn = screen.getByRole("button", { name: "Stage All" }) as HTMLButtonElement;
+    fireEvent.click(stageAllBtn);
+    expect(gitStageAllSpy).toHaveBeenCalled();
+
+    // Wait for the loading state to finish (Stage All button becomes enabled again)
+    await waitFor(() => {
+      expect(stageAllBtn.disabled).toBe(false);
+    });
+
+    // Test Commit
+    const commitMsgInput = screen.getByPlaceholderText("Type a commit message...");
+    fireEvent.change(commitMsgInput, { target: { value: "Test Commit Message" } });
+
+    // Now wait for the button to be enabled and click it
+    const commitBtn = screen.getByRole("button", { name: "Commit Selected (1)" }) as HTMLButtonElement;
+    expect(commitBtn.disabled).toBe(false);
+    fireEvent.click(commitBtn);
+
+    await waitFor(() => {
+      expect(gitCommitSpy).toHaveBeenCalledWith("Test Commit Message");
+    });
+
+    // Clean up mocks
+    getGitStatusSpy.mockRestore();
+    getGitChangesSpy.mockRestore();
+    getGitDiffSpy.mockRestore();
+    gitStageAllSpy.mockRestore();
+    gitCommitSpy.mockRestore();
+  });
 });
+
 

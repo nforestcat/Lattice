@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview } from "../../api/types";
+import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview, GitStatus, GitFileChange } from "../../api/types";
 import type { ChatMessage } from "../../api/llm";
 import { vaultApi } from "../../api";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
+import { GitWorkspace } from "./GitWorkspace";
 import { sendChatMessage } from "../../api/llm";
 
 interface DistillWorkspaceProps {
@@ -21,8 +22,26 @@ interface DistillWorkspaceProps {
   setStatus: (status: string) => void;
   contextBundle: ContextBundle | null;
 
-  distillTab: "paste" | "chat" | "auditor";
-  setDistillTab: (tab: "paste" | "chat" | "auditor") => void;
+  distillTab: "paste" | "chat" | "auditor" | "git";
+  setDistillTab: (tab: "paste" | "chat" | "auditor" | "git") => void;
+  gitStatus: GitStatus | null;
+  gitChanges: GitFileChange[];
+  selectedGitFile: string | null;
+  selectedGitFileStaged: boolean;
+  activeDiff: string | null;
+  commitMessage: string;
+  isGitLoading: boolean;
+  gitOutputLog: string | null;
+  setCommitMessage: (msg: string) => void;
+  setSelectedGitFile: (path: string | null) => void;
+  setSelectedGitFileStaged: (staged: boolean) => void;
+  setGitOutputLog: (log: string | null) => void;
+  onRefreshGit: () => Promise<void>;
+  onStageAll: () => Promise<void>;
+  onCommit: (message: string) => Promise<void>;
+  onPull: () => Promise<void>;
+  onPush: () => Promise<void>;
+  onLoadDiff: (path: string, staged: boolean) => Promise<void>;
   distillInputText: string;
   setDistillInputText: (text: string) => void;
   proposedEdits: ProposedEdit[];
@@ -121,6 +140,24 @@ export function DistillWorkspace({
   rejectDraft,
   approveAllDrafts,
   rejectAllDrafts,
+  gitStatus,
+  gitChanges,
+  selectedGitFile,
+  selectedGitFileStaged,
+  activeDiff,
+  commitMessage,
+  isGitLoading,
+  gitOutputLog,
+  setCommitMessage,
+  setSelectedGitFile,
+  setSelectedGitFileStaged,
+  setGitOutputLog,
+  onRefreshGit,
+  onStageAll,
+  onCommit,
+  onPull,
+  onPush,
+  onLoadDiff
 }: DistillWorkspaceProps) {
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
@@ -177,32 +214,64 @@ export function DistillWorkspace({
 
   return (
     <section className="distillSurface">
-      <div className="distillWorkspaceLayout">
-        <div className="distillLeftCol">
-          <div className="distillTabHeader">
-            <button
-              className={distillTab === "paste" ? "active" : ""}
-              onClick={() => setDistillTab("paste")}
-            >
-              Paste Raw Input
-            </button>
-            <button
-              className={distillTab === "chat" ? "active" : ""}
-              onClick={() => setDistillTab("chat")}
-            >
-              Chat with LLM
-            </button>
-            <button
-              className={distillTab === "auditor" ? "active" : ""}
-              onClick={() => {
-                setDistillTab("auditor");
-                void runUnresolvedLinksScan();
-                void onRunHealthAudit();
-              }}
-            >
-              Wiki Auditor
-            </button>
-          </div>
+      <div className="distillTabHeader" style={{ padding: "0 16px 8px 16px", borderBottom: "1px solid #cbd5e1", marginBottom: 12 }}>
+        <button
+          className={distillTab === "paste" ? "active" : ""}
+          onClick={() => setDistillTab("paste")}
+        >
+          Paste Raw Input
+        </button>
+        <button
+          className={distillTab === "chat" ? "active" : ""}
+          onClick={() => setDistillTab("chat")}
+        >
+          Chat with LLM
+        </button>
+        <button
+          className={distillTab === "auditor" ? "active" : ""}
+          onClick={() => {
+            setDistillTab("auditor");
+            void runUnresolvedLinksScan();
+            void onRunHealthAudit();
+          }}
+        >
+          Wiki Auditor
+        </button>
+        <button
+          className={distillTab === "git" ? "active" : ""}
+          onClick={() => {
+            setDistillTab("git");
+            void onRefreshGit();
+          }}
+        >
+          Git Workspace
+        </button>
+      </div>
+
+      {distillTab === "git" ? (
+        <GitWorkspace
+          gitStatus={gitStatus}
+          gitChanges={gitChanges}
+          selectedGitFile={selectedGitFile}
+          selectedGitFileStaged={selectedGitFileStaged}
+          activeDiff={activeDiff}
+          commitMessage={commitMessage}
+          isGitLoading={isGitLoading}
+          gitOutputLog={gitOutputLog}
+          setCommitMessage={setCommitMessage}
+          setSelectedGitFile={setSelectedGitFile}
+          setSelectedGitFileStaged={setSelectedGitFileStaged}
+          setGitOutputLog={setGitOutputLog}
+          onRefreshGit={onRefreshGit}
+          onStageAll={onStageAll}
+          onCommit={onCommit}
+          onPull={onPull}
+          onPush={onPush}
+          onLoadDiff={onLoadDiff}
+        />
+      ) : (
+        <div className="distillWorkspaceLayout">
+          <div className="distillLeftCol">
 
           {distillTab === "paste" && (
             <div className="distillInputArea">
@@ -874,6 +943,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
           )}
         </div>
       </div>
+      )}
     </section>
   );
 }

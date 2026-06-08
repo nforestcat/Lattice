@@ -149,6 +149,12 @@ export type VaultApi = {
   restoreSnapshot(snapshotId: string): Promise<SaveResult>;
   getGitStatus(): Promise<GitStatus>;
   setAutoGit(enabled: boolean): Promise<GitSettings>;
+  getGitChanges(): Promise<GitFileChange[]>;
+  getGitDiff(path: string, staged: boolean): Promise<string>;
+  gitStageAll(): Promise<void>;
+  gitCommit(message: string): Promise<string>;
+  gitPull(): Promise<string>;
+  gitPush(): Promise<string>;
   getVaultConfig(): Promise<VaultConfig>;
   saveVaultConfig(config: VaultConfig): Promise<void>;
   archivePromptRun(runId: string, content: string): Promise<string>;
@@ -263,4 +269,11 @@ export type StubDraftReview = {
   status: "done" | "drafting" | "error";
   approved: boolean;
 };
+
+export type GitFileChange = {
+  path: string;
+  status: "modified" | "added" | "deleted" | "untracked" | "renamed";
+  staged: boolean;
+};
+
 
