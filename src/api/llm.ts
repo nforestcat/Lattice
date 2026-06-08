@@ -5,10 +5,17 @@ export interface ChatMessage {
   content: string;
 }
 
+import { invoke } from "@tauri-apps/api/core";
+
 export async function sendChatMessage(
   config: LlmConfig,
   messages: ChatMessage[]
 ): Promise<string> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    const redactedConfig = { ...config, apiKey: "" };
+    return invoke<string>("send_llm_chat_message", { config: redactedConfig, messages });
+  }
+
   const { provider, apiKey, model, baseUrl } = config;
 
   switch (provider) {

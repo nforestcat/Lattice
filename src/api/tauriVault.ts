@@ -73,6 +73,9 @@ export function createTauriVaultApi(): VaultApi {
     applyBacklinkSuggestion: (suggestion: BacklinkSuggestion) =>
       invoke<void>("apply_backlink_suggestion", { suggestion }),
     applyNoteMetadata: (path: string, frontmatter: Record<string, string>, tags: string[]) =>
-      invoke<void>("apply_note_metadata", { path, frontmatter, tags })
+      invoke<void>("apply_note_metadata", { path, frontmatter, tags }),
+    saveApiKey: (provider: string, key: string) => invoke<void>("save_api_key", { provider, key }),
+    getApiKey: (provider: string) => invoke<string>("get_api_key", { provider }),
+    fetchProviderModels: (provider: string, baseUrl?: string) => invoke<string[]>("fetch_provider_models", { provider, baseUrl })
   };
 }

@@ -1,6 +1,5 @@
 import { markdown } from "@codemirror/lang-markdown";
 import CodeMirror from "@uiw/react-codemirror";
-import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
@@ -12,6 +11,9 @@ import type { GraphData, NoteContext, NoteMeta } from "../core/types";
 import { estimateTokens } from "../core/contextBundle";
 import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
+import { GraphView } from "./components/GraphView";
+import { PromptHistoryPanel } from "./components/PromptHistoryPanel";
+import { DistillWorkspace } from "./components/DistillWorkspace";
 
 export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
   {
@@ -92,7 +94,12 @@ function llmApiKeyStorageKey(provider: LlmProvider): string {
   return `lattice:llm-api-key:${provider}`;
 }
 
+const apiKeysCache: Record<string, string> = {};
+
 function readStoredLlmApiKey(provider: LlmProvider): string {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    return apiKeysCache[provider] || "";
+  }
   if (typeof window === "undefined") {
     return "";
   }
@@ -104,11 +111,16 @@ function readStoredLlmApiKey(provider: LlmProvider): string {
 }
 
 function saveStoredLlmApiKey(provider: LlmProvider, apiKey: string): void {
+  const key = apiKey.trim();
+  apiKeysCache[provider] = key;
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    void vaultApi.saveApiKey(provider, key);
+    return;
+  }
   if (typeof window === "undefined") {
     return;
   }
   try {
-    const key = apiKey.trim();
     if (key) {
       window.localStorage.setItem(llmApiKeyStorageKey(provider), key);
     } else {
@@ -435,54 +447,6 @@ export function App() {
   const [backlinkSuggestions, setBacklinkSuggestions] = useState<BacklinkSuggestion[]>([]);
   const [isLoadingBacklinkSuggestions, setIsLoadingBacklinkSuggestions] = useState(false);
 
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [isFetchingModels, setIsFetchingModels] = useState(false);
-
-  async function fetchLocalModels() {
-    const provider = llmConfig.provider;
-    let url = "";
-    if (provider === "ollama") {
-      url = (llmConfig.baseUrl || "http://localhost:11434").replace(/\/+$/, "") + "/api/tags";
-    } else if (provider === "lm-studio") {
-      url = (llmConfig.baseUrl || "http://localhost:1234/v1").replace(/\/+$/, "") + "/models";
-    } else {
-      return;
-    }
-
-    setIsFetchingModels(true);
-    setStatus(`Fetching models from ${provider}...`);
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-      const data = await response.json();
-      let modelsList: string[] = [];
-
-      if (provider === "ollama") {
-        if (data && Array.isArray(data.models)) {
-          modelsList = data.models.map((m: any) => String(m.name));
-        }
-      } else if (provider === "lm-studio") {
-        if (data && Array.isArray(data.data)) {
-          modelsList = data.data.map((m: any) => String(m.id));
-        }
-      }
-
-      setAvailableModels(modelsList);
-      if (modelsList.length > 0) {
-        setStatus(`Successfully fetched ${modelsList.length} models from ${provider}!`);
-      } else {
-        setStatus(`No models returned from ${provider}.`);
-      }
-    } catch (e) {
-      console.error("Failed to fetch local models", e);
-      setStatus(`Failed to fetch models: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setIsFetchingModels(false);
-    }
-  }
-
   async function refreshBacklinkSuggestions(path: string) {
     setIsLoadingBacklinkSuggestions(true);
     try {
@@ -711,7 +675,23 @@ Return the complete note content including any YAML frontmatter block at the ver
   };
 
   useEffect(() => {
-    void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
+    async function init() {
+      if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+        const providers: LlmProvider[] = ["openai", "anthropic", "gemini", "ollama", "lm-studio", "custom"];
+        for (const provider of providers) {
+          try {
+            const key = await vaultApi.getApiKey(provider);
+            if (key) {
+              apiKeysCache[provider] = key;
+            }
+          } catch (e) {
+            console.error(`Failed to load key for ${provider}`, e);
+          }
+        }
+      }
+      void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
+    }
+    void init();
   }, []);
 
   useEffect(() => {
@@ -2604,614 +2584,51 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
             </section>
           )}
           {viewMode === "distill" && (
-            <section className="distillSurface">
-              <div className="distillWorkspaceLayout">
-                <div className="distillLeftCol">
-                  <div className="distillTabHeader">
-                    <button
-                      className={distillTab === "paste" ? "active" : ""}
-                      onClick={() => setDistillTab("paste")}
-                    >
-                      Paste Raw Input
-                    </button>
-                    <button
-                      className={distillTab === "chat" ? "active" : ""}
-                      onClick={() => setDistillTab("chat")}
-                    >
-                      Chat with LLM
-                    </button>
-                    <button
-                      className={distillTab === "auditor" ? "active" : ""}
-                      onClick={() => {
-                        setDistillTab("auditor");
-                        void runUnresolvedLinksScan();
-                      }}
-                    >
-                      Wiki Auditor
-                    </button>
-                  </div>
-
-                  {distillTab === "paste" && (
-                    <div className="distillInputArea">
-                      <h3>Raw Input Context</h3>
-                      <textarea
-                        className="distillTextarea"
-                        value={distillInputText}
-                        onChange={(e) => setDistillInputText(e.target.value)}
-                        placeholder="Paste raw conversation logs, inbox captures, or meeting notes here to distill into structured wiki page proposed edits..."
-                      />
-                      <div className="distillActions">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const mockPrompt = `<propose_edit type="create" path="Research/Compounding Memory.md">
-  <reason>Documenting the core mechanism of LLM wiki maintenance.</reason>
-  <content># Compounding Memory
-
-Persistent synthesis allows LLMs to read and write directly to the wiki rather than searching raw chunks.
-- **Persistent synthesis**: Continually updating a core wiki page.
-- **LLM-editable Markdown**: Simple structure.
-- **Maintenance loop**: Compounding knowledge over time.</content>
-</propose_edit>
-
-<propose_edit type="update" path="Home.md">
-  <reason>Link the new Compounding Memory research note.</reason>
-  <target_content>Welcome to the local wiki workspace!</target_content>
-  <replacement_content>Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note.</replacement_content>
-</propose_edit>
-
-<propose_edit type="delete" path="TempDraft.md">
-  <reason>Clean up old draft note.</reason>
-</propose_edit>
-
-<propose_edit type="merge" path="StaleNotes.md" new_path="Home.md">
-  <reason>Merge outdated stale notes into Home wiki page.</reason>
-  <content>Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note. Also merging relevant guidelines here.</content>
-</propose_edit>`;
-                            setDistillInputText(mockPrompt);
-                          }}
-                        >
-                          Load Mock Proposal
-                        </button>
-                        <button
-                          className="primary"
-                          type="button"
-                          onClick={async () => {
-                            const parsed = await vaultApi.parseProposedEdits(distillInputText);
-                            const checkedParsed = parsed.map(p => ({ ...p, checked: true }));
-                            setProposedEdits(checkedParsed);
-                            setStatus(`Extracted ${checkedParsed.length} proposed edit(s).`);
-                          }}
-                        >
-                          Propose Wiki Edits
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {distillTab === "chat" && (
-                    <div className="distillChatArea">
-                      <div className="chatHeader">
-                        <h3>LLM Copilot Chat</h3>
-                        <div className="chatHeaderActions">
-                          <button
-                            type="button"
-                            className="textButton"
-                            onClick={() => setShowLlmSettings(!showLlmSettings)}
-                          >
-                            ⚙️ {showLlmSettings ? "Close Settings" : "LLM Settings"}
-                          </button>
-                          <button
-                            type="button"
-                            className="textButton"
-                            onClick={clearChatHistory}
-                            disabled={chatMessages.length === 0}
-                          >
-                            🗑️ Clear Chat
-                          </button>
-                        </div>
-                      </div>
-
-                      {showLlmSettings && (
-                        <div className="llmSettingsPanel">
-                          <h4>LLM Configuration</h4>
-                          <div className="formGroup">
-                            <label>Provider</label>
-                            <select
-                              value={llmConfig.provider}
-                              onChange={(e) => {
-                                const prov = e.target.value as LlmProvider;
-                                const defaultModels: Record<LlmProvider, string> = {
-                                  openai: "gpt-4o",
-                                  anthropic: "claude-3-5-sonnet-20240620",
-                                  gemini: "gemini-1.5-pro",
-                                  ollama: "llama3",
-                                  custom: "gpt-4o",
-                                  "lm-studio": "qwen2.5-coder-7b"
-                                };
-                                const defaultBases: Record<LlmProvider, string> = {
-                                  openai: "",
-                                  anthropic: "",
-                                  gemini: "",
-                                  ollama: "http://localhost:11434",
-                                  custom: "http://localhost:1234/v1",
-                                  "lm-studio": "http://localhost:1234/v1"
-                                };
-                                setLlmConfig(prev => ({
-                                  ...prev,
-                                  provider: prov,
-                                  apiKey: readStoredLlmApiKey(prov),
-                                  model: defaultModels[prov],
-                                  baseUrl: defaultBases[prov] || undefined
-                                }));
-                                setAvailableModels([]);
-                              }}
-                            >
-                              <option value="openai">OpenAI</option>
-                              <option value="anthropic">Anthropic</option>
-                              <option value="gemini">Google Gemini</option>
-                              <option value="ollama">Ollama (Local)</option>
-                              <option value="lm-studio">LM Studio (Local)</option>
-                              <option value="custom">Custom (OpenAI-compatible)</option>
-                            </select>
-                          </div>
-
-                          <div className="formGroup">
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                              <label style={{ margin: 0 }}>Model</label>
-                              {(llmConfig.provider === "ollama" || llmConfig.provider === "lm-studio") && (
-                                <button
-                                  type="button"
-                                  className="fetch-models-btn"
-                                  onClick={() => void fetchLocalModels()}
-                                  disabled={isFetchingModels}
-                                  style={{
-                                    background: "none",
-                                    border: "none",
-                                    color: "#3b82f6",
-                                    fontSize: "10px",
-                                    fontWeight: 600,
-                                    cursor: "pointer",
-                                    padding: "2px 4px",
-                                    borderRadius: "4px",
-                                    transition: "background-color 0.2s"
-                                  }}
-                                >
-                                  {isFetchingModels ? "Fetching..." : "Fetch Models"}
-                                </button>
-                              )}
-                            </div>
-                            <input
-                              type="text"
-                              value={llmConfig.model}
-                              onChange={(e) => setLlmConfig(prev => ({ ...prev, model: e.target.value }))}
-                              placeholder="e.g. gpt-4o, llama3"
-                              list="available-models-list"
-                            />
-                            <datalist id="available-models-list">
-                              {availableModels.map(m => <option key={m} value={m} />)}
-                            </datalist>
-                          </div>
-
-                          {llmConfig.provider !== "ollama" && llmConfig.provider !== "lm-studio" && (
-                            <div className="formGroup">
-                              <label>API Key</label>
-                              <input
-                                type="password"
-                                value={llmConfig.apiKey}
-                                onChange={(e) => setLlmConfig(prev => ({ ...prev, apiKey: e.target.value }))}
-                                placeholder="Enter API Key"
-                              />
-                            </div>
-                          )}
-
-                          {(llmConfig.provider === "ollama" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
-                            <div className="formGroup">
-                              <label>Base URL</label>
-                              <input
-                                type="text"
-                                value={llmConfig.baseUrl || ""}
-                                onChange={(e) => setLlmConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
-                                placeholder={llmConfig.provider === "ollama" ? "http://localhost:11434" : "http://localhost:1234/v1"}
-                              />
-                            </div>
-                          )}
-
-                          {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
-                            <div className="formGroup">
-                              <label>Embedding Model</label>
-                              <input
-                                type="text"
-                                value={llmConfig.embeddingModel || ""}
-                                onChange={(e) => setLlmConfig(prev => ({ ...prev, embeddingModel: e.target.value }))}
-                                placeholder={llmConfig.provider === "ollama" ? "all-minilm" : "text-embedding-3-small"}
-                              />
-                            </div>
-                          )}
-
-                          <div className="settingsSection" style={{ marginTop: "12px", borderTop: "1px dashed #cbd5e1", paddingTop: "12px", marginBottom: "12px" }}>
-                            <h4 style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#344054" }}>Prompt Archive Settings</h4>
-                            <div className="formGroup">
-                              <label>Auto-Pruning Policy</label>
-                              <select
-                                value={vaultConfig.archiveRetentionPolicy || "none"}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  void updateVaultConfig({
-                                    archiveRetentionPolicy: val
-                                  });
-                                }}
-                              >
-                                <option value="none">Keep all history indefinitely</option>
-                                <option value="7">Prune runs older than 7 days</option>
-                                <option value="30">Prune runs older than 30 days</option>
-                                <option value="90">Prune runs older than 90 days</option>
-                              </select>
-                            </div>
-                            <button
-                              type="button"
-                              className="btnPruneExpired"
-                              style={{ width: "100%", marginTop: "6px", fontSize: "11px", padding: "4px 8px" }}
-                              onClick={() => void pruneExpiredPromptRuns(vaultConfig.archiveRetentionPolicy || "none")}
-                            >
-                              Prune Expired Runs Now
-                            </button>
-                          </div>
-
-                          <button
-                            type="button"
-                            className="primary btnSaveSettings"
-                            onClick={() => {
-                              saveStoredLlmApiKey(llmConfig.provider, llmConfig.apiKey);
-                              void updateVaultConfig({ llmConfig: redactLlmConfig(llmConfig) });
-                              setShowLlmSettings(false);
-                              setStatus("LLM settings saved; API key kept in local app storage");
-                            }}
-                          >
-                            Save Settings
-                          </button>
-                        </div>
-                      )}
-
-                      <div className="chatMessagesBox">
-                        {chatMessages.length === 0 ? (
-                          <div className="chatEmptyState">
-                            <p>Ask a question or request page edits using the wiki context.</p>
-                            <p className="hint">Try asking: "Propose a new note summarizing the core features of React."</p>
-                          </div>
-                        ) : (
-                          chatMessages.map((msg, idx) => (
-                            <div key={idx} className={`chatMessageBubble ${msg.role}`}>
-                              <span className="messageSender">{msg.role === "user" ? "You" : "Copilot"}</span>
-                              <div className="messageText">{msg.content}</div>
-                            </div>
-                          ))
-                        )}
-                        {isLlmGenerating && (
-                          <div className="chatMessageBubble assistant generating">
-                            <span className="messageSender">Copilot</span>
-                            <div className="messageText">Thinking...</div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="chatInputControls">
-                        <div className="chatContextOption">
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={includeContext}
-                              onChange={(e) => setIncludeContext(e.target.checked)}
-                            />
-                            Include active context bundle ({contextBundle ? `${contextBundle.notePaths.length} note(s)` : "None"})
-                          </label>
-                        </div>
-                        <div className="chatInputRow">
-                          <textarea
-                            value={chatInput}
-                            onChange={(e) => setChatInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                void handleSendChatMessage();
-                              }
-                            }}
-                            placeholder="Message LLM copilot... (Press Enter to send)"
-                          />
-                          <button
-                            type="button"
-                            className="primary"
-                            disabled={!chatInput.trim() || isLlmGenerating}
-                            onClick={() => void handleSendChatMessage()}
-                          >
-                            Send
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {distillTab === "auditor" && (
-                    <div className="distillAuditorArea">
-                      <div className="auditorHeader">
-                        <h3>Wiki Link Auditor</h3>
-                        <button
-                          type="button"
-                          className="smallButton"
-                          disabled={isScanningUnresolved}
-                          onClick={() => void runUnresolvedLinksScan()}
-                        >
-                          {isScanningUnresolved ? "Scanning..." : "Re-Scan Vault"}
-                        </button>
-                      </div>
-
-                      {isScanningUnresolved && (
-                        <div className="auditorLoading">
-                          <span className="spinner">⌛</span> Scanning all vault notes for unresolved wiki links...
-                        </div>
-                      )}
-
-                      {!isScanningUnresolved && (
-                        <div className="unresolvedLinksList">
-                          {unresolvedLinks.length === 0 ? (
-                            <div className="auditorSuccessState">
-                              <span className="successCheck">✓</span>
-                              <p>All wiki links are resolved! No dead links found in the vault.</p>
-                            </div>
-                          ) : (
-                            <>
-                              <p className="hint" style={{ marginBottom: "12px" }}>
-                                The following wiki links exist in note contents but do not resolve to any existing note file. Select links to draft and resolve stubs in bulk.
-                              </p>
-
-                              <div className="bulkActionsBar">
-                                <label className="checkboxLabel">
-                                  <input
-                                    type="checkbox"
-                                    checked={unresolvedLinks.length > 0 && selectedUnresolvedTargets.size === unresolvedLinks.length}
-                                    onChange={handleSelectAllToggle}
-                                    disabled={isBulkProcessing}
-                                  />
-                                  <span>Select All ({selectedUnresolvedTargets.size} / {unresolvedLinks.length})</span>
-                                </label>
-                                <div className="bulkActionButtons">
-                                  <button
-                                    type="button"
-                                    className="smallButton primary"
-                                    disabled={selectedUnresolvedTargets.size === 0 || isBulkProcessing}
-                                    onClick={() => void runBulkDrafting()}
-                                  >
-                                    {isBulkProcessing ? "Drafting..." : `Draft Selected (${selectedUnresolvedTargets.size})`}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="smallButton successButton"
-                                    disabled={
-                                      selectedUnresolvedTargets.size === 0 ||
-                                      isBulkProcessing ||
-                                      Array.from(selectedUnresolvedTargets).filter(t => bulkDrafts[t]?.status === "done").length === 0
-                                    }
-                                    onClick={() => void createSelectedStubs()}
-                                  >
-                                    Create Selected
-                                  </button>
-                                  {Object.keys(bulkDrafts).length > 0 && (
-                                    <button
-                                      type="button"
-                                      className="smallButton"
-                                      disabled={isBulkProcessing}
-                                      onClick={() => {
-                                        setBulkDrafts({});
-                                        setSelectedUnresolvedTargets(new Set());
-                                      }}
-                                    >
-                                      Clear Drafts
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              {unresolvedLinks.map((item) => {
-                                const draftState = bulkDrafts[item.target];
-                                return (
-                                  <div key={item.target} className="unresolvedLinkCard">
-                                    <div className="unresolvedLinkHeader">
-                                      <label className="checkboxLabel">
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedUnresolvedTargets.has(item.target)}
-                                          onChange={(e) => {
-                                            const next = new Set(selectedUnresolvedTargets);
-                                            if (e.target.checked) {
-                                              next.add(item.target);
-                                            } else {
-                                              next.delete(item.target);
-                                            }
-                                            setSelectedUnresolvedTargets(next);
-                                          }}
-                                          disabled={isBulkProcessing}
-                                        />
-                                        <strong>[[{item.target}]]</strong>
-                                      </label>
-
-                                      <div className="cardHeaderActions">
-                                        {draftState?.status === "drafting" && <span className="statusText drafting">⌛ Drafting...</span>}
-                                        {draftState?.status === "done" && <span className="statusText success">✓ Draft Ready</span>}
-                                        {draftState?.status === "error" && <span className="statusText error">❌ Failed</span>}
-
-                                        {!draftState && (
-                                          <button
-                                            type="button"
-                                            className="smallButton primary"
-                                            disabled={isBulkProcessing}
-                                            onClick={() => void draftStubNote(item.target, item.sources)}
-                                          >
-                                            Draft Stub
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {draftState?.status === "done" && (
-                                      <div className="cardDraftPreview">
-                                        <textarea
-                                          className="stubPreviewTextarea"
-                                          value={draftState.content}
-                                          onChange={(e) => {
-                                            setBulkDrafts(prev => ({
-                                              ...prev,
-                                              [item.target]: { ...prev[item.target], content: e.target.value }
-                                            }));
-                                          }}
-                                          placeholder="Edit drafted stub content..."
-                                        />
-                                      </div>
-                                    )}
-
-                                    <div className="unresolvedLinkSources">
-                                      <span>Referenced in:</span>
-                                      {item.sources.map((source) => (
-                                        <div key={source.path} className="sourceExcerptCard">
-                                          <div className="sourceTitle">
-                                            {source.title} (<code>{source.path}</code>)
-                                          </div>
-                                          <pre className="sourceExcerpt">{source.excerpt}</pre>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className="distillRightCol">
-                  <div className="proposedEditsHeader">
-                    <h3>Proposed Edits ({proposedEdits.filter(p => !p.applied).length} pending)</h3>
-                    <button
-                      className="primary"
-                      disabled={proposedEdits.filter(p => p.checked && !p.applied).length === 0}
-                      onClick={() => void applyCheckedEdits()}
-                    >
-                      Apply Checked Edits
-                    </button>
-                  </div>
-
-                  {proposedEdits.length === 0 ? (
-                    <div className="noProposalsBox">
-                      <span style={{ color: "#64748b" }}>No proposed edits extracted yet. Paste context and click "Propose Wiki Edits".</span>
-                    </div>
-                  ) : (
-                    <div className="proposalsList">
-                      {proposedEdits.map((edit) => (
-                        <div
-                          key={edit.id}
-                          className={`proposalCard ${edit.applied ? "applied" : ""}`}
-                        >
-                          <div className="proposalCardHeader">
-                            <label className="proposalCheckboxLabel">
-                              <input
-                                type="checkbox"
-                                checked={!!edit.checked}
-                                disabled={edit.applied}
-                                onChange={(e) => {
-                                  setProposedEdits(prev =>
-                                    prev.map(p => p.id === edit.id ? { ...p, checked: e.target.checked } : p)
-                                  );
-                                }}
-                              />
-                              <span className="proposalPath">{edit.path}</span>
-                            </label>
-                            <span className={`proposalBadge ${edit.type}`}>{edit.type}</span>
-                            {edit.applied && <span className="appliedBadge">✓ Applied</span>}
-                          </div>
-
-                          {edit.reason && (
-                            <div className="proposalReason">
-                              <strong>Reason:</strong> {edit.reason}
-                            </div>
-                          )}
-
-                          <div className="proposalBody">
-                            {edit.type === "create" && (
-                              <div className="proposalEditor">
-                                <label>Proposed Content:</label>
-                                <textarea
-                                  className="proposalTextarea"
-                                  value={edit.content || ""}
-                                  disabled={edit.applied}
-                                  onChange={(e) => {
-                                    setProposedEdits(prev =>
-                                      prev.map(p => p.id === edit.id ? { ...p, content: e.target.value } : p)
-                                    );
-                                  }}
-                                />
-                              </div>
-                            )}
-
-                            {edit.type === "update" && (
-                              <div className="proposalDiffView">
-                                <div className="diffOriginal">
-                                  <span className="diffLabel">Target Segment (Search):</span>
-                                  <pre>{edit.targetContent}</pre>
-                                </div>
-                                <div className="diffReplacement">
-                                  <span className="diffLabel">Replacement Segment:</span>
-                                  <div className="proposalEditor">
-                                    <textarea
-                                      className="proposalTextarea"
-                                      value={edit.replacementContent || ""}
-                                      disabled={edit.applied}
-                                      onChange={(e) => {
-                                        setProposedEdits(prev =>
-                                          prev.map(p => p.id === edit.id ? { ...p, replacementContent: e.target.value } : p)
-                                        );
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            {edit.type === "delete" && (
-                              <div className="proposalDeleteNotice">
-                                This action will delete the note at <strong>{edit.path}</strong>.
-                              </div>
-                            )}
-
-                            {edit.type === "merge" && (
-                              <div className="proposalMergeFields">
-                                <div>
-                                  <strong>Target Destination:</strong> <code className="proposalPath">{edit.newPath}</code>
-                                </div>
-                                <div className="proposalEditor" style={{ marginTop: 8 }}>
-                                  <label>Merged Content:</label>
-                                  <textarea
-                                    className="proposalTextarea"
-                                    value={edit.content || ""}
-                                    disabled={edit.applied}
-                                    onChange={(e) => {
-                                      setProposedEdits(prev =>
-                                        prev.map(p => p.id === edit.id ? { ...p, content: e.target.value } : p)
-                                      );
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
+            <DistillWorkspace
+              vault={vault}
+              activePath={activePath}
+              llmConfig={llmConfig}
+              setLlmConfig={setLlmConfig}
+              vaultConfig={vaultConfig}
+              updateVaultConfig={updateVaultConfig}
+              saveStoredLlmApiKey={saveStoredLlmApiKey}
+              readStoredLlmApiKey={readStoredLlmApiKey}
+              redactLlmConfig={redactLlmConfig}
+              pruneExpiredPromptRuns={pruneExpiredPromptRuns}
+              setStatus={setStatus}
+              contextBundle={contextBundle}
+              distillTab={distillTab}
+              setDistillTab={setDistillTab}
+              distillInputText={distillInputText}
+              setDistillInputText={setDistillInputText}
+              proposedEdits={proposedEdits}
+              setProposedEdits={setProposedEdits}
+              applyCheckedEdits={applyCheckedEdits}
+              chatMessages={chatMessages}
+              setChatMessages={setChatMessages}
+              chatInput={chatInput}
+              setChatInput={setChatInput}
+              isLlmGenerating={isLlmGenerating}
+              setIsLlmGenerating={setIsLlmGenerating}
+              includeContext={includeContext}
+              setIncludeContext={setIncludeContext}
+              clearChatHistory={clearChatHistory}
+              handleSendChatMessage={handleSendChatMessage}
+              showLlmSettings={showLlmSettings}
+              setShowLlmSettings={setShowLlmSettings}
+              unresolvedLinks={unresolvedLinks}
+              isScanningUnresolved={isScanningUnresolved}
+              selectedUnresolvedTargets={selectedUnresolvedTargets}
+              setSelectedUnresolvedTargets={setSelectedUnresolvedTargets}
+              bulkDrafts={bulkDrafts}
+              setBulkDrafts={setBulkDrafts}
+              isBulkProcessing={isBulkProcessing}
+              runUnresolvedLinksScan={runUnresolvedLinksScan}
+              handleSelectAllToggle={handleSelectAllToggle}
+              runBulkDrafting={runBulkDrafting}
+              createSelectedStubs={createSelectedStubs}
+              draftStubNote={draftStubNote}
+            />
           )}
         </div>
       </section>
@@ -3622,283 +3039,35 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
             </div>
           )}
         </section>
-        <section className="promptHistorySection">
-          <h2>Prompt History</h2>
-          {(!vaultConfig.promptRuns || vaultConfig.promptRuns.length === 0) ? (
-            <p className="muted">No history yet</p>
-          ) : (() => {
-            const filteredPromptRuns = (vaultConfig.promptRuns ?? []).filter(run => {
-              if (historySearchQuery.trim()) {
-                const q = historySearchQuery.toLowerCase();
-                const matchQuestion = run.question.toLowerCase().includes(q);
-                const matchPreset = run.preset.toLowerCase().includes(q);
-                const matchNote = run.activePath.toLowerCase().includes(q);
-                if (!matchQuestion && !matchPreset && !matchNote) {
-                  return false;
-                }
-              }
-              if (historyActiveNoteOnly && activePath && run.activePath !== activePath) {
-                return false;
-              }
-              if (historyPresetFilter && run.preset !== historyPresetFilter) {
-                return false;
-              }
-              return true;
-            });
-
-            return (
-              <>
-                {archiveStatus && (
-                  <div className="archiveStatusBar">
-                    <span className="archiveStatusText">
-                      📁 Archive: <strong>{archiveStatus.fileCount}</strong> file(s) ({(archiveStatus.totalBytes / 1024).toFixed(1)} KB)
-                    </span>
-                    <div className="archiveActions">
-                      <button
-                        className="smallButton exportButton"
-                        onClick={() => void exportPromptRuns()}
-                        title="Export prompt runs as a JSON file"
-                      >
-                        Export
-                      </button>
-                      <button
-                        className="smallButton importButton"
-                        onClick={() => window.document.getElementById("promptArchiveImportInput")?.click()}
-                        title="Import prompt runs from a JSON file"
-                      >
-                        Import
-                      </button>
-                      <input
-                        id="promptArchiveImportInput"
-                        type="file"
-                        accept=".json"
-                        style={{ display: "none" }}
-                        onChange={(e) => void handleImportArchiveFile(e)}
-                      />
-                      <button
-                        className="smallButton pruneButton"
-                        onClick={() => void pruneArchivedPrompts()}
-                        title="Clean up disk files of deleted prompt runs"
-                      >
-                        Prune Orphaned
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div className="historyFilters">
-                  <input
-                    type="text"
-                    placeholder="Search history..."
-                    value={historySearchQuery}
-                    onChange={(e) => setHistorySearchQuery(e.target.value)}
-                    className="historySearchField"
-                  />
-                  <div className="historyFilterControls">
-                    <label className="historyFilterCheckbox">
-                      <input
-                        type="checkbox"
-                        checked={historyActiveNoteOnly}
-                        onChange={(e) => setHistoryActiveNoteOnly(e.target.checked)}
-                      />
-                      <span>Active note only</span>
-                    </label>
-                    <select
-                      value={historyPresetFilter}
-                      onChange={(e) => setHistoryPresetFilter(e.target.value)}
-                      className="historyPresetSelect"
-                    >
-                      <option value="">All presets</option>
-                      {Array.from(new Set((vaultConfig.promptRuns ?? []).map((r) => r.preset))).map((preset) => (
-                        <option key={preset} value={preset}>{preset}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {filteredPromptRuns.length === 0 ? (
-                  <p className="muted">No matching history found</p>
-                ) : (
-                  <div className="promptRunList">
-                    {filteredPromptRuns.map((run) => (
-                      <div 
-                        key={run.id} 
-                        className={`promptRunCard ${expandedRunId === run.id ? "expanded" : ""}`}
-                        style={{ cursor: "pointer" }}
-                        onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}
-                      >
-                        <div className="promptRunHeader">
-                          <span className="promptRunTime" title={run.createdAt}>
-                            {new Date(run.createdAt).toLocaleString()}
-                          </span>
-                          <span className="promptRunMetaBadge">{run.preset} / {run.mode}</span>
-                        </div>
-                        <div className="promptRunQuestion">
-                          {run.question ? run.question : <span className="muted italic">No question (bundle only)</span>}
-                        </div>
-                        <div className="promptRunDetails">
-                          <span className="promptRunNoteLink" title="Click to view note" onClick={(e) => { e.stopPropagation(); void selectNote(run.activePath); }}>
-                            [[{run.activePath.split('/').pop() || run.activePath}]]
-                          </span>
-                          <span className="promptRunTokens">{run.tokenCount.toLocaleString()} tokens</span>
-                        </div>
-                        <div className="promptRunActions" onClick={(e) => e.stopPropagation()}>
-                          <button className="smallButton" onClick={() => void applyPromptRun(run)}>
-                            Load
-                          </button>
-                          <button className="smallButton" onClick={() => void copyPromptRunQuestion(run)}>
-                            Copy Question
-                          </button>
-                          <button className="smallButton" onClick={() => void copyFullPromptFromHistory(run)}>
-                            Copy Full Prompt
-                          </button>
-                          <button className="smallButton dangerButton" onClick={(e) => void deletePromptRun(run.id, e)}>
-                            Delete
-                          </button>
-                        </div>
-                        {expandedRunId === run.id && (
-                          <div className="promptRunExpandedPanel" onClick={(e) => e.stopPropagation()}>
-                            {run.promptHash && (
-                              <div className="expandedMetaRow">
-                                <strong>Hash:</strong> <code>{run.promptHash}</code>
-                              </div>
-                            )}
-                            <div className="expandedMetaRow">
-                              <strong>Included Notes ({run.selectedNotes.length}):</strong>
-                              <div className="expandedNotesList">
-                                {run.selectedNotes.map(p => (
-                                  <span key={p} className="expandedNoteBadge">{p.split('/').pop() || p}</span>
-                                ))}
-                              </div>
-                            </div>
-                            {run.preview && (
-                              <div className="expandedPreviewWrapper">
-                                <strong>Prompt Preview (First 1.5 KB):</strong>
-                                <textarea readOnly value={run.preview} className="expandedPreviewTextarea" />
-                              </div>
-                            )}
-                            {contextBundle ? (() => {
-                              const currentCombined = buildCombinedPrompt(promptInstruction, contextBundle.markdown);
-                              const currentHash = currentPromptHash ?? "calculating";
-                              const hashesMatch = Boolean(currentPromptHash && run.promptHash && currentPromptHash === run.promptHash);
-                              
-                              const addedNotes = contextBundle.notePaths.filter(p => !new Set(run.selectedNotes).has(p));
-                              const removedNotes = run.selectedNotes.filter(p => !new Set(contextBundle.notePaths).has(p));
-                              
-                              const instructionDiffers = promptInstruction.trim() !== run.question.trim();
-                              
-                              return (
-                                <div className="historyDiffContainer">
-                                  <div className="diffHeader">
-                                    <strong>🔍 Session Comparison</strong>
-                                    {hashesMatch ? (
-                                      <span className="diffStatusBadge match">🟢 Exact Match</span>
-                                    ) : (
-                                      <span className="diffStatusBadge modified">🟡 Modified</span>
-                                    )}
-                                  </div>
-                                  
-                                  {!hashesMatch && (
-                                    <div className="diffDetails">
-                                      <div className="diffRow">
-                                        <span className="diffLabel">Prompt Hash:</span>
-                                        <div className="diffValue">
-                                          <span className="hashStored">{run.promptHash || "none"}</span>
-                                          <span className="hashArrow">➔</span>
-                                          <span className="hashCurrent">{currentHash}</span>
-                                        </div>
-                                      </div>
-
-                                      {instructionDiffers && (
-                                        <div className="diffRow instructionDiff">
-                                          <span className="diffLabel">Instruction Text:</span>
-                                          <div className="diffValueText">
-                                            <div className="diffTextRemoved">- {run.question || "(empty)"}</div>
-                                            <div className="diffTextAdded">+ {promptInstruction || "(empty)"}</div>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {(addedNotes.length > 0 || removedNotes.length > 0) && (
-                                        <div className="diffRow notesDiff">
-                                          <span className="diffLabel">Notes Changes:</span>
-                                          <div className="diffNotesDelta">
-                                            {removedNotes.map(n => (
-                                              <span key={n} className="diffNoteBadge removed">-{n.split('/').pop() || n}</span>
-                                            ))}
-                                            {addedNotes.map(n => (
-                                              <span key={n} className="diffNoteBadge added">+{n.split('/').pop() || n}</span>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {run.preview && (
-                                        <div className="diffRow previewDiff">
-                                          <span className="diffLabel">Preview Comparison (Stored vs Current):</span>
-                                          <div className="diffPreviewsSplit">
-                                            <div className="diffPreviewBox stored">
-                                              <div className="boxTitle">Stored Run</div>
-                                              <pre>{run.preview}</pre>
-                                            </div>
-                                            <div className="diffPreviewBox current">
-                                              <div className="boxTitle">Current Session</div>
-                                              <pre>{currentCombined.slice(0, 1500) + (currentCombined.length > 1500 ? "..." : "")}</pre>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  
-                                  <div className="diffFullTextCompareSection">
-                                    <button
-                                      className="smallButton secondary"
-                                      onClick={() => void loadPromptDiff(run)}
-                                      style={{ marginTop: "8px" }}
-                                    >
-                                      {diffRunId === run.id ? "Hide Full Text Diff" : "Compare Full Text (Exact)"}
-                                    </button>
-
-                                    {diffRunId === run.id && diffResult && (
-                                      <div className="fullPromptDiffWrapper">
-                                        <div className="diffHeader">
-                                          <strong>Unified Prompt Diff</strong>
-                                          {diffResult.regenerating && <span className="diffRegenText">Retrieving/Regenerating...</span>}
-                                        </div>
-                                        {diffResult.error ? (
-                                          <div className="diffErrorText">{diffResult.error}</div>
-                                        ) : (
-                                          <div className="fullPromptDiffBox">
-                                            {diffResult.lines.map((line, idx) => (
-                                              <div key={idx} className={`diffLine ${line.type}`}>
-                                                <span className="diffPrefix">
-                                                  {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
-                                                </span>
-                                                <span className="diffContent">{line.value}</span>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })() : (
-                              <div className="historyDiffContainer muted italic">
-                                Generate a bundle in the current workspace to compare with this historical run.
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            );
-          })()}
-        </section>
+        <PromptHistoryPanel
+          vaultConfig={vaultConfig}
+          activePath={activePath}
+          archiveStatus={archiveStatus}
+          historySearchQuery={historySearchQuery}
+          setHistorySearchQuery={setHistorySearchQuery}
+          historyActiveNoteOnly={historyActiveNoteOnly}
+          setHistoryActiveNoteOnly={setHistoryActiveNoteOnly}
+          historyPresetFilter={historyPresetFilter}
+          setHistoryPresetFilter={setHistoryPresetFilter}
+          expandedRunId={expandedRunId}
+          setExpandedRunId={setExpandedRunId}
+          diffRunId={diffRunId}
+          setDiffRunId={setDiffRunId}
+          diffResult={diffResult}
+          currentPromptHash={currentPromptHash}
+          contextBundle={contextBundle}
+          promptInstruction={promptInstruction}
+          selectNote={selectNote}
+          applyPromptRun={applyPromptRun}
+          copyPromptRunQuestion={copyPromptRunQuestion}
+          copyFullPromptFromHistory={copyFullPromptFromHistory}
+          deletePromptRun={deletePromptRun}
+          loadPromptDiff={loadPromptDiff}
+          pruneArchivedPrompts={pruneArchivedPrompts}
+          exportPromptRuns={exportPromptRuns}
+          handleImportArchiveFile={handleImportArchiveFile}
+          buildCombinedPrompt={buildCombinedPrompt}
+        />
         <section>
           <h2>Capture</h2>
           <textarea
@@ -4251,381 +3420,6 @@ function TreeNode({
   );
 }
 
-function GraphView(props: {
-  graph: GraphData;
-  activePath: string | null;
-  embeddingsCache: VectorCache;
-  notes: NoteMeta[];
-  onOpen(path: string): void;
-  onCreateLink(path: string): void;
-  onDeleteLink(path: string): void;
-}) {
-  const [showFiltersPanel, setShowFiltersPanel] = useState(false);
-  const [excludedTags, setExcludedTags] = useState<Set<string>>(new Set());
-  const [frontmatterQuery, setFrontmatterQuery] = useState("");
-  const [semanticThreshold, setSemanticThreshold] = useState(0.5);
-
-  const allUniqueTags = useMemo(() => {
-    const set = new Set<string>();
-    props.graph.nodes.forEach(node => {
-      node.tags.forEach(tag => set.add(tag));
-    });
-    return Array.from(set).sort();
-  }, [props.graph.nodes]);
-
-  const visibleNodeIds = useMemo(() => {
-    const ids = new Set<string>();
-    props.graph.nodes.forEach(node => {
-      // 1. Tag check: if it contains any tag that is checked to be excluded
-      const hasExcludedTag = node.tags.some(tag => excludedTags.has(tag));
-      if (hasExcludedTag) return;
-
-      // 2. Frontmatter query check
-      const query = frontmatterQuery.trim().toLowerCase();
-      if (query) {
-        const parts = query.includes(":") ? query.split(":") : query.split("=");
-        const filterKey = parts[0].trim();
-        const noteMeta = props.notes.find(n => n.path === node.id);
-        if (!noteMeta) return; // Hide if metadata is missing
-
-        if (parts.length >= 2) {
-          const filterVal = parts[1].trim();
-          const fmValue = String(noteMeta.frontmatter[filterKey] || "").toLowerCase();
-          if (!fmValue.includes(filterVal)) {
-            return;
-          }
-        } else {
-          if (!(filterKey in noteMeta.frontmatter)) {
-            return;
-          }
-        }
-      }
-
-      ids.add(node.id);
-    });
-    return ids;
-  }, [props.graph.nodes, props.notes, excludedTags, frontmatterQuery]);
-
-  const nodes = useMemo<Node[]>(() => {
-    // Only include visible nodes
-    const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
-    const n = graphNodes.length;
-    if (n === 0) return [];
-
-    // Initialize positions in a circle to start force layout simulation
-    const positions = graphNodes.map((node, index) => {
-      const angle = (index / n) * 2 * Math.PI;
-      const radius = 120 + n * 8;
-      return {
-        id: node.id,
-        x: Math.cos(angle) * radius + 300,
-        y: Math.sin(angle) * radius + 300
-      };
-    });
-
-    const semanticLinks: { source: string; target: string; similarity: number }[] = [];
-
-    // Find all semantic links between all pairs of visible nodes
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const idA = graphNodes[i].id;
-        const idB = graphNodes[j].id;
-        const vecA = props.embeddingsCache[idA]?.vector;
-        const vecB = props.embeddingsCache[idB]?.vector;
-        if (vecA && vecB) {
-          const similarity = cosineSimilarity(vecA, vecB);
-          if (similarity >= semanticThreshold) {
-            semanticLinks.push({ source: idA, target: idB, similarity });
-          }
-        }
-      }
-    }
-
-    // Force-directed layout parameters
-    const width = 800;
-    const height = 600;
-    const iterations = 80;
-    const k = Math.sqrt((width * height) / n) * 0.9; // Ideal distance
-
-    // Run simple spring layout simulation
-    for (let iter = 0; iter < iterations; iter++) {
-      const dxs = new Array(n).fill(0);
-      const dys = new Array(n).fill(0);
-
-      // 1. Repulsion between all visible nodes
-      for (let i = 0; i < n; i++) {
-        for (let j = 0; j < n; j++) {
-          if (i === j) continue;
-          const xDist = positions[i].x - positions[j].x;
-          const yDist = positions[i].y - positions[j].y;
-          let dist = Math.sqrt(xDist * xDist + yDist * yDist);
-          if (dist === 0) dist = 0.1;
-          
-          const force = (k * k) / dist;
-          dxs[i] += (xDist / dist) * force;
-          dys[i] += (yDist / dist) * force;
-        }
-      }
-
-      // 2. Attraction along hard wiki links (only between visible nodes)
-      for (const edge of props.graph.edges) {
-        if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) continue;
-        const idxS = graphNodes.findIndex((node) => node.id === edge.source);
-        const idxT = graphNodes.findIndex((node) => node.id === edge.target);
-        if (idxS === -1 || idxT === -1) continue;
-
-        const xDist = positions[idxS].x - positions[idxT].x;
-        const yDist = positions[idxS].y - positions[idxT].y;
-        let dist = Math.sqrt(xDist * xDist + yDist * yDist);
-        if (dist === 0) dist = 0.1;
-
-        const force = (dist * dist) / k;
-        dxs[idxS] -= (xDist / dist) * force;
-        dys[idxS] -= (yDist / dist) * force;
-        dxs[idxT] += (xDist / dist) * force;
-        dys[idxT] += (yDist / dist) * force;
-      }
-
-      // 3. Attraction along semantic links (only between visible nodes)
-      for (const semLink of semanticLinks) {
-        const idxS = graphNodes.findIndex((node) => node.id === semLink.source);
-        const idxT = graphNodes.findIndex((node) => node.id === semLink.target);
-        if (idxS === -1 || idxT === -1) continue;
-
-        const xDist = positions[idxS].x - positions[idxT].x;
-        const yDist = positions[idxS].y - positions[idxT].y;
-        let dist = Math.sqrt(xDist * xDist + yDist * yDist);
-        if (dist === 0) dist = 0.1;
-
-        const force = ((dist * dist) / k) * (semLink.similarity * 0.45);
-        dxs[idxS] -= (xDist / dist) * force;
-        dys[idxS] -= (yDist / dist) * force;
-        dxs[idxT] += (xDist / dist) * force;
-        dys[idxT] += (yDist / dist) * force;
-      }
-
-      // 4. Update coordinates with temperature cooling
-      const temp = 50 * (1 - iter / iterations);
-      for (let i = 0; i < n; i++) {
-        const disp = Math.sqrt(dxs[i] * dxs[i] + dys[i] * dys[i]);
-        if (disp === 0) continue;
-        const cappedDisp = Math.min(disp, temp);
-        positions[i].x += (dxs[i] / disp) * cappedDisp;
-        positions[i].y += (dys[i] / disp) * cappedDisp;
-      }
-    }
-
-    return graphNodes.map((node, index) => {
-      const pos = positions[index];
-      const id = node.id;
-      
-      let cls = "graphNode";
-      if (id === props.activePath) {
-        cls = "graphNode active";
-      } else if (props.activePath) {
-        const vecActive = props.embeddingsCache[props.activePath]?.vector;
-        const vecNode = props.embeddingsCache[id]?.vector;
-        if (vecActive && vecNode) {
-          const sim = cosineSimilarity(vecActive, vecNode);
-          if (sim >= 0.7) {
-            cls = "graphNode semantic-high";
-          } else if (sim >= 0.5) {
-            cls = "graphNode semantic-medium";
-          }
-        }
-      }
-
-      return {
-        id,
-        position: { x: pos.x, y: pos.y },
-        data: { label: node.label },
-        className: cls
-      };
-    });
-  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
-
-  const edges = useMemo<Edge[]>(() => {
-    const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
-    const list: Edge[] = [];
-
-    // 1. Render hard wiki links (only between visible nodes)
-    for (const edge of props.graph.edges) {
-      if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) continue;
-      list.push({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        animated: edge.isManaged,
-        style: { stroke: edge.isManaged ? "#3b82f6" : "#cbd5e1", strokeWidth: 2 }
-      });
-    }
-
-    // 2. Render dotted semantic connections from the active note (only to visible nodes)
-    const activePath = props.activePath;
-    if (activePath && visibleNodeIds.has(activePath)) {
-      const vecActive = props.embeddingsCache[activePath]?.vector;
-      if (vecActive) {
-        for (const node of graphNodes) {
-          if (node.id === activePath) continue;
-          const vecNode = props.embeddingsCache[node.id]?.vector;
-          if (vecNode) {
-            const sim = cosineSimilarity(vecActive, vecNode);
-            if (sim >= semanticThreshold) {
-              list.push({
-                id: `semantic-${activePath}-${node.id}`,
-                source: activePath,
-                target: node.id,
-                animated: true,
-                style: { stroke: "#10b981", strokeWidth: 1.5, strokeDasharray: "4 4" },
-                label: `${Math.round(sim * 100)}% Match`,
-                labelStyle: { fill: "#047857", fontSize: 9, fontWeight: 600 }
-              });
-            }
-          }
-        }
-      }
-    }
-
-    return list;
-  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
-
-  const onNodeClick = useCallback((_: unknown, node: Node) => props.onOpen(node.id), [props]);
-  const otherNodes = props.graph.nodes
-    .filter((node) => node.id !== props.activePath)
-    .filter((node) => visibleNodeIds.has(node.id));
-
-  return (
-    <div className="graphShell">
-      <div className="graphToolbar">
-        <select onChange={(event) => event.target.value && props.onCreateLink(event.target.value)} defaultValue="">
-          <option value="">Add link from current note</option>
-          {otherNodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
-        </select>
-        <select onChange={(event) => event.target.value && props.onDeleteLink(event.target.value)} defaultValue="">
-          <option value="">Remove managed link</option>
-          {otherNodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
-        </select>
-        <button
-          type="button"
-          className="graph-filter-toggle-btn"
-          onClick={() => setShowFiltersPanel(!showFiltersPanel)}
-          style={{
-            padding: "4px 8px",
-            fontSize: "12px",
-            background: showFiltersPanel ? "#cbd5e1" : "none",
-            border: "1px solid #cbd5e1",
-            borderRadius: "6px",
-            cursor: "pointer",
-            fontWeight: 500
-          }}
-        >
-          🔍 Filter Graph
-        </button>
-      </div>
-
-      {showFiltersPanel && (
-        <div className="graphFiltersPanel" style={{
-          padding: "12px",
-          background: "rgba(248, 250, 252, 0.9)",
-          borderBottom: "1px solid #e2e8f0",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-          fontSize: "12px"
-        }}>
-          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: "200px" }}>
-              <h4 style={{ margin: "0 0 6px 0", fontSize: "12px", color: "#334155" }}>Filter by Tags</h4>
-              <div className="graphFilterTagsList" style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "6px",
-                maxHeight: "80px",
-                overflowY: "auto",
-                padding: "4px",
-                border: "1px solid #e2e8f0",
-                borderRadius: "6px",
-                background: "#fff"
-              }}>
-                {allUniqueTags.length === 0 ? (
-                  <span className="muted" style={{ fontSize: "11px", color: "#94a3b8" }}>No tags in graph</span>
-                ) : (
-                  allUniqueTags.map(tag => {
-                    const isChecked = !excludedTags.has(tag);
-                    return (
-                      <label key={tag} style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", cursor: "pointer" }}>
-                        <input
-                          type="checkbox"
-                          className="tag-filter-checkbox"
-                          checked={isChecked}
-                          onChange={() => {
-                            setExcludedTags(prev => {
-                              const next = new Set(prev);
-                              if (next.has(tag)) {
-                                next.delete(tag);
-                              } else {
-                                next.add(tag);
-                              }
-                              return next;
-                            });
-                          }}
-                        />
-                        <span>#{tag}</span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-            
-            <div style={{ flex: 1, minWidth: "180px", display: "flex", flexDirection: "column", gap: "8px" }}>
-              <div>
-                <h4 style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#334155" }}>Filter by Metadata</h4>
-                <input
-                  type="text"
-                  className="metadata-filter-input"
-                  placeholder="e.g. status: draft"
-                  value={frontmatterQuery}
-                  onChange={(e) => setFrontmatterQuery(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "4px 8px",
-                    fontSize: "11px",
-                    borderRadius: "4px",
-                    border: "1px solid #cbd5e1"
-                  }}
-                />
-              </div>
-
-              <div>
-                <h4 style={{ margin: "0 0 4px 0", fontSize: "12px", color: "#334155", display: "flex", justifyContent: "space-between" }}>
-                  <span>Semantic Threshold</span>
-                  <span style={{ fontWeight: 600, color: "#10b981" }}>{semanticThreshold.toFixed(2)}</span>
-                </h4>
-                <input
-                  type="range"
-                  className="semantic-threshold-slider"
-                  min="0.0"
-                  max="1.0"
-                  step="0.05"
-                  value={semanticThreshold}
-                  onChange={(e) => setSemanticThreshold(parseFloat(e.target.value))}
-                  style={{ width: "100%", cursor: "pointer" }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ReactFlow nodes={nodes} edges={edges} onNodeClick={onNodeClick} fitView>
-        <Background />
-        <MiniMap />
-        <Controls />
-      </ReactFlow>
-    </div>
-  );
-}
 
 function parsePropertyFilter(value: string): Record<string, string> {
   if (!value.includes("=")) {

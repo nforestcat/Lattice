@@ -7,7 +7,14 @@ export type VectorCacheEntry = {
 
 export type VectorCache = Record<string, VectorCacheEntry>;
 
+import { invoke } from "@tauri-apps/api/core";
+
 export async function getEmbedding(config: LlmConfig, text: string): Promise<number[]> {
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    const redactedConfig = { ...config, apiKey: "" };
+    return invoke<number[]>("get_llm_embedding", { config: redactedConfig, text });
+  }
+
   const { provider, apiKey, embeddingModel, baseUrl } = config;
   const model = embeddingModel || (provider === "openai" ? "text-embedding-3-small" : "all-minilm");
 

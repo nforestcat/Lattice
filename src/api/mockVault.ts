@@ -636,6 +636,95 @@ export function createMockVaultApi(): VaultApi {
       file.content = newContent;
 
       rebuild();
+    },
+    async saveApiKey(provider: string, key: string): Promise<void> {
+      if (typeof window !== "undefined") {
+        const storageKey = `lattice_llm_api_key_${provider}`;
+        if (key.trim()) {
+          window.localStorage.setItem(storageKey, key.trim());
+        } else {
+          window.localStorage.removeItem(storageKey);
+        }
+      }
+    },
+    async getApiKey(provider: string): Promise<string> {
+      if (typeof window !== "undefined") {
+        return window.localStorage.getItem(`lattice_llm_api_key_${provider}`) || "";
+      }
+      return "";
+    },
+    async fetchProviderModels(provider: string, baseUrl?: string): Promise<string[]> {
+      const getApiKeyLocally = (prov: string) => {
+        if (typeof window !== "undefined") {
+          return window.localStorage.getItem(`lattice_llm_api_key_${prov}`) || "";
+        }
+        return "";
+      };
+
+      if (provider === "openai") {
+        try {
+          const key = getApiKeyLocally("openai");
+          const response = await fetch("https://api.openai.com/v1/models", {
+            headers: key ? { "Authorization": `Bearer ${key}` } : {}
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data && Array.isArray(data.data)) {
+              return data.data.map((m: any) => String(m.id));
+            }
+          }
+        } catch (e) {}
+        return ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"];
+      } else if (provider === "anthropic") {
+        return ["claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620", "claude-3-5-haiku-20241022", "claude-3-opus-20240229", "claude-3-haiku-20240307"];
+      } else if (provider === "gemini") {
+        try {
+          const key = getApiKeyLocally("gemini");
+          if (key) {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+            if (response.ok) {
+              const data = await response.json();
+              if (data && Array.isArray(data.models)) {
+                return data.models.map((m: any) => String(m.name).replace(/^models\//, ""));
+              }
+            }
+          }
+        } catch (e) {}
+        return ["gemini-1.5-pro", "gemini-1.5-flash"];
+      } else if (provider === "ollama") {
+        try {
+          const base = baseUrl || "http://localhost:11434";
+          const url = `${base.replace(/\/+$/, "")}/api/tags`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json();
+            if (data && Array.isArray(data.models)) {
+              return data.models.map((m: any) => String(m.name));
+            }
+          }
+        } catch (e) {}
+        return ["llama3", "mistral", "phi3"];
+      } else if (provider === "lm-studio" || provider === "custom") {
+        try {
+          const defaultBase = provider === "lm-studio" ? "http://localhost:1234/v1" : "";
+          const base = baseUrl || defaultBase;
+          if (base) {
+            const key = getApiKeyLocally(provider);
+            const response = await fetch(`${base.replace(/\/+$/, "")}/models`, {
+              headers: key ? { "Authorization": `Bearer ${key}` } : {}
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data && Array.isArray(data.data)) {
+                return data.data.map((m: any) => String(m.id));
+              }
+            }
+          }
+        } catch (e) {}
+        return ["custom-model"];
+      } else {
+        return [];
+      }
     }
   };
 }

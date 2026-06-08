@@ -1,4 +1,5 @@
 import type { GraphData, NoteContext, NoteMeta, SearchFilters } from "../core/types";
+export type { GraphData, NoteContext, NoteMeta, SearchFilters };
 import type { InboxCaptureBlock } from "../core/capture";
 
 export type VaultSnapshot = {
@@ -162,6 +163,9 @@ export type VaultApi = {
   getBacklinkSuggestions(activePath: string): Promise<BacklinkSuggestion[]>;
   applyBacklinkSuggestion(suggestion: BacklinkSuggestion): Promise<void>;
   applyNoteMetadata(path: string, frontmatter: Record<string, string>, tags: string[]): Promise<void>;
+  saveApiKey(provider: string, key: string): Promise<void>;
+  getApiKey(provider: string): Promise<string>;
+  fetchProviderModels(provider: string, baseUrl?: string): Promise<string[]>;
 };
 
 export type BacklinkSuggestion = {

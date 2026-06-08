@@ -1,0 +1,210 @@
+import { useState } from "react";
+import type { LlmConfig, LlmProvider, VaultConfig } from "../../api/types";
+import { vaultApi } from "../../api";
+
+interface LlmSettingsPanelProps {
+  llmConfig: LlmConfig;
+  setLlmConfig: React.Dispatch<React.SetStateAction<LlmConfig>>;
+  vaultConfig: VaultConfig;
+  updateVaultConfig: (updates: Partial<VaultConfig>) => Promise<void>;
+  saveStoredLlmApiKey: (provider: LlmProvider, apiKey: string) => void;
+  readStoredLlmApiKey: (provider: LlmProvider) => string;
+  redactLlmConfig: (config: LlmConfig) => LlmConfig;
+  pruneExpiredPromptRuns: (policy: string) => Promise<void>;
+  setShowLlmSettings: (show: boolean) => void;
+  setStatus: (status: string) => void;
+}
+
+export function LlmSettingsPanel({
+  llmConfig,
+  setLlmConfig,
+  vaultConfig,
+  updateVaultConfig,
+  saveStoredLlmApiKey,
+  readStoredLlmApiKey,
+  redactLlmConfig,
+  pruneExpiredPromptRuns,
+  setShowLlmSettings,
+  setStatus,
+}: LlmSettingsPanelProps) {
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  async function fetchModels() {
+    setIsFetchingModels(true);
+    setStatus(`Fetching models for ${llmConfig.provider}...`);
+    try {
+      const models = await vaultApi.fetchProviderModels(llmConfig.provider, llmConfig.baseUrl);
+      setAvailableModels(models);
+      if (models.length > 0) {
+        setStatus(`Successfully fetched ${models.length} models for ${llmConfig.provider}!`);
+      } else {
+        setStatus(`No models returned for ${llmConfig.provider}.`);
+      }
+    } catch (e) {
+      console.error("Failed to fetch models", e);
+      setStatus(`Failed to fetch models: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  }
+
+  return (
+    <div className="llmSettingsPanel">
+      <h4>LLM Configuration</h4>
+      <div className="formGroup">
+        <label>Provider</label>
+        <select
+          value={llmConfig.provider}
+          onChange={(e) => {
+            const prov = e.target.value as LlmProvider;
+            const defaultModels: Record<LlmProvider, string> = {
+              openai: "gpt-4o",
+              anthropic: "claude-3-5-sonnet-20240620",
+              gemini: "gemini-1.5-pro",
+              ollama: "llama3",
+              custom: "gpt-4o",
+              "lm-studio": "qwen2.5-coder-7b"
+            };
+            const defaultBases: Record<LlmProvider, string> = {
+              openai: "",
+              anthropic: "",
+              gemini: "",
+              ollama: "http://localhost:11434",
+              custom: "http://localhost:1234/v1",
+              "lm-studio": "http://localhost:1234/v1"
+            };
+            setLlmConfig(prev => ({
+              ...prev,
+              provider: prov,
+              apiKey: readStoredLlmApiKey(prov),
+              model: defaultModels[prov],
+              baseUrl: defaultBases[prov] || undefined
+            }));
+            setAvailableModels([]);
+          }}
+        >
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="ollama">Ollama (Local)</option>
+          <option value="lm-studio">LM Studio (Local)</option>
+          <option value="custom">Custom (OpenAI-compatible)</option>
+        </select>
+      </div>
+
+      <div className="formGroup">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+          <label style={{ margin: 0 }}>Model</label>
+          <button
+            type="button"
+            className="fetch-models-btn"
+            onClick={() => void fetchModels()}
+            disabled={isFetchingModels}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#3b82f6",
+              fontSize: "10px",
+              fontWeight: 600,
+              cursor: "pointer",
+              padding: "2px 4px",
+              borderRadius: "4px",
+              transition: "background-color 0.2s"
+            }}
+          >
+            {isFetchingModels ? "Fetching..." : "Fetch Models"}
+          </button>
+        </div>
+        <input
+          type="text"
+          value={llmConfig.model}
+          onChange={(e) => setLlmConfig(prev => ({ ...prev, model: e.target.value }))}
+          placeholder="e.g. gpt-4o, llama3"
+          list="available-models-list"
+        />
+        <datalist id="available-models-list">
+          {availableModels.map(m => <option key={m} value={m} />)}
+        </datalist>
+      </div>
+
+      {llmConfig.provider !== "ollama" && llmConfig.provider !== "lm-studio" && (
+        <div className="formGroup">
+          <label>API Key</label>
+          <input
+            type="password"
+            value={llmConfig.apiKey}
+            onChange={(e) => setLlmConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+            placeholder="Enter API Key"
+          />
+        </div>
+      )}
+
+      {(llmConfig.provider === "ollama" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
+        <div className="formGroup">
+          <label>Base URL</label>
+          <input
+            type="text"
+            value={llmConfig.baseUrl || ""}
+            onChange={(e) => setLlmConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
+            placeholder={llmConfig.provider === "ollama" ? "http://localhost:11434" : "http://localhost:1234/v1"}
+          />
+        </div>
+      )}
+
+      {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
+        <div className="formGroup">
+          <label>Embedding Model</label>
+          <input
+            type="text"
+            value={llmConfig.embeddingModel || ""}
+            onChange={(e) => setLlmConfig(prev => ({ ...prev, embeddingModel: e.target.value }))}
+            placeholder={llmConfig.provider === "ollama" ? "all-minilm" : "text-embedding-3-small"}
+          />
+        </div>
+      )}
+
+      <div className="settingsSection" style={{ marginTop: "12px", borderTop: "1px dashed #cbd5e1", paddingTop: "12px", marginBottom: "12px" }}>
+        <h4 style={{ margin: "0 0 8px 0", fontSize: "12px", color: "#344054" }}>Prompt Archive Settings</h4>
+        <div className="formGroup">
+          <label>Auto-Pruning Policy</label>
+          <select
+            value={vaultConfig.archiveRetentionPolicy || "none"}
+            onChange={(e) => {
+              const val = e.target.value;
+              void updateVaultConfig({
+                archiveRetentionPolicy: val
+              });
+            }}
+          >
+            <option value="none">Keep all history indefinitely</option>
+            <option value="7">Prune runs older than 7 days</option>
+            <option value="30">Prune runs older than 30 days</option>
+            <option value="90">Prune runs older than 90 days</option>
+          </select>
+        </div>
+        <button
+          type="button"
+          className="btnPruneExpired"
+          style={{ width: "100%", marginTop: "6px", fontSize: "11px", padding: "4px 8px" }}
+          onClick={() => void pruneExpiredPromptRuns(vaultConfig.archiveRetentionPolicy || "none")}
+        >
+          Prune Expired Runs Now
+        </button>
+      </div>
+
+      <button
+        type="button"
+        className="primary btnSaveSettings"
+        onClick={() => {
+          saveStoredLlmApiKey(llmConfig.provider, llmConfig.apiKey);
+          void updateVaultConfig({ llmConfig: redactLlmConfig(llmConfig) });
+          setShowLlmSettings(false);
+          setStatus("LLM settings saved; API key kept in local app storage");
+        }}
+      >
+        Save Settings
+      </button>
+    </div>
+  );
+}

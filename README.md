@@ -42,6 +42,10 @@ Implemented so far:
 - Generate AI-powered metadata suggestions (tags and YAML frontmatter properties) for the active note, allowing users to interactively toggle and apply recommendations
 - Filter graph view nodes interactively by tags, frontmatter metadata properties (using key-value or query inputs), and semantic similarity threshold range slider
 - Keep the vector embeddings cache fresh by indexing semantic recommendations from the currently opened vault notes and using a debounced synchronization hook that recalculates active note embeddings only after the draft content changes and the user stops typing
+- Securely store LLM API keys in `lattice_secrets.json` under the Tauri secure OS roaming application config folder (separate from the git note vault)
+- Route LLM chat messages and embeddings via Rust backend Tauri commands using `reqwest` to bypass CORS restrictions and eliminate client-side headers like `dangerously-allow-browser`
+- Query available model lists dynamically from providers (Ollama, OpenAI, Gemini, LM Studio) directly from the backend
+- Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.
