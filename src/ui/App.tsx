@@ -2714,6 +2714,11 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     return list;
   }, [contextCandidates, selectedContextPaths, sortBy, filterBy]);
 
+  const isActiveNoteConflicted = activePath && (
+    gitChanges.some(c => c.path === activePath && c.status === "conflict") ||
+    (viewMode !== "distill" && viewMode !== "graph" && draft.includes("<<<<<<<") && draft.includes("=======") && draft.includes(">>>>>>>"))
+  );
+
   return (
     <main className="workspace" style={themeStyles}>
       <Sidebar
@@ -2758,15 +2763,22 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
         <div className={`editorWorkspace ${viewMode === "split" ? "split" : "single"}`}>
           {(viewMode === "split" || viewMode === "edit") && (
-            <section className="editorSurface">
-              <CodeMirror
-                value={draft}
-                height="100%"
-                extensions={[markdown()]}
-                theme="light"
-                basicSetup={{ lineNumbers: true, foldGutter: true }}
-                onChange={setDraft}
-              />
+            <section className="editorSurface" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              {isActiveNoteConflicted && (
+                <div className="editorConflictBanner">
+                  ⚠️ This note has unresolved merge conflicts. Please resolve the conflicts before committing.
+                </div>
+              )}
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <CodeMirror
+                  value={draft}
+                  height="100%"
+                  extensions={[markdown()]}
+                  theme="light"
+                  basicSetup={{ lineNumbers: true, foldGutter: true }}
+                  onChange={setDraft}
+                />
+              </div>
               {linkSuggestions.length > 0 && (
                 <div className="linkSuggestionsPanel">
                   <span className="panelLabel">Link Suggestions:</span>
@@ -2788,12 +2800,20 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
             </section>
           )}
           {(viewMode === "split" || viewMode === "preview") && (
-            <article
-              className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""} ${
-                vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "theme-dark" : ""
-              }`}
-              dangerouslySetInnerHTML={html}
-            />
+            <div className="previewContainer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+              {viewMode === "preview" && isActiveNoteConflicted && (
+                <div className="editorConflictBanner">
+                  ⚠️ This note has unresolved merge conflicts. Please resolve the conflicts before committing.
+                </div>
+              )}
+              <article
+                className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""} ${
+                  vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "theme-dark" : ""
+                }`}
+                style={{ flex: 1, overflow: 'auto' }}
+                dangerouslySetInnerHTML={html}
+              />
+            </div>
           )}
           {viewMode === "graph" && graph && (
             <section className="graphSurface">

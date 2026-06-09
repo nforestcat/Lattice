@@ -53,6 +53,7 @@ export type GitStatus = {
   autoGitEnabled: boolean;
   branch: string | null;
   hasChanges: boolean;
+  hasConflicts: boolean;
 };
 
 export type GitSettings = {
@@ -274,7 +275,7 @@ export type StubDraftReview = {
 
 export type GitFileChange = {
   path: string;
-  status: "modified" | "added" | "deleted" | "untracked" | "renamed";
+  status: "modified" | "added" | "deleted" | "untracked" | "renamed" | "conflict";
   staged: boolean;
 };
 

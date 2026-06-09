@@ -249,6 +249,7 @@ struct GitStatus {
     auto_git_enabled: bool,
     branch: Option<String>,
     has_changes: bool,
+    has_conflicts: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1096,11 +1097,42 @@ fn restore_snapshot(snapshot_id: String, state: tauri::State<AppState>) -> Resul
     })
 }
 
+fn parse_status_conflicts(stdout: &[u8]) -> bool {
+    let parts: Vec<&[u8]> = stdout.split(|&b| b == 0).collect();
+    for part in parts {
+        if part.is_empty() {
+            continue;
+        }
+        let part_str = String::from_utf8_lossy(part);
+        if part_str.len() >= 4 {
+            let x = part_str.chars().nth(0).unwrap_or(' ');
+            let y = part_str.chars().nth(1).unwrap_or(' ');
+            if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn has_conflicts(root: &Path) -> bool {
+    if let Ok(cmd_output) = Command::new("git")
+        .args(&["status", "--porcelain", "-z"])
+        .current_dir(root)
+        .output()
+    {
+        if cmd_output.status.success() {
+            return parse_status_conflicts(&cmd_output.stdout);
+        }
+    }
+    false
+}
+
 #[tauri::command]
 fn get_git_status(state: tauri::State<AppState>) -> Result<GitStatus, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let Some(root) = &guard.root_path else {
-        return Ok(GitStatus { is_repo: false, auto_git_enabled: false, branch: None, has_changes: false });
+        return Ok(GitStatus { is_repo: false, auto_git_enabled: false, branch: None, has_changes: false, has_conflicts: false });
     };
     let is_repo = git_output(root, &["rev-parse", "--is-inside-work-tree"])
         .map(|value| value == "true")
@@ -1110,6 +1142,7 @@ fn get_git_status(state: tauri::State<AppState>) -> Result<GitStatus, String> {
         auto_git_enabled: guard.auto_git_enabled,
         branch: if is_repo { git_output(root, &["branch", "--show-current"]).ok() } else { None },
         has_changes: if is_repo { git_output(root, &["status", "--porcelain"]).map(|value| !value.trim().is_empty()).unwrap_or(false) } else { false },
+        has_conflicts: if is_repo { has_conflicts(root) } else { false },
     })
 }
 
@@ -1170,7 +1203,14 @@ fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, 
         let y = part_str.chars().nth(1).unwrap_or(' ');
         let path = part_str[3..].to_string();
 
-        if x == '?' && y == '?' {
+        if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
+            changes.push(GitFileChange {
+                path,
+                status: "conflict".to_string(),
+                staged: false,
+            });
+            i += 1;
+        } else if x == '?' && y == '?' {
             changes.push(GitFileChange {
                 path,
                 status: "untracked".to_string(),
@@ -1339,6 +1379,12 @@ fn git_commit(message: String, state: tauri::State<AppState>) -> Result<String, 
     if message.trim().is_empty() {
         return Err("Commit message cannot be empty".to_string());
     }
+    
+    // Safety guard: reject if repository has active conflicts
+    if has_conflicts(root) {
+        return Err("Cannot commit: repository has unresolved merge conflicts. Please resolve conflicts first.".to_string());
+    }
+
     let porcelain = git_output(root, &["status", "--porcelain"]).unwrap_or_default();
     let has_staged = porcelain.lines().any(|line| {
         if line.len() >= 2 {
@@ -1351,6 +1397,41 @@ fn git_commit(message: String, state: tauri::State<AppState>) -> Result<String, 
     if !has_staged {
         return Err("No staged changes to commit. Please stage changes first.".to_string());
     }
+
+    // Safety guard: check index contents of all staged files for conflict markers
+    if let Ok(staged_files_output) = Command::new("git")
+        .args(&["diff", "--cached", "--name-only", "-z"])
+        .current_dir(root)
+        .output()
+    {
+        if staged_files_output.status.success() {
+            let stdout = staged_files_output.stdout;
+            let parts: Vec<&[u8]> = stdout.split(|&b| b == 0).collect();
+            for part in parts {
+                if part.is_empty() {
+                    continue;
+                }
+                let rel_path = String::from_utf8_lossy(part);
+                // Inspect exact staged content in the index using git show :<path>
+                if let Ok(show_output) = Command::new("git")
+                    .args(&["show", &format!(":{}", rel_path)])
+                    .current_dir(root)
+                    .output()
+                {
+                    if show_output.status.success() {
+                        let content = String::from_utf8_lossy(&show_output.stdout);
+                        if content.contains("<<<<<<<") && content.contains("=======") && content.contains(">>>>>>>") {
+                            return Err(format!(
+                                "Cannot commit: File '{}' contains unresolved merge conflict markers.",
+                                rel_path
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     git_output(root, &["commit", "-m", &message])
 }
 
@@ -1360,6 +1441,9 @@ fn git_pull(state: tauri::State<AppState>) -> Result<String, String> {
     let Some(root) = &guard.root_path else {
         return Err("No vault open".to_string());
     };
+    if has_conflicts(root) {
+        return Err("Cannot pull: repository has unresolved merge conflicts. Please resolve conflicts first.".to_string());
+    }
     git_output_all(root, &["pull"])
 }
 
@@ -1369,6 +1453,9 @@ fn git_push(state: tauri::State<AppState>) -> Result<String, String> {
     let Some(root) = &guard.root_path else {
         return Err("No vault open".to_string());
     };
+    if has_conflicts(root) {
+        return Err("Cannot push: repository has unresolved merge conflicts. Please resolve conflicts first.".to_string());
+    }
     git_output_all(root, &["push"])
 }
 
@@ -2980,6 +3067,9 @@ fn git_output_all(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn auto_commit(root: &Path, path: &str) -> Result<String, String> {
+    if has_conflicts(root) {
+        return Err("Cannot auto-commit: repository has unresolved merge conflicts.".to_string());
+    }
     git_output(root, &["add", path])?;
     git_output(root, &["commit", "-m", &format!("Update {}", path)])?;
     git_output(root, &["rev-parse", "--short", "HEAD"])
@@ -3674,6 +3764,107 @@ mod tests {
 
         let changes_after = get_git_changes(tauri_state).unwrap();
         assert!(!changes_after.iter().any(|change| change.staged));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_parse_status_conflicts_logic() {
+        let empty: &[u8] = b"";
+        assert!(!parse_status_conflicts(empty));
+
+        let non_conflict: &[u8] = b"M  src/lib.rs\0A  src/main.rs\0";
+        assert!(!parse_status_conflicts(non_conflict));
+
+        let conflict_uu: &[u8] = b"UU src/lib.rs\0";
+        assert!(parse_status_conflicts(conflict_uu));
+
+        let conflict_aa: &[u8] = b"AA src/lib.rs\0";
+        assert!(parse_status_conflicts(conflict_aa));
+
+        let conflict_dd: &[u8] = b"DD src/lib.rs\0";
+        assert!(parse_status_conflicts(conflict_dd));
+
+        let conflict_ud: &[u8] = b"UD src/lib.rs\0";
+        assert!(parse_status_conflicts(conflict_ud));
+    }
+
+    #[test]
+    fn test_conflict_guards() {
+        use tauri::Manager;
+        let root = temp_test_dir("conflict-guards");
+        git_output(&root, &["init"]).unwrap();
+        git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
+        git_output(&root, &["config", "user.name", "Test User"]).unwrap();
+
+        let test_file = "Note.md";
+        fs::write(root.join(test_file), "Initial content\n").unwrap();
+        git_output(&root, &["add", test_file]).unwrap();
+        git_output(&root, &["commit", "-m", "Initial commit"]).unwrap();
+
+        // branch other
+        git_output(&root, &["checkout", "-b", "other"]).unwrap();
+        fs::write(root.join(test_file), "Other content\n").unwrap();
+        git_output(&root, &["add", test_file]).unwrap();
+        git_output(&root, &["commit", "-m", "Other commit"]).unwrap();
+
+        // master
+        git_output(&root, &["checkout", "master"]).unwrap();
+        fs::write(root.join(test_file), "Master content\n").unwrap();
+        git_output(&root, &["add", test_file]).unwrap();
+        git_output(&root, &["commit", "-m", "Master commit"]).unwrap();
+
+        // merge causing conflict
+        let _ = git_output(&root, &["merge", "other"]);
+
+        let state = AppState::default();
+        {
+            let mut guard = state.inner.lock().unwrap();
+            guard.root_path = Some(root.clone());
+        }
+
+        let app = tauri::test::mock_app();
+        app.manage(state);
+        let tauri_state = app.state::<AppState>();
+
+        // 1. Verify has_conflicts detects unmerged files
+        assert!(has_conflicts(&root));
+
+        // 2. Verify git_commit returns conflict error
+        let commit_res = git_commit("Try to commit during conflict".to_string(), tauri_state.clone());
+        assert!(commit_res.is_err());
+        assert!(commit_res.unwrap_err().contains("unresolved merge conflicts"));
+
+        // 3. Verify git_pull returns conflict error
+        let pull_res = git_pull(tauri_state.clone());
+        assert!(pull_res.is_err());
+        assert!(pull_res.unwrap_err().contains("unresolved merge conflicts"));
+
+        // 4. Verify git_push returns conflict error
+        let push_res = git_push(tauri_state.clone());
+        assert!(push_res.is_err());
+        assert!(push_res.unwrap_err().contains("unresolved merge conflicts"));
+
+        // 5. Verify auto_commit returns conflict error
+        let auto_res = auto_commit(&root, test_file);
+        assert!(auto_res.is_err());
+        assert!(auto_res.unwrap_err().contains("unresolved merge conflicts"));
+
+        // Stage file with conflict markers to resolve git status's unmerged state
+        fs::write(root.join(test_file), "<<<<<<<\nmaster\n=======\nother\n>>>>>>>\n").unwrap();
+        git_output(&root, &["add", test_file]).unwrap();
+        assert!(!has_conflicts(&root));
+
+        // 6. Verify git_commit rejects commit because of index conflict markers
+        let commit_res2 = git_commit("Commit file with markers".to_string(), tauri_state.clone());
+        assert!(commit_res2.is_err());
+        assert!(commit_res2.unwrap_err().contains("unresolved merge conflict markers"));
+
+        // Clean up and resolve
+        fs::write(root.join(test_file), "Resolved content\n").unwrap();
+        git_output(&root, &["add", test_file]).unwrap();
+        let commit_res3 = git_commit("Resolved commit".to_string(), tauri_state.clone());
+        assert!(commit_res3.is_ok());
 
         let _ = fs::remove_dir_all(root);
     }

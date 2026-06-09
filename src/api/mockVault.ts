@@ -370,7 +370,8 @@ export function createMockVaultApi(): VaultApi {
         isRepo: true,
         autoGitEnabled,
         branch: "main",
-        hasChanges: mockChanges.length > 0
+        hasChanges: mockChanges.length > 0,
+        hasConflicts: mockChanges.some(c => c.status === "conflict")
       };
     },
     async setAutoGit(enabled: boolean): Promise<GitSettings> {

@@ -68,9 +68,11 @@ export function GitWorkspace({
     );
   }
 
-  const stagedChanges = gitChanges.filter(c => c.staged);
-  const unstagedChanges = gitChanges.filter(c => !c.staged);
+  const conflictedChanges = gitChanges.filter(c => c.status === "conflict");
+  const stagedChanges = gitChanges.filter(c => c.staged && c.status !== "conflict");
+  const unstagedChanges = gitChanges.filter(c => !c.staged && c.status !== "conflict");
   const isClean = !isGitLoading && gitChanges.length === 0;
+  const selectedDiffHasMarkers = !!activeDiff && activeDiff.includes("<<<<<<<") && activeDiff.includes("=======") && activeDiff.includes(">>>>>>>");
 
   const handleFileClick = (change: GitFileChange) => {
     setSelectedGitFile(change.path);
@@ -79,6 +81,14 @@ export function GitWorkspace({
   };
 
   const parseDiffLine = (line: string, index: number) => {
+    const cleanLine = line.startsWith("+") || line.startsWith("-") ? line.slice(1) : line;
+    if (cleanLine.startsWith("<<<<<<<") || cleanLine.startsWith("=======") || cleanLine.startsWith(">>>>>>>")) {
+      return (
+        <div key={index} className="gitDiffLine diff-conflict-marker">
+          {line}
+        </div>
+      );
+    }
     if (line.startsWith("+++") || line.startsWith("---")) {
       return (
         <div key={index} className="gitDiffLine diff-hunk">
@@ -122,6 +132,17 @@ export function GitWorkspace({
           <strong> {gitStatus.branch || "unknown"}</strong>
         </div>
 
+        {(gitStatus?.hasConflicts || selectedDiffHasMarkers) && (
+          <div className="gitConflictWarningCard">
+            <h4>⚠️ Conflict Warning</h4>
+            <p>
+              {gitStatus?.hasConflicts
+                ? "Repository has unresolved merge conflicts. You cannot commit, pull, or push until you resolve them."
+                : "The currently viewed file contains unresolved conflict markers. Please clean them up before committing."}
+            </p>
+          </div>
+        )}
+
         <div className="gitActionsSection">
           <div className="gitActionsRow">
             <button
@@ -154,7 +175,7 @@ export function GitWorkspace({
               type="button"
               className="smallButton primary"
               style={{ width: "100%", marginTop: "6px" }}
-              disabled={isGitLoading || !commitMessage.trim() || stagedChanges.length === 0}
+              disabled={isGitLoading || !commitMessage.trim() || stagedChanges.length === 0 || gitStatus?.hasConflicts || selectedDiffHasMarkers}
               onClick={() => void onCommit(commitMessage)}
             >
               Commit Selected ({stagedChanges.length})
@@ -168,7 +189,7 @@ export function GitWorkspace({
                 type="button"
                 className="smallButton"
                 style={{ flex: 1 }}
-                disabled={isGitLoading}
+                disabled={isGitLoading || gitStatus?.hasConflicts || selectedDiffHasMarkers}
                 onClick={onPull}
               >
                 Pull
@@ -177,7 +198,7 @@ export function GitWorkspace({
                 type="button"
                 className="smallButton"
                 style={{ flex: 1 }}
-                disabled={isGitLoading}
+                disabled={isGitLoading || gitStatus?.hasConflicts || selectedDiffHasMarkers}
                 onClick={onPush}
               >
                 Push
@@ -187,6 +208,34 @@ export function GitWorkspace({
         </div>
 
         <div className="gitChangesList">
+          {conflictedChanges.length > 0 && (
+            <div className="gitChangesGroup conflicted">
+              <h4 style={{ color: "#d32f2f" }}>Unresolved Conflicts ({conflictedChanges.length})</h4>
+              {conflictedChanges.map((c) => (
+                <div
+                  key={`conflict:${c.path}`}
+                  className={`gitFileItem conflicted ${selectedGitFile === c.path ? "active" : ""}`}
+                  onClick={() => handleFileClick(c)}
+                >
+                  <span className="statusIcon conflict">C</span>
+                  <span className="filePath">{c.path}</span>
+                  <button
+                    type="button"
+                    className="gitFileActionButton stageButton"
+                    title="Stage resolved file"
+                    disabled={isGitLoading}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onStageFile(c.path);
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="gitChangesGroup">
             <h4>Staged Changes ({stagedChanges.length})</h4>
             {stagedChanges.length === 0 ? (

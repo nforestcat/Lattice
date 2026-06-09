@@ -2437,7 +2437,8 @@ participants: Antigravity, User
       isRepo: true,
       autoGitEnabled: false,
       branch: "feature-branch",
-      hasChanges: true
+      hasChanges: true,
+      hasConflicts: false
     });
     const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
       { path: "ModifiedNote.md", status: "modified", staged: false },
@@ -2514,7 +2515,8 @@ participants: Antigravity, User
       isRepo: true,
       autoGitEnabled: false,
       branch: "main",
-      hasChanges: true
+      hasChanges: true,
+      hasConflicts: false
     });
     
     const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
@@ -2559,7 +2561,8 @@ participants: Antigravity, User
       isRepo: true,
       autoGitEnabled: false,
       branch: "main",
-      hasChanges: false
+      hasChanges: false,
+      hasConflicts: false
     });
     
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -2583,7 +2586,8 @@ participants: Antigravity, User
       isRepo: true,
       autoGitEnabled: false,
       branch: "main",
-      hasChanges: true
+      hasChanges: true,
+      hasConflicts: false
     });
     const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
       { path: "ModifiedNote.md", status: "modified", staged: false }
@@ -2611,6 +2615,65 @@ participants: Antigravity, User
     getGitStatusSpy.mockRestore();
     getGitChangesSpy.mockRestore();
     gitStageAllSpy.mockRestore();
+  });
+
+  it("displays conflict warning card, banner, groups conflicted files, and disables pull/push/commit buttons", async () => {
+    const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "main",
+      hasChanges: true,
+      hasConflicts: true
+    });
+    const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
+      { path: "Home.md", status: "conflict", staged: false }
+    ]);
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "<<<<<<<\nmaster content\n=======\nother content\n>>>>>>>\n",
+      revision: "rev123"
+    });
+    const getGitDiffSpy = vi.spyOn(vaultApi, "getGitDiff").mockResolvedValue("<<<<<<<\n+master content\n=======\n+other content\n>>>>>>>\n");
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    // 1. Check Editor Banner (select the conflicted note)
+    const noteNode = screen.getByRole("button", { name: "Home.md" });
+    fireEvent.click(noteNode);
+
+    await waitFor(() => {
+      expect(screen.getByText(/This note has unresolved merge conflicts/)).toBeTruthy();
+    });
+
+    // 2. Open Git Workspace and check conflict UI
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Git Workspace" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Unresolved Conflicts (1)")).toBeTruthy();
+      expect(screen.getAllByText("Home.md").length).toBeGreaterThan(0);
+    });
+
+    // Verify warning card in sidebar
+    expect(screen.getByText(/Conflict Warning/)).toBeTruthy();
+    expect(screen.getByText(/Repository has unresolved merge conflicts/)).toBeTruthy();
+
+    // Verify commit and pull/push buttons are disabled
+    const commitBtn = screen.getByRole("button", { name: /Commit Selected/ });
+    const pullBtn = screen.getByRole("button", { name: "Pull" });
+    const pushBtn = screen.getByRole("button", { name: "Push" });
+
+    expect(commitBtn.getAttribute("disabled")).not.toBeNull();
+    expect(pullBtn.getAttribute("disabled")).not.toBeNull();
+    expect(pushBtn.getAttribute("disabled")).not.toBeNull();
+
+    // Clean up
+    getGitStatusSpy.mockRestore();
+    getGitChangesSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getGitDiffSpy.mockRestore();
   });
 });
 

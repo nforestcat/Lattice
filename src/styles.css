@@ -3520,6 +3520,11 @@ summary:hover .treeActions {
   color: #0284c7;
 }
 
+.gitFileItem .statusIcon.conflict {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
 /* Console Output Card */
 .gitConsoleCard {
   border: 1px solid #e2e8f0;
@@ -3740,9 +3745,56 @@ summary:hover .treeActions {
   color: #64748b;
   margin-bottom: 20px;
   line-height: 1.5;
+}/* Git conflict safety & detection */
+.editorConflictBanner {
+  background-color: #fee2e2;
+  border-bottom: 1px solid #fca5a5;
+  color: #991b1b;
+  padding: 10px 16px;
+  font-family: 'Outfit', -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 50;
+  flex-shrink: 0;
 }
 
+.gitConflictWarningCard {
+  background-color: #fff7ed;
+  border: 1px solid #ffedd5;
+  border-left: 4px solid #f97316;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
 
+.gitConflictWarningCard h4 {
+  margin: 0 0 4px 0;
+  color: #ea580c;
+  font-size: 13px;
+  font-weight: 600;
+}
 
+.gitConflictWarningCard p {
+  margin: 0;
+  color: #c2410c;
+  font-size: 12px;
+  line-height: 1.4;
+}
 
+.gitChangesGroup.conflicted h4 {
+  color: #dc2626 !important;
+}
 
+.gitFileItem.conflicted {
+  border-left: 3px solid #dc2626;
+  padding-left: 5px;
+}
+
+.gitDiffLine.diff-conflict-marker {
+  background-color: #ffedd5 !important;
+  color: #c2410c !important;
+  font-weight: bold;
+}
