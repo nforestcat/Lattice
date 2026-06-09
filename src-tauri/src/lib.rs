@@ -1128,6 +1128,45 @@ fn has_conflicts(root: &Path) -> bool {
     false
 }
 
+fn staged_conflict_marker_file(root: &Path, paths: &[&str]) -> Result<Option<String>, String> {
+    let mut diff_args = vec!["diff", "--cached", "--name-only", "-z"];
+    if !paths.is_empty() {
+        diff_args.push("--");
+        diff_args.extend(paths.iter().copied());
+    }
+
+    let staged_files_output = Command::new("git")
+        .args(&diff_args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| error.to_string())?;
+
+    if !staged_files_output.status.success() {
+        return Err(String::from_utf8_lossy(&staged_files_output.stderr).trim().to_string());
+    }
+
+    for part in staged_files_output.stdout.split(|&b| b == 0) {
+        if part.is_empty() {
+            continue;
+        }
+        let rel_path = String::from_utf8_lossy(part);
+        if let Ok(show_output) = Command::new("git")
+            .args(&["show", &format!(":{}", rel_path)])
+            .current_dir(root)
+            .output()
+        {
+            if show_output.status.success() {
+                let content = String::from_utf8_lossy(&show_output.stdout);
+                if content.contains("<<<<<<<") && content.contains("=======") && content.contains(">>>>>>>") {
+                    return Ok(Some(rel_path.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 #[tauri::command]
 fn get_git_status(state: tauri::State<AppState>) -> Result<GitStatus, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1398,38 +1437,11 @@ fn git_commit(message: String, state: tauri::State<AppState>) -> Result<String, 
         return Err("No staged changes to commit. Please stage changes first.".to_string());
     }
 
-    // Safety guard: check index contents of all staged files for conflict markers
-    if let Ok(staged_files_output) = Command::new("git")
-        .args(&["diff", "--cached", "--name-only", "-z"])
-        .current_dir(root)
-        .output()
-    {
-        if staged_files_output.status.success() {
-            let stdout = staged_files_output.stdout;
-            let parts: Vec<&[u8]> = stdout.split(|&b| b == 0).collect();
-            for part in parts {
-                if part.is_empty() {
-                    continue;
-                }
-                let rel_path = String::from_utf8_lossy(part);
-                // Inspect exact staged content in the index using git show :<path>
-                if let Ok(show_output) = Command::new("git")
-                    .args(&["show", &format!(":{}", rel_path)])
-                    .current_dir(root)
-                    .output()
-                {
-                    if show_output.status.success() {
-                        let content = String::from_utf8_lossy(&show_output.stdout);
-                        if content.contains("<<<<<<<") && content.contains("=======") && content.contains(">>>>>>>") {
-                            return Err(format!(
-                                "Cannot commit: File '{}' contains unresolved merge conflict markers.",
-                                rel_path
-                            ));
-                        }
-                    }
-                }
-            }
-        }
+    if let Some(path) = staged_conflict_marker_file(root, &[])? {
+        return Err(format!(
+            "Cannot commit: File '{}' contains unresolved merge conflict markers.",
+            path
+        ));
     }
 
     git_output(root, &["commit", "-m", &message])
@@ -3071,6 +3083,12 @@ fn auto_commit(root: &Path, path: &str) -> Result<String, String> {
         return Err("Cannot auto-commit: repository has unresolved merge conflicts.".to_string());
     }
     git_output(root, &["add", path])?;
+    if let Some(marker_path) = staged_conflict_marker_file(root, &[path])? {
+        return Err(format!(
+            "Cannot auto-commit: File '{}' contains unresolved merge conflict markers.",
+            marker_path
+        ));
+    }
     git_output(root, &["commit", "-m", &format!("Update {}", path)])?;
     git_output(root, &["rev-parse", "--short", "HEAD"])
 }
@@ -3859,6 +3877,10 @@ mod tests {
         let commit_res2 = git_commit("Commit file with markers".to_string(), tauri_state.clone());
         assert!(commit_res2.is_err());
         assert!(commit_res2.unwrap_err().contains("unresolved merge conflict markers"));
+
+        let auto_marker_res = auto_commit(&root, test_file);
+        assert!(auto_marker_res.is_err());
+        assert!(auto_marker_res.unwrap_err().contains("unresolved merge conflict markers"));
 
         // Clean up and resolve
         fs::write(root.join(test_file), "Resolved content\n").unwrap();
