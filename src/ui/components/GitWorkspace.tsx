@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { GitFileChange, GitStatus } from "../../api/types";
 
 interface GitWorkspaceProps {
@@ -16,6 +16,8 @@ interface GitWorkspaceProps {
   setGitOutputLog: (log: string | null) => void;
   onRefreshGit: () => Promise<void>;
   onStageAll: () => Promise<void>;
+  onStageFile: (path: string) => Promise<void>;
+  onUnstageFile: (path: string) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;
@@ -37,12 +39,20 @@ export function GitWorkspace({
   setGitOutputLog,
   onRefreshGit,
   onStageAll,
+  onStageFile,
+  onUnstageFile,
   onCommit,
   onPull,
   onPush,
   onLoadDiff
 }: GitWorkspaceProps) {
   const [isConsoleOpen, setIsConsoleOpen] = useState(true);
+
+  useEffect(() => {
+    if (gitOutputLog) {
+      setIsConsoleOpen(true);
+    }
+  }, [gitOutputLog]);
 
   if (!gitStatus?.isRepo) {
     return (
@@ -60,6 +70,7 @@ export function GitWorkspace({
 
   const stagedChanges = gitChanges.filter(c => c.staged);
   const unstagedChanges = gitChanges.filter(c => !c.staged);
+  const isClean = !isGitLoading && gitChanges.length === 0;
 
   const handleFileClick = (change: GitFileChange) => {
     setSelectedGitFile(change.path);
@@ -189,6 +200,18 @@ export function GitWorkspace({
                 >
                   <span className={`statusIcon ${c.status}`}>{c.status[0].toUpperCase()}</span>
                   <span className="filePath">{c.path}</span>
+                  <button
+                    type="button"
+                    className="gitFileActionButton unstageButton"
+                    title="Unstage this file"
+                    disabled={isGitLoading}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onUnstageFile(c.path);
+                    }}
+                  >
+                    -
+                  </button>
                 </div>
               ))
             )}
@@ -207,25 +230,40 @@ export function GitWorkspace({
                 >
                   <span className={`statusIcon ${c.status}`}>{c.status[0].toUpperCase()}</span>
                   <span className="filePath">{c.path}</span>
+                  <button
+                    type="button"
+                    className="gitFileActionButton stageButton"
+                    title="Stage this file"
+                    disabled={isGitLoading}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onStageFile(c.path);
+                    }}
+                  >
+                    +
+                  </button>
                 </div>
               ))
             )}
           </div>
         </div>
 
-        {gitOutputLog && (
-          <div className="gitConsoleCard">
-            <div className="gitConsoleHeader" onClick={() => setIsConsoleOpen(!isConsoleOpen)}>
-              <span>Command Output Console</span>
-              <span>{isConsoleOpen ? " [v]" : " [^]"}</span>
+        {gitOutputLog && (() => {
+          const hasConsoleError = gitOutputLog.toLowerCase().includes("error") || gitOutputLog.toLowerCase().includes("fatal");
+          return (
+            <div className={`gitConsoleCard ${hasConsoleError ? "hasError" : ""}`}>
+              <div className="gitConsoleHeader" onClick={() => setIsConsoleOpen(!isConsoleOpen)}>
+                <span>Command Output Console</span>
+                <span>{isConsoleOpen ? " [v]" : " [^]"}</span>
+              </div>
+              {isConsoleOpen && (
+                <pre className="gitConsoleLog">
+                  {gitOutputLog}
+                </pre>
+              )}
             </div>
-            {isConsoleOpen && (
-              <pre className="gitConsoleLog">
-                {gitOutputLog}
-              </pre>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       <div className="gitRightCol">
@@ -239,7 +277,18 @@ export function GitWorkspace({
         </div>
         
         <div className="gitDiffBody">
-          {!selectedGitFile ? (
+          {isClean ? (
+            <div className="gitCleanRepoState">
+              <div className="gitCleanRepoContent">
+                <span className="cleanBadge">✓</span>
+                <h3>All changes committed</h3>
+                <p>Your workspace is clean. No modifications detected.</p>
+                <button type="button" className="smallButton" onClick={onRefreshGit} disabled={isGitLoading}>
+                  Refresh Status
+                </button>
+              </div>
+            </div>
+          ) : !selectedGitFile ? (
             <div className="gitDiffPlaceholder">
               <span className="placeholderIcon">[File]</span>
               <p>Select a modified file from the changes list to review its unified differences.</p>

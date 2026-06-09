@@ -38,6 +38,8 @@ interface DistillWorkspaceProps {
   setGitOutputLog: (log: string | null) => void;
   onRefreshGit: () => Promise<void>;
   onStageAll: () => Promise<void>;
+  onStageFile: (path: string) => Promise<void>;
+  onUnstageFile: (path: string) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;
@@ -154,6 +156,8 @@ export function DistillWorkspace({
   setGitOutputLog,
   onRefreshGit,
   onStageAll,
+  onStageFile,
+  onUnstageFile,
   onCommit,
   onPull,
   onPush,
@@ -264,6 +268,8 @@ export function DistillWorkspace({
           setGitOutputLog={setGitOutputLog}
           onRefreshGit={onRefreshGit}
           onStageAll={onStageAll}
+          onStageFile={onStageFile}
+          onUnstageFile={onUnstageFile}
           onCommit={onCommit}
           onPull={onPull}
           onPush={onPush}

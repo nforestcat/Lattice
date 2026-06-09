@@ -1141,22 +1141,57 @@ fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, 
         return Ok(Vec::new());
     }
     
-    let output = git_output(root, &["status", "--porcelain"]).unwrap_or_default();
+    let cmd_output = Command::new("git")
+        .args(&["status", "--porcelain", "-z"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| e.to_string())?;
+    
+    if !cmd_output.status.success() {
+        return Err(String::from_utf8_lossy(&cmd_output.stderr).trim().to_string());
+    }
+
+    let stdout = cmd_output.stdout;
+    let parts: Vec<&[u8]> = stdout.split(|&b| b == 0).collect();
     let mut changes = Vec::new();
-    for line in output.lines() {
-        if line.len() < 4 {
+    let mut i = 0;
+    while i < parts.len() {
+        let part = parts[i];
+        if part.is_empty() {
+            i += 1;
             continue;
         }
-        let x = line.chars().nth(0).unwrap_or(' ');
-        let y = line.chars().nth(1).unwrap_or(' ');
-        let path = line[3..].to_string();
-        
+        let part_str = String::from_utf8_lossy(part);
+        if part_str.len() < 4 {
+            i += 1;
+            continue;
+        }
+        let x = part_str.chars().nth(0).unwrap_or(' ');
+        let y = part_str.chars().nth(1).unwrap_or(' ');
+        let path = part_str[3..].to_string();
+
         if x == '?' && y == '?' {
             changes.push(GitFileChange {
                 path,
                 status: "untracked".to_string(),
                 staged: false,
             });
+            i += 1;
+        } else if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
+            if i + 1 < parts.len() {
+                let dest_part = parts[i + 1];
+                let dest_path = String::from_utf8_lossy(dest_part).to_string();
+                let status = if x == 'R' || y == 'R' { "renamed" } else { "added" };
+                let staged = x == 'R' || x == 'C' || (x != ' ' && x != '?');
+                changes.push(GitFileChange {
+                    path: dest_path,
+                    status: status.to_string(),
+                    staged,
+                });
+                i += 2;
+            } else {
+                i += 1;
+            }
         } else {
             // Check staged (index)
             if x != ' ' {
@@ -1164,7 +1199,6 @@ fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, 
                     'M' => "modified",
                     'A' => "added",
                     'D' => "deleted",
-                    'R' => "renamed",
                     _ => "modified",
                 };
                 changes.push(GitFileChange {
@@ -1186,6 +1220,7 @@ fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, 
                     staged: false,
                 });
             }
+            i += 1;
         }
     }
     Ok(changes)
@@ -1201,7 +1236,7 @@ fn get_git_diff(path: String, staged: bool, state: tauri::State<AppState>) -> Re
     if staged {
         git_output(root, &["diff", "--cached", "--", &path])
     } else {
-        let is_untracked = full_path.exists() && git_output(root, &["status", "--porcelain", &path]).map(|s| s.starts_with("??")).unwrap_or(false);
+        let is_untracked = full_path.exists() && git_output(root, &["status", "--porcelain", "-z", "--", &path]).map(|s| s.starts_with("??")).unwrap_or(false);
         if is_untracked {
             match std::fs::read_to_string(&full_path) {
                 Ok(content) => {
@@ -1221,6 +1256,68 @@ fn get_git_diff(path: String, staged: bool, state: tauri::State<AppState>) -> Re
             git_output(root, &["diff", "--", &path])
         }
     }
+}
+
+#[tauri::command]
+fn git_stage_file(path: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    let _full_path = resolve_vault_path(root, &path)?;
+    git_output(root, &["add", "--", &path])?;
+    Ok(())
+}
+
+#[tauri::command]
+fn git_unstage_file(path: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    let _full_path = resolve_vault_path(root, &path)?;
+    
+    // Guard against real reset failures on mature repositories by verifying HEAD first
+    let head_exists = git_output(root, &["rev-parse", "--verify", "HEAD"]).is_ok();
+    if head_exists {
+        // Resolve if it's a rename to unstage both old and new paths
+        let mut paths_to_reset = vec![path.clone()];
+        if let Ok(status_output) = Command::new("git").args(&["status", "--porcelain", "-z"]).current_dir(root).output() {
+            if status_output.status.success() {
+                let stdout = status_output.stdout;
+                let parts: Vec<&[u8]> = stdout.split(|&b| b == 0).collect();
+                let mut i = 0;
+                while i < parts.len() {
+                    let part = parts[i];
+                    if part.is_empty() {
+                        i += 1;
+                        continue;
+                    }
+                    let part_str = String::from_utf8_lossy(part);
+                    if part_str.len() >= 4 {
+                        let x = part_str.chars().nth(0).unwrap_or(' ');
+                        let _y = part_str.chars().nth(1).unwrap_or(' ');
+                        let new_path = part_str[3..].to_string();
+                        if (x == 'R' || x == 'C') && i + 1 < parts.len() {
+                            let old_path = String::from_utf8_lossy(parts[i + 1]).to_string();
+                            if new_path == path {
+                                paths_to_reset.push(old_path);
+                            }
+                            i += 2;
+                            continue;
+                        }
+                    }
+                    i += 1;
+                }
+            }
+        }
+        for p in paths_to_reset {
+            git_output(root, &["reset", "HEAD", "--", &p])?;
+        }
+    } else {
+        git_output(root, &["rm", "--cached", "--", &path])?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -3048,6 +3145,8 @@ pub fn run() {
             git_commit,
             git_pull,
             git_push,
+            git_stage_file,
+            git_unstage_file,
             get_vault_config,
             save_vault_config,
             archive_prompt_run,
@@ -3502,5 +3601,80 @@ mod tests {
         assert!(excerpt.contains("Line 2 with match"));
         assert!(excerpt.contains("Line 3"));
         assert!(!excerpt.contains("Line 4"));
+    }
+
+    #[test]
+    fn test_unstage_in_unborn_repo() {
+        use tauri::Manager;
+        let root = temp_test_dir("unborn-repo");
+        git_output(&root, &["init"]).unwrap();
+        
+        let state = AppState::default();
+        {
+            let mut guard = state.inner.lock().unwrap();
+            guard.root_path = Some(root.clone());
+        }
+        
+        let app = tauri::test::mock_app();
+        app.manage(state);
+        let tauri_state = app.state::<AppState>();
+        
+        let head_exists = git_output(&root, &["rev-parse", "--verify", "HEAD"]).is_ok();
+        assert!(!head_exists);
+        
+        let test_file = "Test.md";
+        fs::write(root.join(test_file), "# Test Content").unwrap();
+        git_output(&root, &["add", test_file]).unwrap();
+        
+        let changes_before = get_git_changes(tauri_state.clone()).unwrap();
+        assert!(changes_before.iter().any(|c| c.path == test_file && c.staged));
+        
+        git_unstage_file(test_file.to_string(), tauri_state.clone()).unwrap();
+        
+        let changes_after = get_git_changes(tauri_state).unwrap();
+        assert!(changes_after.iter().any(|c| c.path == test_file && !c.staged));
+        
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_unstage_staged_rename_clears_index_delete() {
+        use tauri::Manager;
+        let root = temp_test_dir("staged-rename");
+        git_output(&root, &["init"]).unwrap();
+        git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
+        git_output(&root, &["config", "user.name", "Test User"]).unwrap();
+
+        fs::write(root.join("Old.md"), "# Old").unwrap();
+        git_output(&root, &["add", "Old.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Initial commit"]).unwrap();
+        git_output(&root, &["mv", "Old.md", "New.md"]).unwrap();
+
+        let state = AppState::default();
+        {
+            let mut guard = state.inner.lock().unwrap();
+            guard.root_path = Some(root.clone());
+        }
+
+        let app = tauri::test::mock_app();
+        app.manage(state);
+        let tauri_state = app.state::<AppState>();
+
+        let changes_before = get_git_changes(tauri_state.clone()).unwrap();
+        assert!(changes_before.iter().any(|change| {
+            change.path == "New.md" && change.status == "renamed" && change.staged
+        }));
+
+        git_unstage_file("New.md".to_string(), tauri_state.clone()).unwrap();
+
+        let porcelain = git_output(&root, &["status", "--porcelain"]).unwrap();
+        assert!(!porcelain.lines().any(|line| line.starts_with("D  Old.md")));
+        assert!(porcelain.lines().any(|line| line == " D Old.md"));
+        assert!(porcelain.lines().any(|line| line == "?? New.md"));
+
+        let changes_after = get_git_changes(tauri_state).unwrap();
+        assert!(!changes_after.iter().any(|change| change.staged));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

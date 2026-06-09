@@ -2508,6 +2508,110 @@ participants: Antigravity, User
     gitStageAllSpy.mockRestore();
     gitCommitSpy.mockRestore();
   });
+
+  it("stages and unstages individual files, auto-opens and styles console logs, and handles clean state", async () => {
+    const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "main",
+      hasChanges: true
+    });
+    
+    const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
+      { path: "ModifiedNote.md", status: "modified", staged: false }
+    ]);
+    
+    const getGitDiffSpy = vi.spyOn(vaultApi, "getGitDiff").mockResolvedValue("diff content");
+    const gitStageFileSpy = vi.spyOn(vaultApi, "gitStageFile").mockResolvedValue();
+    const gitUnstageFileSpy = vi.spyOn(vaultApi, "gitUnstageFile").mockResolvedValue();
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Git Workspace" }));
+
+    await waitFor(() => expect(screen.getByText("ModifiedNote.md")).toBeTruthy());
+    
+    const stageBtn = screen.getByTitle("Stage this file");
+    expect(stageBtn).toBeTruthy();
+    
+    getGitChangesSpy.mockResolvedValue([
+      { path: "ModifiedNote.md", status: "modified", staged: true }
+    ]);
+    
+    fireEvent.click(stageBtn);
+    expect(gitStageFileSpy).toHaveBeenCalledWith("ModifiedNote.md");
+    
+    await waitFor(() => expect(screen.getByTitle("Unstage this file")).toBeTruthy());
+
+    const unstageBtn = screen.getByTitle("Unstage this file");
+    getGitChangesSpy.mockResolvedValue([
+      { path: "ModifiedNote.md", status: "modified", staged: false }
+    ]);
+    
+    fireEvent.click(unstageBtn);
+    expect(gitUnstageFileSpy).toHaveBeenCalledWith("ModifiedNote.md");
+    await waitFor(() => expect(screen.getByTitle("Stage this file")).toBeTruthy());
+
+    getGitChangesSpy.mockResolvedValue([]);
+    getGitStatusSpy.mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "main",
+      hasChanges: false
+    });
+    
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    
+    await waitFor(() => {
+      expect(screen.getByText("All changes committed")).toBeTruthy();
+      expect(screen.getByText("Your workspace is clean. No modifications detected.")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: "Pull" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Push" })).toBeTruthy();
+
+    getGitStatusSpy.mockRestore();
+    getGitChangesSpy.mockRestore();
+    getGitDiffSpy.mockRestore();
+    gitStageFileSpy.mockRestore();
+    gitUnstageFileSpy.mockRestore();
+  });
+
+  it("auto-opens the console output panel and styles it red if log contains error or fatal warnings", async () => {
+    const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "main",
+      hasChanges: true
+    });
+    const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
+      { path: "ModifiedNote.md", status: "modified", staged: false }
+    ]);
+    
+    const gitStageAllSpy = vi.spyOn(vaultApi, "gitStageAll").mockRejectedValue(new Error("fatal: something went wrong"));
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Git Workspace" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stage All" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Stage All" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Command Output Console")).toBeTruthy();
+      expect(screen.getByText(/fatal: something went wrong/)).toBeTruthy();
+      
+      const consoleCard = document.querySelector(".gitConsoleCard");
+      expect(consoleCard?.className).toContain("hasError");
+    });
+
+    getGitStatusSpy.mockRestore();
+    getGitChangesSpy.mockRestore();
+    gitStageAllSpy.mockRestore();
+  });
 });
 
 

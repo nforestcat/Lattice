@@ -152,6 +152,8 @@ export type VaultApi = {
   getGitChanges(): Promise<GitFileChange[]>;
   getGitDiff(path: string, staged: boolean): Promise<string>;
   gitStageAll(): Promise<void>;
+  gitStageFile(path: string): Promise<void>;
+  gitUnstageFile(path: string): Promise<void>;
   gitCommit(message: string): Promise<string>;
   gitPull(): Promise<string>;
   gitPush(): Promise<string>;

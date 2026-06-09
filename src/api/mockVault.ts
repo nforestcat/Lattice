@@ -90,6 +90,12 @@ export function createMockVaultApi(): VaultApi {
   let index = buildVaultIndex(files);
   let openRoot = "Demo Vault";
   let autoGitEnabled = false;
+  let mockChanges: GitFileChange[] = [
+    { path: "Home.md", status: "modified", staged: false },
+    { path: "Project.md", status: "modified", staged: true },
+    { path: "untracked-note.md", status: "untracked", staged: false },
+    { path: "deleted-note.md", status: "deleted", staged: false }
+  ];
   let snapshots: Snapshot[] = [];
   const snapshotContent = new Map<string, string>();
 
@@ -364,7 +370,7 @@ export function createMockVaultApi(): VaultApi {
         isRepo: true,
         autoGitEnabled,
         branch: "main",
-        hasChanges: true
+        hasChanges: mockChanges.length > 0
       };
     },
     async setAutoGit(enabled: boolean): Promise<GitSettings> {
@@ -372,12 +378,7 @@ export function createMockVaultApi(): VaultApi {
       return { autoGitEnabled };
     },
     async getGitChanges(): Promise<GitFileChange[]> {
-      return [
-        { path: "Home.md", status: "modified", staged: false },
-        { path: "Project.md", status: "modified", staged: true },
-        { path: "untracked-note.md", status: "untracked", staged: false },
-        { path: "deleted-note.md", status: "deleted", staged: false }
-      ];
+      return mockChanges;
     },
     async getGitDiff(path: string, staged: boolean): Promise<string> {
       if (staged) {
@@ -409,12 +410,19 @@ index 89abcde..1234567 100644
       }
     },
     async gitStageAll(): Promise<void> {
-      // Mock stage all success
+      mockChanges = mockChanges.map(c => ({ ...c, staged: true }));
+    },
+    async gitStageFile(path: string): Promise<void> {
+      mockChanges = mockChanges.map(c => c.path === path ? { ...c, staged: true } : c);
+    },
+    async gitUnstageFile(path: string): Promise<void> {
+      mockChanges = mockChanges.map(c => c.path === path ? { ...c, staged: false } : c);
     },
     async gitCommit(message: string): Promise<string> {
       if (!message.trim()) {
         throw new Error("Commit message cannot be empty");
       }
+      mockChanges = [];
       return `[main abc1234] ${message}`;
     },
     async gitPull(): Promise<string> {

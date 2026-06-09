@@ -925,7 +925,7 @@ Return the complete note content including any YAML frontmatter block at the ver
     void runHealthAudit();
   }
 
-  async function refreshGitWorkspace() {
+  async function refreshGitWorkspace(intendedSelection?: { path: string; staged: boolean }) {
     setIsGitLoading(true);
     try {
       const status = await vaultApi.getGitStatus();
@@ -933,13 +933,63 @@ Return the complete note content including any YAML frontmatter block at the ver
       if (status.isRepo) {
         const changes = await vaultApi.getGitChanges();
         setGitChanges(changes);
+        const target = intendedSelection || (selectedGitFile ? { path: selectedGitFile, staged: selectedGitFileStaged } : null);
+        if (target) {
+          const match = changes.find(c => c.path === target.path && c.staged === target.staged);
+          if (match) {
+            setSelectedGitFile(match.path);
+            setSelectedGitFileStaged(match.staged);
+            void loadGitDiff(match.path, match.staged);
+          } else {
+            setSelectedGitFile(null);
+            setSelectedGitFileStaged(false);
+            setActiveDiff(null);
+          }
+        } else {
+          setSelectedGitFile(null);
+          setSelectedGitFileStaged(false);
+          setActiveDiff(null);
+        }
       } else {
         setGitChanges([]);
         setSelectedGitFile(null);
+        setSelectedGitFileStaged(false);
         setActiveDiff(null);
       }
     } catch (err: any) {
       setGitOutputLog(`Error checking Git status: ${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handleGitStageFile(path: string) {
+    setIsGitLoading(true);
+    try {
+      await vaultApi.gitStageFile(path);
+      if (selectedGitFile === path) {
+        setSelectedGitFileStaged(true);
+      }
+      await refreshGitWorkspace({ path, staged: true });
+      await refreshVault(activePath);
+    } catch (err: any) {
+      setGitOutputLog(`Error staging file ${path}: ${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handleGitUnstageFile(path: string) {
+    setIsGitLoading(true);
+    try {
+      await vaultApi.gitUnstageFile(path);
+      if (selectedGitFile === path) {
+        setSelectedGitFileStaged(false);
+      }
+      await refreshGitWorkspace({ path, staged: false });
+      await refreshVault(activePath);
+    } catch (err: any) {
+      setGitOutputLog(`Error unstaging file ${path}: ${err?.message || err}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -2834,6 +2884,8 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               setGitOutputLog={setGitOutputLog}
               onRefreshGit={refreshGitWorkspace}
               onStageAll={handleGitStageAll}
+              onStageFile={handleGitStageFile}
+              onUnstageFile={handleGitUnstageFile}
               onCommit={handleGitCommit}
               onPull={handleGitPull}
               onPush={handleGitPush}

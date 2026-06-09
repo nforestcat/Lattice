@@ -62,6 +62,8 @@ export function createTauriVaultApi(): VaultApi {
     getGitChanges: () => invoke<GitFileChange[]>("get_git_changes"),
     getGitDiff: (path: string, staged: boolean) => invoke<string>("get_git_diff", { path, staged }),
     gitStageAll: () => invoke<void>("git_stage_all"),
+    gitStageFile: (path: string) => invoke<void>("git_stage_file", { path }),
+    gitUnstageFile: (path: string) => invoke<void>("git_unstage_file", { path }),
     gitCommit: (message: string) => invoke<string>("git_commit", { message }),
     gitPull: () => invoke<string>("git_pull"),
     gitPush: () => invoke<string>("git_push"),
