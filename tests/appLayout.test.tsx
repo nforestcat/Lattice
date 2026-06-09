@@ -2716,6 +2716,88 @@ participants: Antigravity, User
     gitCommitSpy.mockRestore();
   });
 
+  it("renders Git diffs with file headers, line numbers, and collapsible hunks", async () => {
+    const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "feature-branch",
+      hasChanges: true,
+      hasConflicts: false
+    });
+    const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([
+      { path: "Docs.md", status: "modified", staged: false }
+    ]);
+    const getGitDiffSpy = vi.spyOn(vaultApi, "getGitDiff").mockResolvedValue(
+      [
+        "diff --git a/Docs.md b/Docs.md",
+        "index 1111111..2222222 100644",
+        "--- a/Docs.md",
+        "+++ b/Docs.md",
+        "@@ -1,2 +1,3 @@ intro",
+        " line one",
+        "-old two",
+        "+new two",
+        "+new three",
+        "@@ -10,2 +11,2 @@ outro",
+        " context ten",
+        "-old eleven",
+        "+new eleven",
+        "@@ -20,2 +21,2 @@ markdown",
+        "--- old heading",
+        "+++ new heading",
+        "diff --git a/Other.md b/Other.md",
+        "index 3333333..4444444 100644",
+        "--- a/Other.md",
+        "+++ b/Other.md",
+        "@@ -1,2 +1,3 @@ intro",
+        " other one",
+        "-old other",
+        "+new other",
+        "+extra other"
+      ].join("\n")
+    );
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Git Workspace" }));
+
+    await waitFor(() => expect(screen.getByText("Docs.md")).toBeTruthy());
+    fireEvent.click(screen.getByText("Docs.md"));
+
+    await waitFor(() => {
+      expect(getGitDiffSpy).toHaveBeenCalledWith("Docs.md", false);
+      expect(document.querySelector(".gitDiffFileHeader")?.textContent).toContain("a/Docs.md");
+      expect(document.querySelector(".gitDiffFileHeader")?.textContent).toContain("b/Docs.md");
+      expect(document.querySelector(".gitDiffFileHeader")?.textContent).toContain("3 hunks");
+    });
+    expect(screen.queryByRole("button", { name: /Collapse hunk unified diff/ })).toBeNull();
+
+    const oldLineNumbers = Array.from(document.querySelectorAll(".gitDiffLineNumber.old")).map((el) => el.textContent);
+    const newLineNumbers = Array.from(document.querySelectorAll(".gitDiffLineNumber.new")).map((el) => el.textContent);
+    expect(oldLineNumbers).toContain("1");
+    expect(oldLineNumbers).toContain("2");
+    expect(newLineNumbers).toContain("1");
+    expect(newLineNumbers).toContain("2");
+    expect(newLineNumbers).toContain("3");
+
+    const repeatedRangeHunkButtons = screen.getAllByRole("button", { name: /Collapse hunk -1,2 \+1,3/ });
+    fireEvent.click(repeatedRangeHunkButtons[0]);
+    await waitFor(() => expect(screen.queryByText("-old two")).toBeNull());
+    expect(screen.getByText("-old eleven")).toBeTruthy();
+    expect(screen.getByText("-old other")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand hunk -1,2 \+1,3/ }));
+    expect(screen.getByText("-old two")).toBeTruthy();
+    expect(screen.getByText("--- old heading")).toBeTruthy();
+    expect(screen.getByText("+++ new heading")).toBeTruthy();
+
+    getGitStatusSpy.mockRestore();
+    getGitChangesSpy.mockRestore();
+    getGitDiffSpy.mockRestore();
+  });
+
   it("stages and unstages individual files, auto-opens and styles console logs, and handles clean state", async () => {
     const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
       isRepo: true,

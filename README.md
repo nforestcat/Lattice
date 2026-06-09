@@ -29,7 +29,7 @@ Implemented so far:
 - Capture loose ideas or LLM answers into daily Inbox notes
 - Triage Inbox captures (into new notes, append to existing notes, or mark processed)
 - Create snapshots and optionally auto-commit saves in existing Git vaults
-- Review vault changes in a visual **Git Workspace** with staged/unstaged/untracked file groups, unified diffs, per-file stage/unstage controls, clean-repository status, commit message validation, Stage All, Commit, Pull, and Push actions
+- Review vault changes in a visual **Git Workspace** with staged/unstaged/untracked file groups, upgraded unified diffs with file headers, old/new line numbers, collapsible hunks, higher-contrast added/deleted rows, per-file stage/unstage controls, clean-repository status, commit message validation, Stage All, Commit, Pull, and Push actions
 - Protect Git sync with **Manual Conflict Safety** by detecting merge conflicts and preventing unsafe operations (commit, auto-commit, pull, push) both in backend Tauri commands and the UI, checking staged files' exact index content (`git show :<path>`) for unresolved conflict markers before committing, displaying non-dismissible warning banners in the editor (edit/split/preview modes), showing sidebar warning alerts, and highlighting conflict markers prominently in diffs
 - Chat with an integrated LLM Copilot in the Distill Workspace (supporting Ollama, OpenAI, Gemini, and Anthropic), with active context bundle auto-injection and streaming responses containing structured proposed edits that instantly populate the pending edit checklist
 - Compute semantic note recommendations using vector embeddings (Ollama or OpenAI/Custom OpenAI-compatible) and store them in a persistent local cache file (`.lattice/embeddings.json`) to minimize API requests and save overhead on subsequent note selections
@@ -111,7 +111,7 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 
 - `src/core`: Markdown parsing, indexing, context bundle, capture logic
 - `src/api`: shared frontend API types plus mock/Tauri adapters
-- `src/ui`: React app UI
+- `src/ui`: React app UI, including split-out workspaces and panels such as `GitWorkspace`, `GraphView`, `InspectorPanel`, and `PromptHistoryPanel`
 - `src-tauri`: Rust backend and Tauri commands
 - `tests`: Vitest coverage for core behavior and UI smoke tests
 

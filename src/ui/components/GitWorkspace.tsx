@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { GitFileChange, GitStatus } from "../../api/types";
 
 interface GitWorkspaceProps {
@@ -24,6 +24,170 @@ interface GitWorkspaceProps {
   onLoadDiff: (path: string, staged: boolean) => Promise<void>;
 }
 
+type ParsedDiffLine = {
+  type: "context" | "add" | "del" | "conflict" | "meta";
+  prefix: string;
+  content: string;
+  oldLine: number | null;
+  newLine: number | null;
+};
+
+type ParsedDiffHunk = {
+  id: string;
+  header: string;
+  rangeLabel: string;
+  oldStart: number;
+  newStart: number;
+  oldCount: number;
+  newCount: number;
+  heading: string;
+  lines: ParsedDiffLine[];
+};
+
+type ParsedDiffFile = {
+  oldPath: string | null;
+  newPath: string | null;
+  hunks: ParsedDiffHunk[];
+};
+
+function normalizeDiffPath(rawPath: string) {
+  return rawPath.trim().replace(/^"|"$/g, "");
+}
+
+function parseHunkHeader(line: string) {
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(line);
+  if (!match) return null;
+
+  const oldStart = Number(match[1]);
+  const oldCount = match[2] ? Number(match[2]) : 1;
+  const newStart = Number(match[3]);
+  const newCount = match[4] ? Number(match[4]) : 1;
+  const heading = match[5]?.trim() || "";
+
+  return {
+    oldStart,
+    oldCount,
+    newStart,
+    newCount,
+    heading,
+    rangeLabel: `-${oldStart},${oldCount} +${newStart},${newCount}`
+  };
+}
+
+function isFileMetadataLine(line: string) {
+  return /^(index |new file mode |deleted file mode |old mode |new mode |similarity index |dissimilarity index |rename from |rename to |copy from |copy to )/.test(line);
+}
+
+function parseUnifiedDiff(diff: string): ParsedDiffFile[] {
+  const files: ParsedDiffFile[] = [];
+  let currentFile: ParsedDiffFile = { oldPath: null, newPath: null, hunks: [] };
+  let currentHunk: ParsedDiffHunk | null = null;
+  let oldLine = 0;
+  let newLine = 0;
+
+  const ensureFile = () => {
+    if (!files.includes(currentFile)) {
+      files.push(currentFile);
+    }
+  };
+
+  const ensureFallbackHunk = () => {
+    ensureFile();
+    if (!currentHunk) {
+      currentHunk = {
+        id: `fallback-${currentFile.hunks.length}`,
+        header: "Diff",
+        rangeLabel: "unified diff",
+        oldStart: 0,
+        newStart: 0,
+        oldCount: 0,
+        newCount: 0,
+        heading: "",
+        lines: []
+      };
+      currentFile.hunks.push(currentHunk);
+    }
+    return currentHunk;
+  };
+
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("diff --git ")) {
+      if (currentFile.oldPath || currentFile.newPath || currentFile.hunks.length > 0) {
+        currentFile = { oldPath: null, newPath: null, hunks: [] };
+        currentHunk = null;
+      }
+      const match = /^diff --git (.+) (.+)$/.exec(line);
+      if (match) {
+        currentFile.oldPath = normalizeDiffPath(match[1]);
+        currentFile.newPath = normalizeDiffPath(match[2]);
+      }
+      ensureFile();
+      continue;
+    }
+
+    if (!currentHunk && isFileMetadataLine(line)) {
+      ensureFile();
+      continue;
+    }
+
+    if (!currentHunk && line.startsWith("--- ")) {
+      ensureFile();
+      currentFile.oldPath = normalizeDiffPath(line.slice(4));
+      currentHunk = null;
+      continue;
+    }
+
+    if (!currentHunk && line.startsWith("+++ ")) {
+      ensureFile();
+      currentFile.newPath = normalizeDiffPath(line.slice(4));
+      currentHunk = null;
+      continue;
+    }
+
+    const hunkHeader = parseHunkHeader(line);
+    if (hunkHeader) {
+      ensureFile();
+      oldLine = hunkHeader.oldStart;
+      newLine = hunkHeader.newStart;
+      currentHunk = {
+        id: `${currentFile.hunks.length}:${hunkHeader.rangeLabel}`,
+        header: line,
+        ...hunkHeader,
+        lines: []
+      };
+      currentFile.hunks.push(currentHunk);
+      continue;
+    }
+
+    const hunk = ensureFallbackHunk();
+    if (line.startsWith("\\ No newline")) {
+      hunk.lines.push({ type: "meta", prefix: "", content: line, oldLine: null, newLine: null });
+    } else if (line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>")) {
+      hunk.lines.push({ type: "conflict", prefix: "", content: line, oldLine: null, newLine: null });
+    } else if (currentHunk && line.startsWith("+")) {
+      hunk.lines.push({ type: "add", prefix: "+", content: line.slice(1), oldLine: null, newLine });
+      newLine += 1;
+    } else if (currentHunk && line.startsWith("-")) {
+      hunk.lines.push({ type: "del", prefix: "-", content: line.slice(1), oldLine, newLine: null });
+      oldLine += 1;
+    } else if (currentHunk) {
+      hunk.lines.push({
+        type: "context",
+        prefix: " ",
+        content: line.startsWith(" ") ? line.slice(1) : line,
+        oldLine,
+        newLine
+      });
+      oldLine += 1;
+      newLine += 1;
+    } else {
+      hunk.lines.push({ type: "meta", prefix: "", content: line, oldLine: null, newLine: null });
+    }
+  }
+
+  return files.length > 0 ? files : [currentFile];
+}
+
 export function GitWorkspace({
   gitStatus,
   gitChanges,
@@ -47,12 +211,18 @@ export function GitWorkspace({
   onLoadDiff
 }: GitWorkspaceProps) {
   const [isConsoleOpen, setIsConsoleOpen] = useState(true);
+  const [collapsedHunks, setCollapsedHunks] = useState<Set<string>>(new Set());
+  const parsedDiffFiles = useMemo(() => parseUnifiedDiff(activeDiff || ""), [activeDiff]);
 
   useEffect(() => {
     if (gitOutputLog) {
       setIsConsoleOpen(true);
     }
   }, [gitOutputLog]);
+
+  useEffect(() => {
+    setCollapsedHunks(new Set());
+  }, [activeDiff, selectedGitFile, selectedGitFileStaged]);
 
   if (!gitStatus?.isRepo) {
     return (
@@ -80,48 +250,16 @@ export function GitWorkspace({
     void onLoadDiff(change.path, change.staged);
   };
 
-  const parseDiffLine = (line: string, index: number) => {
-    const cleanLine = line.startsWith("+") || line.startsWith("-") ? line.slice(1) : line;
-    if (cleanLine.startsWith("<<<<<<<") || cleanLine.startsWith("=======") || cleanLine.startsWith(">>>>>>>")) {
-      return (
-        <div key={index} className="gitDiffLine diff-conflict-marker">
-          {line}
-        </div>
-      );
-    }
-    if (line.startsWith("+++") || line.startsWith("---")) {
-      return (
-        <div key={index} className="gitDiffLine diff-hunk">
-          {line}
-        </div>
-      );
-    }
-    if (line.startsWith("+")) {
-      return (
-        <div key={index} className="gitDiffLine diff-add">
-          {line}
-        </div>
-      );
-    }
-    if (line.startsWith("-")) {
-      return (
-        <div key={index} className="gitDiffLine diff-del">
-          {line}
-        </div>
-      );
-    }
-    if (line.startsWith("@@")) {
-      return (
-        <div key={index} className="gitDiffLine diff-hunk">
-          {line}
-        </div>
-      );
-    }
-    return (
-      <div key={index} className="gitDiffLine diff-context">
-        {line}
-      </div>
-    );
+  const toggleHunk = (hunkId: string) => {
+    setCollapsedHunks((prev) => {
+      const next = new Set(prev);
+      if (next.has(hunkId)) {
+        next.delete(hunkId);
+      } else {
+        next.add(hunkId);
+      }
+      return next;
+    });
   };
 
   return (
@@ -351,9 +489,51 @@ export function GitWorkspace({
               <p>No changes detected in this file.</p>
             </div>
           ) : (
-            <pre className="gitDiffPre">
-              {activeDiff.split(/\r?\n/).map((line, idx) => parseDiffLine(line, idx))}
-            </pre>
+            <div className="gitDiffViewer">
+              {parsedDiffFiles.map((file, fileIndex) => (
+                <section key={`${file.oldPath}:${file.newPath}:${fileIndex}`} className="gitDiffFile">
+                  <div className="gitDiffFileHeader">
+                    <span className="gitDiffFileTitle">
+                      <code>{file.oldPath || selectedGitFile || "old"}</code>
+                      <span aria-hidden="true"> {"->"} </span>
+                      <code>{file.newPath || selectedGitFile || "new"}</code>
+                    </span>
+                    <span className="gitDiffFileMeta">{file.hunks.length} hunk{file.hunks.length === 1 ? "" : "s"}</span>
+                  </div>
+                  {file.hunks.map((hunk) => {
+                    const hunkStateId = `${fileIndex}:${hunk.id}`;
+                    const isCollapsed = collapsedHunks.has(hunkStateId);
+                    return (
+                      <div key={hunk.id} className={`gitDiffHunk ${isCollapsed ? "collapsed" : ""}`}>
+                        <button
+                          type="button"
+                          className="gitDiffHunkHeader"
+                          aria-expanded={!isCollapsed}
+                          onClick={() => toggleHunk(hunkStateId)}
+                        >
+                          <span>{isCollapsed ? "[+]" : "[-]"}</span>
+                          <span>{hunk.header}</span>
+                          <span className="gitDiffHunkMeta">
+                            {isCollapsed ? "Expand" : "Collapse"} hunk {hunk.rangeLabel}
+                          </span>
+                        </button>
+                        {!isCollapsed && (
+                          <div className="gitDiffTable">
+                            {hunk.lines.map((line, lineIndex) => (
+                              <div key={`${hunk.id}:${lineIndex}`} className={`gitDiffRow diff-${line.type}`}>
+                                <span className="gitDiffLineNumber old">{line.oldLine ?? ""}</span>
+                                <span className="gitDiffLineNumber new">{line.newLine ?? ""}</span>
+                                <span className="gitDiffContent">{`${line.prefix}${line.content}`}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </section>
+              ))}
+            </div>
           )}
         </div>
       </div>

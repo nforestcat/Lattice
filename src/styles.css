@@ -3695,40 +3695,152 @@ summary:hover .treeActions {
   font-size: 13px;
 }
 
-.gitDiffPre {
-  margin: 0;
-  padding: 12px;
-  font-family: monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  background: #ffffff;
+.gitDiffViewer {
   min-height: 100%;
+  padding: 12px;
+  background: #f8fafc;
   box-sizing: border-box;
 }
 
-.gitDiffLine {
-  white-space: pre;
-  padding: 0 4px;
+.gitDiffFile {
+  overflow: hidden;
+  border: 1px solid #d9dee3;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
-.gitDiffLine.diff-add {
-  background: #e6ffed;
-  color: #1e7e34;
+.gitDiffFile + .gitDiffFile {
+  margin-top: 12px;
 }
 
-.gitDiffLine.diff-del {
-  background: #ffeef0;
-  color: #d73a49;
+.gitDiffFileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #d9dee3;
 }
 
-.gitDiffLine.diff-hunk {
-  background: #f1f8ff;
-  color: #0366d6;
+.gitDiffFileTitle {
+  min-width: 0;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.gitDiffFileTitle code {
+  color: inherit;
+  font-size: inherit;
+  background: transparent;
+}
+
+.gitDiffFileMeta,
+.gitDiffHunkMeta {
+  color: #64748b;
+  font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.gitDiffLine.diff-context {
+.gitDiffHunk + .gitDiffHunk {
+  border-top: 1px solid #e2e8f0;
+}
+
+.gitDiffHunkHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  color: #174ea6;
+  background: #eaf3ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.gitDiffHunkHeader:hover {
+  background: #dbeafe;
+}
+
+.gitDiffTable {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gitDiffRow {
+  display: table-row;
+}
+
+.gitDiffLineNumber,
+.gitDiffContent {
+  display: table-cell;
+  white-space: pre;
+  vertical-align: top;
+}
+
+.gitDiffLineNumber {
+  width: 44px;
+  padding: 1px 8px;
+  color: #64748b;
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.gitDiffContent {
+  padding: 1px 10px;
   color: #24292e;
+}
+
+.gitDiffRow.diff-add .gitDiffLineNumber,
+.gitDiffRow.diff-add .gitDiffContent {
+  background: #dcfce7;
+  color: #14532d;
+}
+
+.gitDiffRow.diff-add .gitDiffContent {
+  border-left: 3px solid #16a34a;
+}
+
+.gitDiffRow.diff-del .gitDiffLineNumber,
+.gitDiffRow.diff-del .gitDiffContent {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.gitDiffRow.diff-del .gitDiffContent {
+  border-left: 3px solid #dc2626;
+}
+
+.gitDiffRow.diff-conflict .gitDiffLineNumber,
+.gitDiffRow.diff-conflict .gitDiffContent {
+  background: #fff1f2;
+  color: #9f1239;
+  font-weight: 800;
+}
+
+.gitDiffRow.diff-conflict .gitDiffContent {
+  border-left: 3px solid #e11d48;
+}
+
+.gitDiffRow.diff-meta .gitDiffContent {
+  color: #475569;
+  background: #f8fafc;
+  font-weight: 700;
 }
 
 /* Git Workspace v2 Polish Styles */
@@ -3881,8 +3993,3 @@ summary:hover .treeActions {
   padding-left: 5px;
 }
 
-.gitDiffLine.diff-conflict-marker {
-  background-color: #ffedd5 !important;
-  color: #c2410c !important;
-  font-weight: bold;
-}
