@@ -125,6 +125,42 @@ textarea {
   border-left: 1px solid #d9dee3;
 }
 
+.rightSidebarTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -14px -14px 14px;
+  padding: 10px;
+  background: #eef1f4;
+  border-bottom: 1px solid #d9dee3;
+}
+
+.rightSidebarTabs button {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #475467;
+  background: #f8fafc;
+  border: 1px solid #d7dde5;
+}
+
+.rightSidebarTabs button.active {
+  color: #174ea6;
+  background: #e8f1ff;
+  border-color: #8bb6ff;
+}
+
+.rightSidebarTabs button:hover {
+  border-color: #a8b4c4;
+  background: #ffffff;
+}
+
 .brand {
   display: flex;
   flex-direction: column;
@@ -2422,6 +2458,142 @@ summary:hover .treeActions {
   border-color: #2563eb;
 }
 
+.linkSuggestionsSidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 12px;
+}
+
+.linkSuggestionsSidebar.emptyState {
+  padding-top: 10px;
+}
+
+.suggestionsSection {
+  margin-top: 0;
+}
+
+.suggestionsSection h4,
+.mentionsSubsection h5 {
+  margin: 0;
+  color: #344054;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.mentionsSubsection h5 {
+  color: #637083;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.suggestionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.suggestionItem {
+  border: 1px solid #d9dee3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.suggestionItem:hover {
+  border-color: #b7c4d3;
+}
+
+.suggestionItemRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.suggestionItemName {
+  min-width: 0;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.suggestionItemActions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 128px;
+}
+
+.suggestionActionBtn {
+  width: auto;
+  min-height: 26px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.suggestionActionBtn.primary {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+}
+
+.suggestionsEmptyState {
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 8px;
+  color: #637083;
+  background: #f8fafc;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.suggestionExcerpt,
+.suggestionDetailText {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.suggestionDetailText {
+  color: #7c8798;
+  font-size: 10px;
+}
+
+.suggestionScoreBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #155e75;
+  background: #cffafe;
+  border: 1px solid #67e8f9;
+  white-space: nowrap;
+}
+
+.suggestionScoreBadge.high {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.suggestionScoreBadge.medium {
+  color: #854d0e;
+  background: #fef3c7;
+  border-color: #fde68a;
+}
+
 /* Embedding Status Text */
 .embeddingStatusText {
   font-size: 11px;
@@ -3016,90 +3188,6 @@ summary:hover .treeActions {
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
   outline: none;
-}
-
-/* AI Backlink Suggestions Styling */
-.backlinkSuggestionsSection {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.backlinkSuggestionsList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.backlinkSuggestionCard {
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  border-radius: 8px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: all 0.2s ease;
-}
-
-.backlinkSuggestionCard:hover {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-}
-
-.suggestionHeader {
-  font-size: 12px;
-  color: #334155;
-  line-height: 1.4;
-}
-
-.matchBadge {
-  background: #f0fdf4;
-  color: #16a34a;
-  border: 1px solid #bbf7d0;
-  padding: 1px 6px;
-  border-radius: 9999px;
-  font-size: 10px;
-  font-weight: 600;
-  margin-left: 4px;
-  display: inline-block;
-}
-
-.suggestionExcerpt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  color: #475569;
-  background: #f8fafc;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid #f1f5f9;
-  margin: 2px 0 0 0;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 120px;
-}
-
-.suggestionActions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.suggestionActions button {
-  background: #3b82f6;
-  color: #ffffff;
-  border: none;
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.suggestionActions button:hover {
-  background: #2563eb;
 }
 
 /* AI Metadata Suggestions Styling */

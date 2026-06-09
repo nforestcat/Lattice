@@ -7,6 +7,28 @@ import * as llmApi from "../src/api/llm";
 vi.mock("@uiw/react-codemirror", () => {
   return {
     default: (props: any) => {
+      if (props.ref && typeof props.ref === "object") {
+        props.ref.current = {
+          view: {
+            get state() {
+              const editor = document.querySelector("[data-testid='mock-editor']") as HTMLTextAreaElement | null;
+              const from = editor?.selectionStart ?? (props.value || "").length;
+              const to = editor?.selectionEnd ?? from;
+              return {
+                selection: { main: { from, to } },
+                update: (transaction: any) => transaction
+              };
+            },
+            dispatch: (transaction: any) => {
+              const value = props.value || "";
+              const { from, to, insert } = transaction.changes;
+              const nextValue = `${value.slice(0, from)}${insert}${value.slice(to)}`;
+              props.onChange?.(nextValue);
+            },
+            focus: () => {}
+          }
+        };
+      }
       return (
         <textarea
           data-testid="mock-editor"
@@ -1783,12 +1805,13 @@ describe("App layout", () => {
 
     // Verify suggestions scan is loaded and shows suggestion
     await waitFor(() => expect(getSuggestionsSpy).toHaveBeenCalledWith("Projects/Obsidian Replacement.md"));
-    await waitFor(() => expect(screen.getByText("AI Link Suggestions")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Link Suggestions" }));
+    await waitFor(() => expect(screen.getByText("In other Notes (1)")).toBeTruthy());
     
-    const suggestionsSection = document.querySelector(".backlinkSuggestionsSection");
+    const suggestionsSection = document.querySelector(".linkSuggestionsSidebar");
     expect(suggestionsSection).toBeTruthy();
     expect(suggestionsSection!.textContent).toContain("Home");
-    expect(suggestionsSection!.textContent).toContain("mentions this note");
+    expect(suggestionsSection!.textContent).toContain("Link Mention");
     expect(suggestionsSection!.textContent).toContain("Explore Obsidian Replacement and Markdown Systems.");
 
     // Click "Link Mention" button
@@ -1802,6 +1825,189 @@ describe("App layout", () => {
     readNoteSpy.mockRestore();
     getSuggestionsSpy.mockRestore();
     applySuggestionSpy.mockRestore();
+  });
+
+  it("inserts a sidebar wiki link at the editor cursor", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" },
+        { path: "Projects/Obsidian Replacement.md", title: "Obsidian Replacement", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "456" }
+      ],
+      tree: [
+        { kind: "note", name: "Home.md", path: "Home.md", children: [] },
+        { kind: "note", name: "Obsidian Replacement.md", path: "Projects/Obsidian Replacement.md", children: [] }
+      ],
+      obsidianSettings: null
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Alpha  omega",
+      revision: "rev-123"
+    });
+    const getContextSpy = vi.spyOn(vaultApi, "getNoteContext").mockResolvedValue({
+      note: {
+        path: "Home.md",
+        title: "Home",
+        tags: [],
+        frontmatter: {},
+        modifiedAt: "2026-06-01T12:00:00.000Z",
+        contentHash: "123",
+        content: "Alpha  omega",
+        links: []
+      },
+      backlinks: [],
+      outgoingLinks: []
+    });
+
+    vi.spyOn(vaultApi, "getBacklinkSuggestions").mockResolvedValue([
+      {
+        id: "semantic:Projects/Obsidian Replacement.md",
+        sourcePath: "Projects/Obsidian Replacement.md",
+        sourceTitle: "Obsidian Replacement",
+        targetPath: "Home.md",
+        targetTitle: "Home",
+        suggestionType: "semantic",
+        excerpt: "Related project note.",
+        score: 0.84
+      }
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    const editor = screen.getByTestId("mock-editor") as HTMLTextAreaElement;
+    editor.setSelectionRange(6, 6);
+
+    fireEvent.click(screen.getByRole("button", { name: "Link Suggestions" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Insert" })[0]);
+
+    await waitFor(() => expect(editor.value).toBe("Alpha [[Obsidian Replacement]] omega"));
+
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getContextSpy.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("replaces selected editor text with an inserted sidebar wiki link", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" },
+        { path: "Projects/Obsidian Replacement.md", title: "Obsidian Replacement", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "456" }
+      ],
+      tree: [
+        { kind: "note", name: "Home.md", path: "Home.md", children: [] },
+        { kind: "note", name: "Obsidian Replacement.md", path: "Projects/Obsidian Replacement.md", children: [] }
+      ],
+      obsidianSettings: null
+    });
+
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Replace this text",
+      revision: "rev-123"
+    });
+    const getContextSpy = vi.spyOn(vaultApi, "getNoteContext").mockResolvedValue({
+      note: {
+        path: "Home.md",
+        title: "Home",
+        tags: [],
+        frontmatter: {},
+        modifiedAt: "2026-06-01T12:00:00.000Z",
+        contentHash: "123",
+        content: "Replace this text",
+        links: []
+      },
+      backlinks: [],
+      outgoingLinks: []
+    });
+
+    vi.spyOn(vaultApi, "getBacklinkSuggestions").mockResolvedValue([
+      {
+        id: "semantic:Projects/Obsidian Replacement.md",
+        sourcePath: "Projects/Obsidian Replacement.md",
+        sourceTitle: "Obsidian Replacement",
+        targetPath: "Home.md",
+        targetTitle: "Home",
+        suggestionType: "semantic",
+        excerpt: "Related project note.",
+        score: 0.84
+      }
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    const editor = screen.getByTestId("mock-editor") as HTMLTextAreaElement;
+    editor.setSelectionRange(8, 12);
+
+    fireEvent.click(screen.getByRole("button", { name: "Link Suggestions" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Insert" })[0]);
+
+    await waitFor(() => expect(editor.value).toBe("Replace [[Obsidian Replacement]] text"));
+
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getContextSpy.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("links remaining plain mentions without nesting existing wiki links", async () => {
+    const openVaultSpy = vi.spyOn(vaultApi, "openVault").mockResolvedValue({
+      rootPath: "Demo Vault",
+      notes: [
+        { path: "Home.md", title: "Home", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "123" },
+        { path: "Projects/Obsidian Replacement.md", title: "Obsidian Replacement", tags: [], frontmatter: {}, modifiedAt: "2026-06-01T12:00:00.000Z", contentHash: "456" }
+      ],
+      tree: [
+        { kind: "note", name: "Home.md", path: "Home.md", children: [] },
+        { kind: "note", name: "Obsidian Replacement.md", path: "Projects/Obsidian Replacement.md", children: [] }
+      ],
+      obsidianSettings: null
+    });
+
+    const content = "Already [[Obsidian Replacement]] and Obsidian Replacement remain.";
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content,
+      revision: "rev-123"
+    });
+    const getContextSpy = vi.spyOn(vaultApi, "getNoteContext").mockResolvedValue({
+      note: {
+        path: "Home.md",
+        title: "Home",
+        tags: [],
+        frontmatter: {},
+        modifiedAt: "2026-06-01T12:00:00.000Z",
+        contentHash: "123",
+        content,
+        links: []
+      },
+      backlinks: [],
+      outgoingLinks: []
+    });
+    const getSuggestionsSpy = vi.spyOn(vaultApi, "getBacklinkSuggestions").mockResolvedValue([]);
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Link Suggestions" }));
+
+    await waitFor(() => expect(screen.getByText("In this Note (1)")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Link All" }));
+
+    const editor = screen.getByTestId("mock-editor") as HTMLTextAreaElement;
+    await waitFor(() => {
+      expect(editor.value).toBe("Already [[Obsidian Replacement]] and [[Obsidian Replacement]] remain.");
+    });
+
+    openVaultSpy.mockRestore();
+    readNoteSpy.mockRestore();
+    getContextSpy.mockRestore();
+    getSuggestionsSpy.mockRestore();
   });
 
   it("recommends metadata tags and frontmatter properties and applies them", async () => {

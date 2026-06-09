@@ -1,5 +1,5 @@
 import { markdown } from "@codemirror/lang-markdown";
-import CodeMirror from "@uiw/react-codemirror";
+import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
@@ -17,6 +17,7 @@ import { DistillWorkspace } from "./components/DistillWorkspace";
 import { Sidebar } from "./components/Sidebar";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { EditorToolbar } from "./components/EditorToolbar";
+import { LinkSuggestionsSidebar } from "./components/LinkSuggestionsSidebar";
 
 export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
   {
@@ -433,6 +434,8 @@ export function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git">("paste");
+  const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions">("context");
+  const editorRef = useRef<ReactCodeMirrorRef>(null);
   const [gitChanges, setGitChanges] = useState<GitFileChange[]>([]);
   const [selectedGitFile, setSelectedGitFile] = useState<string | null>(null);
   const [selectedGitFileStaged, setSelectedGitFileStaged] = useState<boolean>(false);
@@ -1239,6 +1242,20 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  function replaceUnlinkedMentions(content: string, text: string): string {
+    const escaped = escapeRegExp(text);
+    const wordPattern = new RegExp(`(?<![\\p{L}\\p{N}_])(${escaped})(?![\\p{L}\\p{N}_])`, "giu");
+    return content
+      .split(/(\[\[[^\]]+\]\])/g)
+      .map((segment) => {
+        if (segment.startsWith("[[") && segment.endsWith("]]")) {
+          return segment;
+        }
+        return segment.replace(wordPattern, "[[$1]]");
+      })
+      .join("");
+  }
+
   function updateLinkSuggestions(content: string, notes: NoteMeta[]) {
     if (!activePath) {
       setLinkSuggestions([]);
@@ -1256,11 +1273,6 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       }
 
       const escaped = escapeRegExp(title);
-      const isLinkedPattern = new RegExp(`\\[\\[${escaped}(?:\\|[^\\]]+)?\\]\\]`, "i");
-      if (isLinkedPattern.test(content)) {
-        continue;
-      }
-
       const maskedText = content.replace(/\[\[[^\]]+\]\]/g, "####LINK####");
       const wordPattern = new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "iu");
       if (wordPattern.test(maskedText)) {
@@ -1272,14 +1284,32 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
   function applyWikiLinkSuggestion(text: string) {
     if (!draft) return;
-    const escaped = escapeRegExp(text);
-    const regex = new RegExp(`(?<!\\[\\[)(${escaped})(?!\\]\\])`, "g");
-    const nextDraft = draft.replace(regex, `[[$1]]`);
+    const nextDraft = replaceUnlinkedMentions(draft, text);
     setDraft(nextDraft);
     if (vault?.notes) {
       updateLinkSuggestions(nextDraft, vault.notes);
     }
   }
+
+  const insertWikiLinkAtCursor = (title: string) => {
+    const view = editorRef.current?.view;
+    if (view) {
+      const linkText = `[[${title}]]`;
+      const transaction = view.state.update({
+        changes: {
+          from: view.state.selection.main.from,
+          to: view.state.selection.main.to,
+          insert: linkText
+        },
+        selection: { anchor: view.state.selection.main.from + linkText.length },
+        scrollIntoView: true
+      });
+      view.dispatch(transaction);
+      view.focus();
+    } else {
+      setDraft(prev => prev + ` [[${title}]]`);
+    }
+  };
 
   async function updateSemanticRecommendations(path: string, config: LlmConfig, notes: NoteMeta[]) {
     if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
@@ -2771,6 +2801,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
               )}
               <div style={{ flex: 1, minHeight: 0 }}>
                 <CodeMirror
+                  ref={editorRef}
                   value={draft}
                   height="100%"
                   extensions={[markdown()]}
@@ -2916,276 +2947,262 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
       </section>
 
       <aside className="contextPane">
-        <InspectorPanel
-          vault={vault}
-          activePath={activePath}
-          draft={draft}
-          selectedContextCount={selectedContextCount}
-          selectedContextCharacters={selectedContextCharacters}
-          selectedContextTokens={selectedContextTokens}
-          contextLimit={contextLimit}
-          isCustomLimit={isCustomLimit}
-          setIsCustomLimit={setIsCustomLimit}
-          handleLimitChange={handleLimitChange}
-          bundlePreset={bundlePreset}
-          handlePresetChange={handlePresetChange}
-          setBundlePreset={setBundlePreset}
-          PRESETS={PRESETS}
-          bundlePurpose={bundlePurpose}
-          setBundlePurpose={setBundlePurpose}
-          bundleMode={bundleMode}
-          setBundleMode={setBundleMode}
-          updateVaultConfig={updateVaultConfig}
-          setContextBundle={setContextBundle}
-          displayedCandidates={displayedCandidates}
-          embeddingStatus={embeddingStatus}
-          sortBy={sortBy}
-          setSortBy={setSortBy}
-          filterBy={filterBy}
-          setFilterBy={setFilterBy}
-          selectedContextPaths={selectedContextPaths}
-          toggleContextCandidate={toggleContextCandidate}
-          autoPruneCandidates={autoPruneCandidates}
-          switchToShortMode={switchToShortMode}
-          generateContextBundle={generateContextBundle}
-          contextBundle={contextBundle}
-          prevContextBundle={prevContextBundle}
-          contextCandidates={contextCandidates}
-          showTemplates={showTemplates}
-          setShowTemplates={setShowTemplates}
-          promptInstruction={promptInstruction}
-          handlePromptInstructionChange={handlePromptInstructionChange}
-          BUILTIN_TEMPLATES={BUILTIN_TEMPLATES}
-          vaultConfig={vaultConfig}
-          compileTemplate={compileTemplate}
-          deleteTemplate={deleteTemplate}
-          saveAsTemplate={saveAsTemplate}
-          copyCombinedPrompt={copyCombinedPrompt}
-          copyContextBundle={copyContextBundle}
-          presetForSettings={presetForSettings}
-          normalizeBundleMode={normalizeBundleMode}
-        />
-        <PromptHistoryPanel
-          vaultConfig={vaultConfig}
-          activePath={activePath}
-          archiveStatus={archiveStatus}
-          historySearchQuery={historySearchQuery}
-          setHistorySearchQuery={setHistorySearchQuery}
-          historyActiveNoteOnly={historyActiveNoteOnly}
-          setHistoryActiveNoteOnly={setHistoryActiveNoteOnly}
-          historyPresetFilter={historyPresetFilter}
-          setHistoryPresetFilter={setHistoryPresetFilter}
-          expandedRunId={expandedRunId}
-          setExpandedRunId={setExpandedRunId}
-          diffRunId={diffRunId}
-          setDiffRunId={setDiffRunId}
-          diffResult={diffResult}
-          currentPromptHash={currentPromptHash}
-          contextBundle={contextBundle}
-          promptInstruction={promptInstruction}
-          selectNote={selectNote}
-          applyPromptRun={applyPromptRun}
-          copyPromptRunQuestion={copyPromptRunQuestion}
-          copyFullPromptFromHistory={copyFullPromptFromHistory}
-          deletePromptRun={deletePromptRun}
-          loadPromptDiff={loadPromptDiff}
-          pruneArchivedPrompts={pruneArchivedPrompts}
-          exportPromptRuns={exportPromptRuns}
-          handleImportArchiveFile={handleImportArchiveFile}
-          buildCombinedPrompt={buildCombinedPrompt}
-        />
-        <section>
-          <h2>Capture</h2>
-          <textarea
-            className="captureInput"
-            placeholder="Paste an LLM answer, idea, or loose note..."
-            value={captureDraft}
-            onChange={(event) => setCaptureDraft(event.target.value)}
+        <div className="rightSidebarTabs">
+          <button
+            type="button"
+            className={rightSidebarTab === "context" ? "active" : ""}
+            onClick={() => setRightSidebarTab("context")}
+          >
+            LLM Context
+          </button>
+          <button
+            type="button"
+            className={rightSidebarTab === "suggestions" ? "active" : ""}
+            onClick={() => setRightSidebarTab("suggestions")}
+          >
+            Link Suggestions
+          </button>
+        </div>
+
+        {rightSidebarTab === "suggestions" ? (
+          <LinkSuggestionsSidebar
+            activePath={activePath}
+            context={context}
+            linkSuggestions={linkSuggestions}
+            backlinkSuggestions={backlinkSuggestions}
+            contextCandidates={contextCandidates}
+            isLoadingBacklinks={isLoadingBacklinkSuggestions}
+            onNavigateNote={selectNote}
+            onInsertLinkAtCursor={insertWikiLinkAtCursor}
+            onApplyWikiLinkSuggestion={applyWikiLinkSuggestion}
+            onApplyBacklinkSuggestion={applyBacklinkSuggestion}
           />
-          <p className="muted">{context ? `Related to [[${context.note.title}]]` : "No related note selected"}</p>
-          <button onClick={() => void captureToInbox()} disabled={!vault || !captureDraft.trim()}>Capture to Inbox</button>
-        </section>
-        {vault?.obsidianSettings?.detected && (
-          <section>
-            <h2>Obsidian</h2>
-            <p className="property">Readable line length: {vault.obsidianSettings.readableLineLength ? "On" : "Off"}</p>
-            {vault.obsidianSettings.theme && <p className="property">Theme: {vault.obsidianSettings.theme}</p>}
-            {vault.obsidianSettings.accentColor && <p className="property">Accent: {vault.obsidianSettings.accentColor}</p>}
-            {vault.obsidianSettings.attachmentFolderPath && (
-              <p className="property">Attachments: <code>{vault.obsidianSettings.attachmentFolderPath}</code></p>
+        ) : (
+          <>
+            <InspectorPanel
+              vault={vault}
+              activePath={activePath}
+              draft={draft}
+              selectedContextCount={selectedContextCount}
+              selectedContextCharacters={selectedContextCharacters}
+              selectedContextTokens={selectedContextTokens}
+              contextLimit={contextLimit}
+              isCustomLimit={isCustomLimit}
+              setIsCustomLimit={setIsCustomLimit}
+              handleLimitChange={handleLimitChange}
+              bundlePreset={bundlePreset}
+              handlePresetChange={handlePresetChange}
+              setBundlePreset={setBundlePreset}
+              PRESETS={PRESETS}
+              bundlePurpose={bundlePurpose}
+              setBundlePurpose={setBundlePurpose}
+              bundleMode={bundleMode}
+              setBundleMode={setBundleMode}
+              updateVaultConfig={updateVaultConfig}
+              setContextBundle={setContextBundle}
+              displayedCandidates={displayedCandidates}
+              embeddingStatus={embeddingStatus}
+              sortBy={sortBy}
+              setSortBy={setSortBy}
+              filterBy={filterBy}
+              setFilterBy={setFilterBy}
+              selectedContextPaths={selectedContextPaths}
+              toggleContextCandidate={toggleContextCandidate}
+              autoPruneCandidates={autoPruneCandidates}
+              switchToShortMode={switchToShortMode}
+              generateContextBundle={generateContextBundle}
+              contextBundle={contextBundle}
+              prevContextBundle={prevContextBundle}
+              contextCandidates={contextCandidates}
+              showTemplates={showTemplates}
+              setShowTemplates={setShowTemplates}
+              promptInstruction={promptInstruction}
+              handlePromptInstructionChange={handlePromptInstructionChange}
+              BUILTIN_TEMPLATES={BUILTIN_TEMPLATES}
+              vaultConfig={vaultConfig}
+              compileTemplate={compileTemplate}
+              deleteTemplate={deleteTemplate}
+              saveAsTemplate={saveAsTemplate}
+              copyCombinedPrompt={copyCombinedPrompt}
+              copyContextBundle={copyContextBundle}
+              presetForSettings={presetForSettings}
+              normalizeBundleMode={normalizeBundleMode}
+            />
+            <PromptHistoryPanel
+              vaultConfig={vaultConfig}
+              activePath={activePath}
+              archiveStatus={archiveStatus}
+              historySearchQuery={historySearchQuery}
+              setHistorySearchQuery={setHistorySearchQuery}
+              historyActiveNoteOnly={historyActiveNoteOnly}
+              setHistoryActiveNoteOnly={setHistoryActiveNoteOnly}
+              historyPresetFilter={historyPresetFilter}
+              setHistoryPresetFilter={setHistoryPresetFilter}
+              expandedRunId={expandedRunId}
+              setExpandedRunId={setExpandedRunId}
+              diffRunId={diffRunId}
+              setDiffRunId={setDiffRunId}
+              diffResult={diffResult}
+              currentPromptHash={currentPromptHash}
+              contextBundle={contextBundle}
+              promptInstruction={promptInstruction}
+              selectNote={selectNote}
+              applyPromptRun={applyPromptRun}
+              copyPromptRunQuestion={copyPromptRunQuestion}
+              copyFullPromptFromHistory={copyFullPromptFromHistory}
+              deletePromptRun={deletePromptRun}
+              loadPromptDiff={loadPromptDiff}
+              pruneArchivedPrompts={pruneArchivedPrompts}
+              exportPromptRuns={exportPromptRuns}
+              handleImportArchiveFile={handleImportArchiveFile}
+              buildCombinedPrompt={buildCombinedPrompt}
+            />
+            <section>
+              <h2>Capture</h2>
+              <textarea
+                className="captureInput"
+                placeholder="Paste an LLM answer, idea, or loose note..."
+                value={captureDraft}
+                onChange={(event) => setCaptureDraft(event.target.value)}
+              />
+              <p className="muted">{context ? `Related to [[${context.note.title}]]` : "No related note selected"}</p>
+              <button onClick={() => void captureToInbox()} disabled={!vault || !captureDraft.trim()}>Capture to Inbox</button>
+            </section>
+            {vault?.obsidianSettings?.detected && (
+              <section>
+                <h2>Obsidian</h2>
+                <p className="property">Readable line length: {vault.obsidianSettings.readableLineLength ? "On" : "Off"}</p>
+                {vault.obsidianSettings.theme && <p className="property">Theme: {vault.obsidianSettings.theme}</p>}
+                {vault.obsidianSettings.accentColor && <p className="property">Accent: {vault.obsidianSettings.accentColor}</p>}
+                {vault.obsidianSettings.attachmentFolderPath && (
+                  <p className="property">Attachments: <code>{vault.obsidianSettings.attachmentFolderPath}</code></p>
+                )}
+                {!!vault.obsidianSettings.cssSnippets?.length && (
+                  <p className="property">Snippets: {vault.obsidianSettings.cssSnippets.join(", ")}</p>
+                )}
+                {vault.obsidianSettings.hotkeys && (
+                  <p className="property">Hotkeys: {Object.keys(vault.obsidianSettings.hotkeys).length} custom hotkeys</p>
+                )}
+                {!!vault.obsidianSettings.enabledCorePlugins?.length && (
+                  <p className="muted">{vault.obsidianSettings.enabledCorePlugins.length} core plugins detected</p>
+                )}
+              </section>
             )}
-            {!!vault.obsidianSettings.cssSnippets?.length && (
-              <p className="property">Snippets: {vault.obsidianSettings.cssSnippets.join(", ")}</p>
-            )}
-            {vault.obsidianSettings.hotkeys && (
-              <p className="property">Hotkeys: {Object.keys(vault.obsidianSettings.hotkeys).length} custom hotkeys</p>
-            )}
-            {!!vault.obsidianSettings.enabledCorePlugins?.length && (
-              <p className="muted">{vault.obsidianSettings.enabledCorePlugins.length} core plugins detected</p>
-            )}
-          </section>
-        )}
-        {activePath && isInboxPath(activePath) && (
-          <section>
-            <h2>Inbox Triage</h2>
-            {inboxCaptures.length ? inboxCaptures.map((capture) => (
-              <div key={capture.id} className="triageCard">
-                <strong>{capture.title}</strong>
-                {capture.relatedTitle && <small>Related: [[{capture.relatedTitle}]]</small>}
-                <p>{capture.body}</p>
-                <div className="inlineActions">
-                  <button onClick={() => void promoteInboxCapture(capture.id)}>Create Note</button>
-                  <button onClick={() => setTriageCaptureToAppend({ id: capture.id, title: capture.title })}>Append to Note</button>
-                  <button onClick={() => void markInboxCaptureProcessed(capture.id)}>Mark Processed</button>
-                </div>
-              </div>
-            )) : <p className="muted">No unprocessed captures</p>}
-          </section>
-        )}
-        <section>
-          <h2>Backlinks</h2>
-          {context?.backlinks.length ? context.backlinks.map((link) => (
-            <button key={`${link.sourcePath}-${link.line}`} onClick={() => void selectNote(link.sourcePath)}>
-              {link.sourcePath}
-            </button>
-          )) : <p className="muted">No backlinks</p>}
-        </section>
-        <section className="backlinkSuggestionsSection">
-          <h2>AI Link Suggestions</h2>
-          {isLoadingBacklinkSuggestions ? (
-            <p className="loading">Scanning suggestions...</p>
-          ) : backlinkSuggestions.length ? (
-            <div className="backlinkSuggestionsList">
-              {backlinkSuggestions.map((suggestion) => (
-                <div key={suggestion.id} className="backlinkSuggestionCard">
-                  <div className="suggestionHeader">
-                    {suggestion.suggestionType === "unlinked_mention" ? (
-                      <span><strong>{suggestion.sourceTitle}</strong> mentions this note</span>
-                    ) : (
-                      <span>Semantically related to <strong>{suggestion.sourceTitle}</strong><span className="matchBadge">{(suggestion.score * 100).toFixed(0)}% Match</span></span>
-                    )}
+            {activePath && isInboxPath(activePath) && (
+              <section>
+                <h2>Inbox Triage</h2>
+                {inboxCaptures.length ? inboxCaptures.map((capture) => (
+                  <div key={capture.id} className="triageCard">
+                    <strong>{capture.title}</strong>
+                    {capture.relatedTitle && <small>Related: [[{capture.relatedTitle}]]</small>}
+                    <p>{capture.body}</p>
+                    <div className="inlineActions">
+                      <button onClick={() => void promoteInboxCapture(capture.id)}>Create Note</button>
+                      <button onClick={() => setTriageCaptureToAppend({ id: capture.id, title: capture.title })}>Append to Note</button>
+                      <button onClick={() => void markInboxCaptureProcessed(capture.id)}>Mark Processed</button>
+                    </div>
                   </div>
-                  {suggestion.excerpt && (
-                    <pre className="suggestionExcerpt">{suggestion.excerpt}</pre>
+                )) : <p className="muted">No unprocessed captures</p>}
+              </section>
+            )}
+            <section>
+              <h2>Tags</h2>
+              <div className="chips">
+                {context?.note.tags.map((tag) => <span key={tag}>#{tag}</span>)}
+              </div>
+            </section>
+            <section>
+              <h2>Properties</h2>
+              {Object.entries(context?.note.frontmatter ?? {}).map(([key, value]) => (
+                <p key={key} className="property"><strong>{key}</strong><span>{value}</span></p>
+              ))}
+            </section>
+            <section className="metadataSuggestionsSection">
+              <h2>AI Metadata Suggestions</h2>
+              {isGeneratingMetadata && (
+                <p className="metadataSuggestionsLoading">Generating suggestions...</p>
+              )}
+              {!metadataSuggestions && !isGeneratingMetadata && (
+                <button
+                  className="suggest-btn"
+                  disabled={!activePath}
+                  onClick={() => void generateMetadataSuggestions()}
+                >
+                  Suggest
+                </button>
+              )}
+              {metadataSuggestions && !isGeneratingMetadata && (
+                <div className="metadataSuggestionsCard">
+                  {metadataSuggestions.tags.length > 0 && (
+                    <div className="suggestedTagsGroup">
+                      <h3>Suggested Tags</h3>
+                      {metadataSuggestions.tags.map((tag) => (
+                        <label key={tag} className="suggestedTagLabel">
+                          <input
+                            type="checkbox"
+                            checked={selectedSuggestedTags.has(tag)}
+                            onChange={() => handleToggleSuggestedTag(tag)}
+                          />
+                          <span>#{tag}</span>
+                        </label>
+                      ))}
+                    </div>
                   )}
-                  <div className="suggestionActions">
+                  {Object.keys(metadataSuggestions.frontmatter).length > 0 && (
+                    <div className="suggestedPropertiesGroup">
+                      <h3>Suggested Properties</h3>
+                      {Object.entries(metadataSuggestions.frontmatter).map(([key, value]) => (
+                        <label key={key} className="suggestedPropertyLabel">
+                          <input
+                            type="checkbox"
+                            checked={selectedSuggestedProperties.has(key)}
+                            onChange={() => handleToggleSuggestedProperty(key)}
+                          />
+                          <strong>{key}:</strong> <span>{value}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <div className="metadataSuggestionsActions">
                     <button
-                      onClick={() => void applyBacklinkSuggestion(suggestion)}
+                      className="apply-btn"
+                      onClick={() => void applyMetadataSuggestions()}
                     >
-                      {suggestion.suggestionType === "unlinked_mention" ? "Link Mention" : "Add Link"}
+                      Apply Selected
+                    </button>
+                    <button
+                      className="clear-btn"
+                      onClick={() => setMetadataSuggestions(null)}
+                    >
+                      Clear
                     </button>
                   </div>
                 </div>
+              )}
+            </section>
+            <section>
+              <h2>Snapshots</h2>
+              {snapshots.map((snapshot) => (
+                <button key={snapshot.id} onClick={() => void restoreSnapshot(snapshot.id)}>
+                  {new Date(snapshot.createdAt).toLocaleTimeString()} · {snapshot.reason}
+                </button>
               ))}
-            </div>
-          ) : (
-            <p className="muted">No link suggestions</p>
-          )}
-        </section>
-        <section>
-          <h2>Outgoing</h2>
-          {context?.outgoingLinks.map((link) => (
-            <button key={`${link.targetRef}-${link.line}`} disabled={!link.resolvedPath} onClick={() => link.resolvedPath && void selectNote(link.resolvedPath)}>
-              {link.targetRef}{link.isManaged ? " · managed" : ""}
-            </button>
-          ))}
-        </section>
-        <section>
-          <h2>Tags</h2>
-          <div className="chips">
-            {context?.note.tags.map((tag) => <span key={tag}>#{tag}</span>)}
-          </div>
-        </section>
-        <section>
-          <h2>Properties</h2>
-          {Object.entries(context?.note.frontmatter ?? {}).map(([key, value]) => (
-            <p key={key} className="property"><strong>{key}</strong><span>{value}</span></p>
-          ))}
-        </section>
-        <section className="metadataSuggestionsSection">
-          <h2>AI Metadata Suggestions</h2>
-          {isGeneratingMetadata && (
-            <p className="metadataSuggestionsLoading">Generating suggestions...</p>
-          )}
-          {!metadataSuggestions && !isGeneratingMetadata && (
-            <button
-              className="suggest-btn"
-              disabled={!activePath}
-              onClick={() => void generateMetadataSuggestions()}
-            >
-              Suggest
-            </button>
-          )}
-          {metadataSuggestions && !isGeneratingMetadata && (
-            <div className="metadataSuggestionsCard">
-              {metadataSuggestions.tags.length > 0 && (
-                <div className="suggestedTagsGroup">
-                  <h3>Suggested Tags</h3>
-                  {metadataSuggestions.tags.map((tag) => (
-                    <label key={tag} className="suggestedTagLabel">
-                      <input
-                        type="checkbox"
-                        checked={selectedSuggestedTags.has(tag)}
-                        onChange={() => handleToggleSuggestedTag(tag)}
-                      />
-                      <span>#{tag}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {Object.keys(metadataSuggestions.frontmatter).length > 0 && (
-                <div className="suggestedPropertiesGroup">
-                  <h3>Suggested Properties</h3>
-                  {Object.entries(metadataSuggestions.frontmatter).map(([key, value]) => (
-                    <label key={key} className="suggestedPropertyLabel">
-                      <input
-                        type="checkbox"
-                        checked={selectedSuggestedProperties.has(key)}
-                        onChange={() => handleToggleSuggestedProperty(key)}
-                      />
-                      <strong>{key}:</strong> <span>{value}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              <div className="metadataSuggestionsActions">
-                <button
-                  className="apply-btn"
-                  onClick={() => void applyMetadataSuggestions()}
-                >
-                  Apply Selected
-                </button>
-                <button
-                  className="clear-btn"
-                  onClick={() => setMetadataSuggestions(null)}
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
-        </section>
-        <section>
-          <h2>Snapshots</h2>
-          {snapshots.map((snapshot) => (
-            <button key={snapshot.id} onClick={() => void restoreSnapshot(snapshot.id)}>
-              {new Date(snapshot.createdAt).toLocaleTimeString()} · {snapshot.reason}
-            </button>
-          ))}
-        </section>
-        <section>
-          <h2>Git</h2>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={gitStatus?.autoGitEnabled ?? false}
-              disabled={!gitStatus?.isRepo}
-              onChange={(event) => void toggleAutoGit(event.target.checked)}
-            />
-            <span>Auto commit</span>
-          </label>
-          <p className="muted">{gitStatus?.isRepo ? `Branch ${gitStatus.branch}` : "Not a Git vault"}</p>
-        </section>
+            </section>
+            <section>
+              <h2>Git</h2>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={gitStatus?.autoGitEnabled ?? false}
+                  disabled={!gitStatus?.isRepo}
+                  onChange={(event) => void toggleAutoGit(event.target.checked)}
+                />
+                <span>Auto commit</span>
+              </label>
+              <p className="muted">{gitStatus?.isRepo ? `Branch ${gitStatus.branch}` : "Not a Git vault"}</p>
+            </section>
+          </>
+        )}
         <p className="status">{status}</p>
       </aside>
 
