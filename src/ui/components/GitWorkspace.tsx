@@ -51,7 +51,19 @@ type ParsedDiffFile = {
 };
 
 function normalizeDiffPath(rawPath: string) {
-  return rawPath.trim().replace(/^"|"$/g, "");
+  const unquoted = rawPath.trim().replace(/^"|"$/g, "");
+  return unquoted.replace(/^[ab]\//, "");
+}
+
+function parseDiffGitHeader(line: string): { oldPath: string; newPath: string } | null {
+  // Unquoted paths: diff --git a/path b/path
+  // Using a/ and b/ as anchors handles paths with spaces correctly
+  let match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+  if (match) return { oldPath: match[1], newPath: match[2] };
+  // Quoted paths (spaces in filenames): diff --git "a/path with spaces" "b/path with spaces"
+  match = /^diff --git "a\/(.+)" "b\/(.+)"$/.exec(line);
+  if (match) return { oldPath: match[1], newPath: match[2] };
+  return null;
 }
 
 function parseHunkHeader(line: string) {
@@ -116,10 +128,10 @@ function parseUnifiedDiff(diff: string): ParsedDiffFile[] {
         currentFile = { oldPath: null, newPath: null, hunks: [] };
         currentHunk = null;
       }
-      const match = /^diff --git (.+) (.+)$/.exec(line);
-      if (match) {
-        currentFile.oldPath = normalizeDiffPath(match[1]);
-        currentFile.newPath = normalizeDiffPath(match[2]);
+      const parsed = parseDiffGitHeader(line);
+      if (parsed) {
+        currentFile.oldPath = parsed.oldPath;
+        currentFile.newPath = parsed.newPath;
       }
       ensureFile();
       continue;
@@ -165,10 +177,18 @@ function parseUnifiedDiff(diff: string): ParsedDiffFile[] {
     } else if (line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>")) {
       hunk.lines.push({ type: "conflict", prefix: "", content: line, oldLine: null, newLine: null });
     } else if (currentHunk && line.startsWith("+")) {
-      hunk.lines.push({ type: "add", prefix: "+", content: line.slice(1), oldLine: null, newLine });
+      const content = line.slice(1);
+      const isConflictMarker = content.startsWith("<<<<<<<") || content.startsWith("=======") || content.startsWith(">>>>>>>");
+      hunk.lines.push(isConflictMarker
+        ? { type: "conflict", prefix: "+", content, oldLine: null, newLine: null }
+        : { type: "add", prefix: "+", content, oldLine: null, newLine });
       newLine += 1;
     } else if (currentHunk && line.startsWith("-")) {
-      hunk.lines.push({ type: "del", prefix: "-", content: line.slice(1), oldLine, newLine: null });
+      const content = line.slice(1);
+      const isConflictMarker = content.startsWith("<<<<<<<") || content.startsWith("=======") || content.startsWith(">>>>>>>");
+      hunk.lines.push(isConflictMarker
+        ? { type: "conflict", prefix: "-", content, oldLine: null, newLine: null }
+        : { type: "del", prefix: "-", content, oldLine, newLine: null });
       oldLine += 1;
     } else if (currentHunk) {
       hunk.lines.push({

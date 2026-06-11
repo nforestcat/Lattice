@@ -1,4 +1,15 @@
+import { useMemo } from "react";
 import type { NoteContext, BacklinkSuggestion, ContextBundleCandidate } from "../../api/types";
+
+interface SemanticRecommendation {
+  path: string;
+  title: string;
+  score: number; // Normalized to 0..100
+  source: "embeddings" | "contextCandidates";
+  detail: string;
+  excerpt?: string;
+  rawSuggestion?: BacklinkSuggestion;
+}
 
 interface LinkSuggestionsSidebarProps {
   activePath: string | null;
@@ -25,15 +36,6 @@ export function LinkSuggestionsSidebar({
   onApplyWikiLinkSuggestion,
   onApplyBacklinkSuggestion,
 }: LinkSuggestionsSidebarProps) {
-  // If no note is active, show empty state
-  if (!activePath) {
-    return (
-      <div className="linkSuggestionsSidebar emptyState">
-        <p className="muted">Select a note from the file tree to see link suggestions.</p>
-      </div>
-    );
-  }
-
   // 1. Outgoing Links
   const outgoingLinks = context?.outgoingLinks || [];
 
@@ -53,65 +55,64 @@ export function LinkSuggestionsSidebar({
   // - backlinkSuggestions of type "semantic" (score is 0..1)
   // - contextCandidates of type "Recommended" (score is 0..10)
   // Deduplicate by path. If a path is already linked as outgoing or backlink, skip it!
-  const linkedPaths = new Set([
-    ...outgoingLinks.map((l) => l.resolvedPath).filter(Boolean),
-    ...backlinks.map((l) => l.sourcePath),
-  ]);
+  const semanticRecommendations = useMemo(() => {
+    const linkedPaths = new Set([
+      ...outgoingLinks.map((l) => l.resolvedPath).filter(Boolean),
+      ...backlinks.map((l) => l.sourcePath),
+    ]);
 
-  interface SemanticRecommendation {
-    path: string;
-    title: string;
-    score: number; // Normalized to 0..100
-    source: "embeddings" | "contextCandidates";
-    detail: string;
-    excerpt?: string;
-    rawSuggestion?: BacklinkSuggestion;
-  }
+    const semanticMap = new Map<string, SemanticRecommendation>();
 
-  const semanticMap = new Map<string, SemanticRecommendation>();
-
-  // Add from backlinkSuggestions
-  backlinkSuggestions
-    .filter((s) => s.suggestionType === "semantic")
-    .forEach((s) => {
-      const path = s.sourcePath;
-      if (linkedPaths.has(path)) return;
-      const scorePercent = Math.round(s.score * 100);
-      semanticMap.set(path, {
-        path,
-        title: s.sourceTitle,
-        score: scorePercent,
-        source: "embeddings",
-        detail: `Vector similarity: ${scorePercent}% match`,
-        excerpt: s.excerpt || undefined,
-        rawSuggestion: s,
-      });
-    });
-
-  // Add from contextCandidates
-  contextCandidates
-    .filter((c) => c.reason === "Recommended")
-    .forEach((c) => {
-      const path = c.path;
-      if (linkedPaths.has(path)) return;
-      const scorePercent = Math.round(c.score * 10);
-      const existing = semanticMap.get(path);
-      if (!existing || scorePercent > existing.score) {
+    // Add from backlinkSuggestions
+    backlinkSuggestions
+      .filter((s) => s.suggestionType === "semantic")
+      .forEach((s) => {
+        const path = s.sourcePath;
+        if (linkedPaths.has(path)) return;
+        const scorePercent = Math.round(s.score * 100);
         semanticMap.set(path, {
           path,
-          title: c.title,
+          title: s.sourceTitle,
           score: scorePercent,
-          source: "contextCandidates",
-          detail: c.reasonDetail,
-          excerpt: c.excerpt || undefined,
-          rawSuggestion: existing?.rawSuggestion,
+          source: "embeddings",
+          detail: `Vector similarity: ${scorePercent}% match`,
+          excerpt: s.excerpt || undefined,
+          rawSuggestion: s,
         });
-      }
-    });
+      });
 
-  const semanticRecommendations = Array.from(semanticMap.values()).sort(
-    (a, b) => b.score - a.score
-  );
+    // Add from contextCandidates
+    contextCandidates
+      .filter((c) => c.reason === "Recommended")
+      .forEach((c) => {
+        const path = c.path;
+        if (linkedPaths.has(path)) return;
+        const scorePercent = Math.round(c.score * 10);
+        const existing = semanticMap.get(path);
+        if (!existing || scorePercent > existing.score) {
+          semanticMap.set(path, {
+            path,
+            title: c.title,
+            score: scorePercent,
+            source: "contextCandidates",
+            detail: c.reasonDetail,
+            excerpt: c.excerpt || undefined,
+            rawSuggestion: existing?.rawSuggestion,
+          });
+        }
+      });
+
+    return Array.from(semanticMap.values()).sort((a, b) => b.score - a.score);
+  }, [outgoingLinks, backlinks, backlinkSuggestions, contextCandidates]);
+
+  // If no note is active, show empty state
+  if (!activePath) {
+    return (
+      <div className="linkSuggestionsSidebar emptyState">
+        <p className="muted">Select a note from the file tree to see link suggestions.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="linkSuggestionsSidebar">
@@ -196,7 +197,7 @@ export function LinkSuggestionsSidebar({
       {/* Unlinked Mentions section */}
       <section className="suggestionsSection">
         <h4>Unlinked Mentions</h4>
-        
+
         {/* Mentions in this Note */}
         <div className="mentionsSubsection" style={{ marginBottom: "12px" }}>
           <h5>In this Note ({mentionsInThisNote.length})</h5>

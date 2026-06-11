@@ -1183,7 +1183,10 @@ fn staged_conflict_marker_file(root: &Path, paths: &[&str]) -> Result<Option<Str
         {
             if show_output.status.success() {
                 let content = String::from_utf8_lossy(&show_output.stdout);
-                if content.contains("<<<<<<<") && content.contains("=======") && content.contains(">>>>>>>") {
+                let has_conflict = content.lines().any(|l| {
+                    l.starts_with("<<<<<<<") || l.starts_with("=======") || l.starts_with(">>>>>>>")
+                });
+                if has_conflict {
                     return Ok(Some(rel_path.to_string()));
                 }
             }
