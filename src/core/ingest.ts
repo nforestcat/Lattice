@@ -78,18 +78,19 @@ export async function ingestToNote(
   }
 
   const messages = buildIngestPrompt(raw, limit);
+  const provider = llmConfig.provider;
 
   let response: string;
   try {
     response = await sendChatMessage(llmConfig, messages);
   } catch (err) {
     throw new Error(
-      `Ollama did not respond: ${err instanceof Error ? err.message : String(err)}`
+      `${provider} did not respond: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
   if (!response || response.trim().length === 0) {
-    throw new Error("Ollama did not respond");
+    throw new Error(`${provider} did not respond`);
   }
 
   return parseIngestResponse(response, raw.sourceRef);

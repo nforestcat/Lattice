@@ -38,13 +38,13 @@ function mapErrorMessage(err: string): string {
     return "추출된 내용이 너무 짧습니다. 브라우저에서 직접 열어야 하는 페이지일 수 있습니다.";
   if (err.includes("No extractable text"))
     return "텍스트를 추출할 수 없습니다. 스캔된 이미지 PDF일 수 있습니다.";
-  if (err.includes("Ollama did not respond"))
+  if (err.toLowerCase().includes("ollama did not respond"))
     return "Ollama가 응답하지 않습니다. 실행 중인지 확인해 주세요.";
   return err;
 }
 
 function isOllamaError(err: string): boolean {
-  return err.includes("Ollama did not respond");
+  return err.toLowerCase().includes("ollama did not respond");
 }
 
 export function IngestPanel({
@@ -58,6 +58,7 @@ export function IngestPanel({
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<IngestStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [titleError, setTitleError] = useState<string | null>(null);
   const [lastCreatedPath, setLastCreatedPath] = useState<string | null>(null);
   const [rawPreview, setRawPreview] = useState<IngestRaw | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
@@ -96,12 +97,13 @@ export function IngestPanel({
   async function saveNote() {
     const title = draftTitle.trim();
     if (!title) {
-      setError("제목을 입력해 주세요.");
-      setStatus("error");
+      setTitleError("제목을 입력해 주세요.");
       return;
     }
+    setTitleError(null);
 
     setStatus("saving");
+    let createdPath: string | null = null;
     try {
       const tags = draftTags
         .split(",")
@@ -112,13 +114,16 @@ export function IngestPanel({
       if (!createResult.selectedPath) {
         throw new Error("생성된 노트 경로를 찾지 못했습니다.");
       }
-
+      createdPath = createResult.selectedPath;
+      await vaultApi.saveNote(createdPath, markdown, "");
       setVault(createResult.vault);
-      await vaultApi.saveNote(createResult.selectedPath, markdown, "");
-      setLastCreatedPath(createResult.selectedPath);
+      setLastCreatedPath(createdPath);
       setStatus("done");
-      await onIngested(createResult.selectedPath);
+      await onIngested(createdPath);
     } catch (err) {
+      if (createdPath) {
+        try { await vaultApi.deleteEntry(createdPath); } catch { /* best effort cleanup */ }
+      }
       setError(err instanceof Error ? err.message : String(err));
       setStatus("error");
     }
@@ -153,6 +158,7 @@ export function IngestPanel({
     setUrl("");
     setStatus("idle");
     setError(null);
+    setTitleError(null);
     setLastCreatedPath(null);
     setRawPreview(null);
     setDraftTitle("");
@@ -228,9 +234,14 @@ export function IngestPanel({
             <input
               className="ingestUrlInput"
               value={draftTitle}
-              onChange={(e) => setDraftTitle(e.target.value)}
-              style={{ marginBottom: "8px" }}
+              onChange={(e) => { setDraftTitle(e.target.value); setTitleError(null); }}
+              style={{ marginBottom: titleError ? "4px" : "8px" }}
             />
+            {titleError && (
+              <p style={{ color: "var(--color-error, #e55)", fontSize: "0.8rem", margin: "0 0 8px" }}>
+                {titleError}
+              </p>
+            )}
             <label style={labelStyle}>
               태그 (쉼표로 구분)
             </label>
