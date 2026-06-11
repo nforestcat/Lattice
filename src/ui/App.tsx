@@ -18,6 +18,7 @@ import { Sidebar } from "./components/Sidebar";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { LinkSuggestionsSidebar } from "./components/LinkSuggestionsSidebar";
+import { IngestPanel } from "./components/IngestPanel";
 
 export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
   {
@@ -431,6 +432,7 @@ export function App() {
   const [distillInputText, setDistillInputText] = useState("");
   const [proposedEdits, setProposedEdits] = useState<ProposedEdit[]>([]);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(DEFAULT_LLM_CONFIG);
+  const [showIngestPanel, setShowIngestPanel] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git">("paste");
@@ -2776,6 +2778,16 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
         globalHealthScore={globalHealthScore}
         isScanningHealth={isScanningHealth}
         onGoToAuditor={() => { setViewMode("distill"); setDistillTab("auditor"); }}
+        onOpenIngest={() => setShowIngestPanel(true)}
+      />
+
+      <IngestPanel
+        open={showIngestPanel}
+        onClose={() => setShowIngestPanel(false)}
+        llmConfig={llmConfig}
+        vaultConfig={vaultConfig}
+        setVault={(v) => setVault((prev) => prev ? { ...prev, ...v } : prev)}
+        onIngested={(path) => { void selectNote(path); }}
       />
 
       <section className="editorPane">
@@ -2841,8 +2853,9 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
                 className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""} ${
                   vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "theme-dark" : ""
                 }`}
-                style={{ flex: 1, overflow: 'auto' }}
+                style={{ flex: 1, overflow: 'auto', cursor: 'text' }}
                 dangerouslySetInnerHTML={html}
+                onClick={() => { setViewMode("edit"); editorRef.current?.view?.focus(); }}
               />
             </div>
           )}

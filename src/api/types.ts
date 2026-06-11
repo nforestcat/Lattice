@@ -126,6 +126,18 @@ export type UnresolvedLinkGroup = {
   sources: UnresolvedLinkSource[];
 };
 
+export type IngestRaw = {
+  title?: string;
+  text: string;
+  sourceRef: string;
+};
+
+export type IngestResult = {
+  title: string;
+  markdown: string;
+  tags: string[];
+};
+
 export type VaultApi = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;

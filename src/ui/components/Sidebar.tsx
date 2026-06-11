@@ -25,6 +25,7 @@ interface SidebarProps {
   globalHealthScore: number | null;
   isScanningHealth: boolean;
   onGoToAuditor: () => void;
+  onOpenIngest?: () => void;
 }
 
 export function Sidebar({
@@ -52,6 +53,7 @@ export function Sidebar({
   globalHealthScore,
   isScanningHealth,
   onGoToAuditor,
+  onOpenIngest,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
@@ -86,6 +88,11 @@ export function Sidebar({
         })()}
       </div>
       <button className="primary" onClick={() => void chooseVaultFolder()}>Open vault</button>
+      {onOpenIngest && (
+        <button onClick={onOpenIngest} title="Import a web page or PDF as a note">
+          Ingest URL / PDF
+        </button>
+      )}
       <SearchPanel
         query={query}
         tagFilter={tagFilter}

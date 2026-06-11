@@ -8,6 +8,7 @@ import type {
   ContextBundleOptions,
   EntryMutationResult,
   GitSettings,
+  IngestRaw,
   LinkMutationResult,
   NoteDocument,
   PromoteInboxCaptureInput,
@@ -90,3 +91,9 @@ export function createTauriVaultApi(): VaultApi {
     getWikiHealthReport: () => invoke<NoteHealthReport[]>("get_wiki_health_report")
   };
 }
+
+export const ingestUrl = (url: string): Promise<IngestRaw> =>
+  invoke<IngestRaw>("ingest_url", { url });
+
+export const ingestPdf = (path: string): Promise<IngestRaw> =>
+  invoke<IngestRaw>("ingest_pdf", { path });
