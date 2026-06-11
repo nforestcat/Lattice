@@ -50,6 +50,8 @@ Implemented so far:
 - Query available model lists dynamically from providers (Ollama, OpenAI, Gemini, LM Studio) directly from the backend
 - Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`Sidebar`, `EditorToolbar`, `InspectorPanel`, `LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
 - Render unresolved (dead) page links as dashed gray "ghost nodes" in the Graph View, connect them with deduplicated edges, and provide a review-first "Dead Link Resolution Workspace" to review, edit, approve/reject, regenerate rejected drafts, and bulk-create draft stubs while keeping failed creations available for retry
+- Ingest external URL and PDF sources into reviewable Markdown drafts with raw-content preview, localized error/retry states, editable title/tags/body fields, YAML tag preservation, and vault refresh after save
+- Keep Git workspace operations covered by backend tests, including unborn repository unstaging, staged rename unstaging, conflict guards, and Windows-safe `cargo test` execution without initializing the Tauri runtime in lib tests
 
 ## LLM Wiki Direction
 Lattice is not trying to clone every Obsidian feature.
@@ -89,6 +91,13 @@ Run tests:
 npm test
 ```
 
+Run Rust backend tests:
+
+```bash
+cd src-tauri
+cargo test
+```
+
 Build the frontend:
 
 ```bash
@@ -111,7 +120,7 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 
 - `src/core`: Markdown parsing, indexing, context bundle, capture logic
 - `src/api`: shared frontend API types plus mock/Tauri adapters
-- `src/ui`: React app UI, including split-out workspaces and panels such as `GitWorkspace`, `GraphView`, `InspectorPanel`, and `PromptHistoryPanel`
+- `src/ui`: React app UI, including split-out workspaces and panels such as `GitWorkspace`, `GraphView`, `InspectorPanel`, `IngestPanel`, and `PromptHistoryPanel`
 - `src-tauri`: Rust backend and Tauri commands
 - `tests`: Vitest coverage for core behavior and UI smoke tests
 

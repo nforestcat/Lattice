@@ -2787,7 +2787,7 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
         llmConfig={llmConfig}
         vaultConfig={vaultConfig}
         setVault={(v) => setVault((prev) => prev ? { ...prev, ...v } : prev)}
-        onIngested={(path) => { void selectNote(path); }}
+        onIngested={(path) => refreshVault(path)}
       />
 
       <section className="editorPane">

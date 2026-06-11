@@ -7,3 +7,6 @@ src-tauri/target/
 output/
 skills-lock.json
 *.log
+.codex/
+.omc/
+**/.omc/

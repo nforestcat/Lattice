@@ -390,16 +390,19 @@ struct ChatMessage {
     content: String,
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn save_api_key(provider: String, key: String) -> Result<(), String> {
     save_api_key_in_keyring(&provider, &key)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_api_key(provider: String) -> Result<String, String> {
     Ok(get_api_key_from_keyring(&provider).unwrap_or_default())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 async fn send_llm_chat_message(
     config: LlmConfig,
@@ -560,6 +563,7 @@ async fn send_llm_chat_message(
     }
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 async fn get_llm_embedding(
     config: LlmConfig,
@@ -651,6 +655,7 @@ async fn get_llm_embedding(
     }
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 async fn fetch_provider_models(
     provider: String,
@@ -754,6 +759,7 @@ async fn fetch_provider_models(
     }
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn open_vault(path: String, state: tauri::State<AppState>) -> Result<VaultSnapshot, String> {
     let root = PathBuf::from(path);
@@ -771,6 +777,7 @@ fn open_vault(path: String, state: tauri::State<AppState>) -> Result<VaultSnapsh
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn read_note(path: String, state: tauri::State<AppState>) -> Result<NoteDocument, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -783,6 +790,7 @@ fn read_note(path: String, state: tauri::State<AppState>) -> Result<NoteDocument
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn save_note(path: String, content: String, base_revision: String, state: tauri::State<AppState>) -> Result<SaveResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -814,6 +822,7 @@ fn save_note(path: String, content: String, base_revision: String, state: tauri:
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn create_note(parent_path: Option<String>, title: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -833,6 +842,7 @@ fn create_note(parent_path: Option<String>, title: String, state: tauri::State<A
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn create_folder(parent_path: Option<String>, name: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -851,6 +861,7 @@ fn create_folder(parent_path: Option<String>, name: String, state: tauri::State<
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn rename_entry(path: String, new_name: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -876,6 +887,7 @@ fn rename_entry(path: String, new_name: String, state: tauri::State<AppState>) -
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn delete_entry(path: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -902,6 +914,7 @@ fn delete_entry(path: String, state: tauri::State<AppState>) -> Result<EntryMuta
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn capture_to_inbox(input: CaptureInput, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -932,6 +945,7 @@ fn capture_to_inbox(input: CaptureInput, state: tauri::State<AppState>) -> Resul
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_inbox_captures(inbox_path: String, state: tauri::State<AppState>) -> Result<Vec<InboxCaptureBlock>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -941,6 +955,7 @@ fn get_inbox_captures(inbox_path: String, state: tauri::State<AppState>) -> Resu
     Ok(parse_inbox_captures(&content))
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn mark_inbox_capture_processed(inbox_path: String, capture_id: String, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -955,6 +970,7 @@ fn mark_inbox_capture_processed(inbox_path: String, capture_id: String, state: t
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn promote_inbox_capture(input: PromoteInboxCaptureInput, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -977,6 +993,7 @@ fn promote_inbox_capture(input: PromoteInboxCaptureInput, state: tauri::State<Ap
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn append_inbox_capture(input: AppendInboxCaptureInput, state: tauri::State<AppState>) -> Result<EntryMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1019,18 +1036,21 @@ fn append_inbox_capture(input: AppendInboxCaptureInput, state: tauri::State<AppS
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_context_bundle(path: String, options: ContextBundleOptions, state: tauri::State<AppState>) -> Result<ContextBundle, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     create_context_bundle(&guard.notes, &path, options)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_context_bundle_candidates(path: String, state: tauri::State<AppState>) -> Result<Vec<ContextBundleCandidate>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     context_bundle_candidates(&guard.notes, &path)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn search_notes(filters: SearchFilters, state: tauri::State<AppState>) -> Result<Vec<NoteMeta>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1051,34 +1071,40 @@ fn search_notes(filters: SearchFilters, state: tauri::State<AppState>) -> Result
         .collect())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_note_context(path: String, state: tauri::State<AppState>) -> Result<NoteContext, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     note_context(&guard.notes, &path)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_graph(_filters: HashMap<String, serde_json::Value>, state: tauri::State<AppState>) -> Result<GraphData, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     Ok(build_graph(&guard.notes))
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn create_graph_link(source_path: String, target_path: String, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
     mutate_graph_link(source_path, target_path, true, state)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn delete_managed_graph_link(source_path: String, target_path: String, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
     mutate_graph_link(source_path, target_path, false, state)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn list_snapshots(path: String, state: tauri::State<AppState>) -> Result<Vec<SnapshotRecord>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     Ok(guard.snapshots.iter().filter(|snapshot| snapshot.path == path).cloned().collect())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn restore_snapshot(snapshot_id: String, state: tauri::State<AppState>) -> Result<SaveResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1167,6 +1193,7 @@ fn staged_conflict_marker_file(root: &Path, paths: &[&str]) -> Result<Option<Str
     Ok(None)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_git_status(state: tauri::State<AppState>) -> Result<GitStatus, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1185,6 +1212,7 @@ fn get_git_status(state: tauri::State<AppState>) -> Result<GitStatus, String> {
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn set_auto_git(enabled: bool, state: tauri::State<AppState>) -> Result<GitSettings, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1200,12 +1228,17 @@ struct GitFileChange {
     staged: bool,
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let Some(root) = &guard.root_path else {
         return Ok(Vec::new());
     };
+    git_changes_for_root(root)
+}
+
+fn git_changes_for_root(root: &Path) -> Result<Vec<GitFileChange>, String> {
     let is_repo = git_output(root, &["rev-parse", "--is-inside-work-tree"])
         .map(|value| value == "true")
         .unwrap_or(false);
@@ -1258,12 +1291,10 @@ fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, 
             i += 1;
         } else if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
             if i + 1 < parts.len() {
-                let dest_part = parts[i + 1];
-                let dest_path = String::from_utf8_lossy(dest_part).to_string();
                 let status = if x == 'R' || y == 'R' { "renamed" } else { "added" };
                 let staged = x == 'R' || x == 'C' || (x != ' ' && x != '?');
                 changes.push(GitFileChange {
-                    path: dest_path,
+                    path,
                     status: status.to_string(),
                     staged,
                 });
@@ -1305,6 +1336,7 @@ fn get_git_changes(state: tauri::State<AppState>) -> Result<Vec<GitFileChange>, 
     Ok(changes)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_git_diff(path: String, staged: bool, state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1337,6 +1369,7 @@ fn get_git_diff(path: String, staged: bool, state: tauri::State<AppState>) -> Re
     }
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn git_stage_file(path: String, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1348,6 +1381,7 @@ fn git_stage_file(path: String, state: tauri::State<AppState>) -> Result<(), Str
     Ok(())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn git_unstage_file(path: String, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1355,12 +1389,15 @@ fn git_unstage_file(path: String, state: tauri::State<AppState>) -> Result<(), S
         return Err("No vault open".to_string());
     };
     let _full_path = resolve_vault_path(root, &path)?;
-    
+    git_unstage_file_in_root(root, &path)
+}
+
+fn git_unstage_file_in_root(root: &Path, path: &str) -> Result<(), String> {
     // Guard against real reset failures on mature repositories by verifying HEAD first
     let head_exists = git_output(root, &["rev-parse", "--verify", "HEAD"]).is_ok();
     if head_exists {
         // Resolve if it's a rename to unstage both old and new paths
-        let mut paths_to_reset = vec![path.clone()];
+        let mut paths_to_reset = vec![path.to_string()];
         if let Ok(status_output) = Command::new("git").args(&["status", "--porcelain", "-z"]).current_dir(root).output() {
             if status_output.status.success() {
                 let stdout = status_output.stdout;
@@ -1399,6 +1436,7 @@ fn git_unstage_file(path: String, state: tauri::State<AppState>) -> Result<(), S
     Ok(())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn git_stage_all(state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1409,12 +1447,17 @@ fn git_stage_all(state: tauri::State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn git_commit(message: String, state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let Some(root) = &guard.root_path else {
         return Err("No vault open".to_string());
     };
+    git_commit_in_root(root, &message)
+}
+
+fn git_commit_in_root(root: &Path, message: &str) -> Result<String, String> {
     if message.trim().is_empty() {
         return Err("Commit message cannot be empty".to_string());
     }
@@ -1444,27 +1487,37 @@ fn git_commit(message: String, state: tauri::State<AppState>) -> Result<String, 
         ));
     }
 
-    git_output(root, &["commit", "-m", &message])
+    git_output(root, &["commit", "-m", message])
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn git_pull(state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let Some(root) = &guard.root_path else {
         return Err("No vault open".to_string());
     };
+    git_pull_in_root(root)
+}
+
+fn git_pull_in_root(root: &Path) -> Result<String, String> {
     if has_conflicts(root) {
         return Err("Cannot pull: repository has unresolved merge conflicts. Please resolve conflicts first.".to_string());
     }
     git_output_all(root, &["pull"])
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn git_push(state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let Some(root) = &guard.root_path else {
         return Err("No vault open".to_string());
     };
+    git_push_in_root(root)
+}
+
+fn git_push_in_root(root: &Path) -> Result<String, String> {
     if has_conflicts(root) {
         return Err("Cannot push: repository has unresolved merge conflicts. Please resolve conflicts first.".to_string());
     }
@@ -1565,6 +1618,7 @@ fn string_array_map_from_value(value: &serde_json::Value) -> Option<HashMap<Stri
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_vault_config(state: tauri::State<AppState>) -> Result<VaultConfig, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1586,6 +1640,7 @@ struct ArchiveStatus {
     total_bytes: u64,
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_archive_status(state: tauri::State<AppState>) -> Result<ArchiveStatus, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1612,6 +1667,7 @@ fn get_archive_status(state: tauri::State<AppState>) -> Result<ArchiveStatus, St
     Ok(ArchiveStatus { file_count, total_bytes })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn delete_archived_prompt(run_id: String, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1623,6 +1679,7 @@ fn delete_archived_prompt(run_id: String, state: tauri::State<AppState>) -> Resu
     Ok(())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn prune_archived_prompts(active_run_ids: Vec<String>, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1645,6 +1702,7 @@ fn prune_archived_prompts(active_run_ids: Vec<String>, state: tauri::State<AppSt
     Ok(())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1665,6 +1723,7 @@ fn archive_prompt_run(run_id: String, content: String, state: tauri::State<AppSt
     Ok(hex_hash)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_archived_prompt(run_id: String, state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1686,6 +1745,7 @@ fn prompt_run_archive_path(root: &Path, run_id: &str) -> Result<PathBuf, String>
     Ok(root.join(".lattice").join("runs").join(format!("{}.md", run_id)))
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn save_vault_config(config: VaultConfig, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1704,6 +1764,7 @@ fn embeddings_cache_path(root: &Path) -> PathBuf {
     root.join(".lattice").join("embeddings.json")
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn load_embeddings_cache(state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1716,6 +1777,7 @@ fn load_embeddings_cache(state: tauri::State<AppState>) -> Result<String, String
     }
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn save_embeddings_cache(content: String, state: tauri::State<AppState>) -> Result<(), String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1822,6 +1884,7 @@ fn cosine_similarity(vec_a: &[f32], vec_b: &[f32]) -> f32 {
     dot_product / (norm_a.sqrt() * norm_b.sqrt())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_backlink_suggestions(active_path: String, state: tauri::State<AppState>) -> Result<Vec<BacklinkSuggestion>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1896,6 +1959,7 @@ fn get_backlink_suggestions(active_path: String, state: tauri::State<AppState>) 
     Ok(suggestions)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: tauri::State<AppState>) -> Result<(), String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -1941,6 +2005,7 @@ fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: tauri::State
     Ok(())
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn apply_note_metadata(
     path: String,
@@ -2034,6 +2099,7 @@ struct ProposedEdit {
     applied: bool,
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_unresolved_links(state: tauri::State<AppState>) -> Result<Vec<UnresolvedLinkGroup>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -2108,6 +2174,7 @@ fn get_tag_content(inner_content: &str, tag_name: &str) -> Option<String> {
     Some(val)
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>, String> {
     let mut edits = Vec::new();
@@ -2172,6 +2239,7 @@ fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>, String> {
     Ok(edits)
 }
 
+#[cfg(not(test))]
 fn mutate_graph_link(source_path: String, target_path: String, add: bool, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
@@ -3128,6 +3196,7 @@ fn strip_html_tags(html: &str) -> String {
     ws.replace_all(stripped.as_ref(), " ").trim().to_string()
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 async fn ingest_url(url: String) -> Result<IngestRaw, String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -3158,7 +3227,8 @@ async fn ingest_url(url: String) -> Result<IngestRaw, String> {
         .unwrap_or("")
         .to_string();
 
-    if !content_type.contains("text/html") && !content_type.is_empty() {
+    let normalized_content_type = content_type.to_ascii_lowercase();
+    if !normalized_content_type.contains("text/html") && !content_type.is_empty() {
         return Err(format!(
             "URL is not an HTML page (content-type {})",
             content_type
@@ -3199,6 +3269,7 @@ async fn ingest_url(url: String) -> Result<IngestRaw, String> {
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 async fn ingest_pdf(path: String) -> Result<IngestRaw, String> {
     let text = std::panic::catch_unwind(|| pdf_extract::extract_text(&path))
@@ -3226,6 +3297,7 @@ async fn ingest_pdf(path: String) -> Result<IngestRaw, String> {
     })
 }
 
+#[cfg(not(test))]
 #[tauri::command]
 fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Vec<NoteHealthReport>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
@@ -3337,6 +3409,7 @@ fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Vec<NoteHealt
     Ok(reports)
 }
 
+#[cfg(not(test))]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -3833,41 +3906,29 @@ mod tests {
 
     #[test]
     fn test_unstage_in_unborn_repo() {
-        use tauri::Manager;
         let root = temp_test_dir("unborn-repo");
         git_output(&root, &["init"]).unwrap();
-        
-        let state = AppState::default();
-        {
-            let mut guard = state.inner.lock().unwrap();
-            guard.root_path = Some(root.clone());
-        }
-        
-        let app = tauri::test::mock_app();
-        app.manage(state);
-        let tauri_state = app.state::<AppState>();
-        
+
         let head_exists = git_output(&root, &["rev-parse", "--verify", "HEAD"]).is_ok();
         assert!(!head_exists);
-        
+
         let test_file = "Test.md";
         fs::write(root.join(test_file), "# Test Content").unwrap();
         git_output(&root, &["add", test_file]).unwrap();
-        
-        let changes_before = get_git_changes(tauri_state.clone()).unwrap();
+
+        let changes_before = git_changes_for_root(&root).unwrap();
         assert!(changes_before.iter().any(|c| c.path == test_file && c.staged));
-        
-        git_unstage_file(test_file.to_string(), tauri_state.clone()).unwrap();
-        
-        let changes_after = get_git_changes(tauri_state).unwrap();
+
+        git_unstage_file_in_root(&root, test_file).unwrap();
+
+        let changes_after = git_changes_for_root(&root).unwrap();
         assert!(changes_after.iter().any(|c| c.path == test_file && !c.staged));
-        
+
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn test_unstage_staged_rename_clears_index_delete() {
-        use tauri::Manager;
         let root = temp_test_dir("staged-rename");
         git_output(&root, &["init"]).unwrap();
         git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
@@ -3878,29 +3939,25 @@ mod tests {
         git_output(&root, &["commit", "-m", "Initial commit"]).unwrap();
         git_output(&root, &["mv", "Old.md", "New.md"]).unwrap();
 
-        let state = AppState::default();
-        {
-            let mut guard = state.inner.lock().unwrap();
-            guard.root_path = Some(root.clone());
-        }
-
-        let app = tauri::test::mock_app();
-        app.manage(state);
-        let tauri_state = app.state::<AppState>();
-
-        let changes_before = get_git_changes(tauri_state.clone()).unwrap();
+        let changes_before = git_changes_for_root(&root).unwrap();
         assert!(changes_before.iter().any(|change| {
             change.path == "New.md" && change.status == "renamed" && change.staged
         }));
 
-        git_unstage_file("New.md".to_string(), tauri_state.clone()).unwrap();
+        git_unstage_file_in_root(&root, "New.md").unwrap();
 
-        let porcelain = git_output(&root, &["status", "--porcelain"]).unwrap();
+        let porcelain_output = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(porcelain_output.status.success());
+        let porcelain = String::from_utf8_lossy(&porcelain_output.stdout);
         assert!(!porcelain.lines().any(|line| line.starts_with("D  Old.md")));
         assert!(porcelain.lines().any(|line| line == " D Old.md"));
         assert!(porcelain.lines().any(|line| line == "?? New.md"));
 
-        let changes_after = get_git_changes(tauri_state).unwrap();
+        let changes_after = git_changes_for_root(&root).unwrap();
         assert!(!changes_after.iter().any(|change| change.staged));
 
         let _ = fs::remove_dir_all(root);
@@ -3929,7 +3986,6 @@ mod tests {
 
     #[test]
     fn test_conflict_guards() {
-        use tauri::Manager;
         let root = temp_test_dir("conflict-guards");
         git_output(&root, &["init"]).unwrap();
         git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
@@ -3955,31 +4011,21 @@ mod tests {
         // merge causing conflict
         let _ = git_output(&root, &["merge", "other"]);
 
-        let state = AppState::default();
-        {
-            let mut guard = state.inner.lock().unwrap();
-            guard.root_path = Some(root.clone());
-        }
-
-        let app = tauri::test::mock_app();
-        app.manage(state);
-        let tauri_state = app.state::<AppState>();
-
         // 1. Verify has_conflicts detects unmerged files
         assert!(has_conflicts(&root));
 
         // 2. Verify git_commit returns conflict error
-        let commit_res = git_commit("Try to commit during conflict".to_string(), tauri_state.clone());
+        let commit_res = git_commit_in_root(&root, "Try to commit during conflict");
         assert!(commit_res.is_err());
         assert!(commit_res.unwrap_err().contains("unresolved merge conflicts"));
 
         // 3. Verify git_pull returns conflict error
-        let pull_res = git_pull(tauri_state.clone());
+        let pull_res = git_pull_in_root(&root);
         assert!(pull_res.is_err());
         assert!(pull_res.unwrap_err().contains("unresolved merge conflicts"));
 
         // 4. Verify git_push returns conflict error
-        let push_res = git_push(tauri_state.clone());
+        let push_res = git_push_in_root(&root);
         assert!(push_res.is_err());
         assert!(push_res.unwrap_err().contains("unresolved merge conflicts"));
 
@@ -3994,7 +4040,7 @@ mod tests {
         assert!(!has_conflicts(&root));
 
         // 6. Verify git_commit rejects commit because of index conflict markers
-        let commit_res2 = git_commit("Commit file with markers".to_string(), tauri_state.clone());
+        let commit_res2 = git_commit_in_root(&root, "Commit file with markers");
         assert!(commit_res2.is_err());
         assert!(commit_res2.unwrap_err().contains("unresolved merge conflict markers"));
 
@@ -4005,7 +4051,7 @@ mod tests {
         // Clean up and resolve
         fs::write(root.join(test_file), "Resolved content\n").unwrap();
         git_output(&root, &["add", test_file]).unwrap();
-        let commit_res3 = git_commit("Resolved commit".to_string(), tauri_state.clone());
+        let commit_res3 = git_commit_in_root(&root, "Resolved commit");
         assert!(commit_res3.is_ok());
 
         let _ = fs::remove_dir_all(root);
