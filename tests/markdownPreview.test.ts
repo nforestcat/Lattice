@@ -24,4 +24,14 @@ describe("renderMarkdownPreview", () => {
 
     expect(html).toContain('<code class="inlineCode">for</code>');
   });
+
+  it("adds source line metadata without breaking inline markdown", () => {
+    const html = renderMarkdownPreview(["# Title", "", "Use **bold** and `code`.", "", "- [x] Ship `fix`"].join("\n"));
+
+    expect(html).toContain('<h1 data-line="1">Title</h1>');
+    expect(html).toContain('<p data-line="3">Use <strong>bold</strong> and <code class="inlineCode">code</code>.</p>');
+    expect(html).toContain('<ul data-line="5">');
+    expect(html).toContain('<input checked="" disabled="" type="checkbox">');
+    expect(html).toContain('<code class="inlineCode">fix</code>');
+  });
 });

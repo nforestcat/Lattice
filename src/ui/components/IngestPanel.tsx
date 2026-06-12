@@ -216,6 +216,17 @@ export function IngestPanel({
           <div className="ingestSuccess">
             <p>✓ 노트 저장됨{lastCreatedPath ? `: ${lastCreatedPath}` : ""}</p>
             <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                className="primary"
+                onClick={() => {
+                  if (!lastCreatedPath) return;
+                  void onIngested(lastCreatedPath);
+                  onClose();
+                }}
+                disabled={!lastCreatedPath}
+              >
+                노트 열기
+              </button>
               <button className="primary" onClick={reset}>
                 다시 인제스트
               </button>
