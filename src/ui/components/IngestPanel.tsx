@@ -1,4 +1,5 @@
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { type CSSProperties, useState } from "react";
 import { ingestPdf, ingestUrl } from "../../api/tauriVault";
 import { ingestToNote } from "../../core/ingest";
@@ -43,10 +44,6 @@ function mapErrorMessage(err: string): string {
   return err;
 }
 
-function isOllamaError(err: string): boolean {
-  return err.toLowerCase().includes("ollama did not respond");
-}
-
 export function IngestPanel({
   open,
   onClose,
@@ -64,15 +61,33 @@ export function IngestPanel({
   const [draftTitle, setDraftTitle] = useState("");
   const [draftTags, setDraftTags] = useState("");
   const [draftMarkdown, setDraftMarkdown] = useState("");
+  const [duplicateCheck, setDuplicateCheck] = useState<{
+    exactMatch: string | null;
+    similarNotes: { path: string; title: string }[];
+  } | null>(null);
+  const [duplicateDismissed, setDuplicateDismissed] = useState(false);
 
   if (!open) return null;
 
   async function fetchRaw(getRaw: () => Promise<IngestRaw>) {
     setError(null);
+    setDuplicateCheck(null);
+    setDuplicateDismissed(false);
     setStatus("fetching");
     try {
       const raw = await getRaw();
       setRawPreview(raw);
+
+      try {
+        const dup = await invoke<{ exactMatch: string | null; similarNotes: { path: string; title: string }[] }>(
+          "check_ingest_duplicate",
+          { sourceRef: raw.sourceRef }
+        );
+        setDuplicateCheck(dup);
+      } catch {
+        // 중복 감지 실패는 무시
+      }
+
       setStatus("preview");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -146,7 +161,7 @@ export function IngestPanel({
   function handleRetry() {
     const rawErr = error ?? "";
     setError(null);
-    if (isOllamaError(rawErr) && rawPreview) {
+    if (rawErr.toLowerCase().includes("ollama did not respond") && rawPreview) {
       void processRaw(rawPreview);
     } else {
       setRawPreview(null);
@@ -164,6 +179,8 @@ export function IngestPanel({
     setDraftTitle("");
     setDraftTags("");
     setDraftMarkdown("");
+    setDuplicateCheck(null);
+    setDuplicateDismissed(false);
   }
 
   const busy = status === "fetching" || status === "processing" || status === "saving";
@@ -207,6 +224,22 @@ export function IngestPanel({
               <button onClick={onClose}>닫기</button>
             </div>
           </div>
+        )}
+
+        {status === "preview" && duplicateCheck?.exactMatch && !duplicateDismissed && (
+          <div className="duplicate-warning">
+            <p>⚠️ 이미 수집된 콘텐츠입니다.</p>
+            <div className="duplicate-actions">
+              <button onClick={() => onIngested(duplicateCheck.exactMatch!)}>기존 노트 열기</button>
+              <button onClick={() => setDuplicateDismissed(true)}>계속 진행</button>
+            </div>
+          </div>
+        )}
+
+        {status === "preview" && (duplicateCheck?.similarNotes?.length ?? 0) > 0 && (
+          <p className="similar-warning">
+            유사한 노트가 있습니다: {duplicateCheck!.similarNotes.map((n) => n.title).join(", ")}
+          </p>
         )}
 
         {status === "preview" && rawPreview && (
@@ -277,7 +310,7 @@ export function IngestPanel({
           <div className="ingestError" role="alert">
             <p style={{ marginBottom: "8px" }}>{mapErrorMessage(error)}</p>
             <button onClick={handleRetry}>
-              {isOllamaError(error) && rawPreview ? "미리보기에서 재시도" : "다시 시도"}
+              {error.toLowerCase().includes("ollama did not respond") && rawPreview ? "미리보기에서 재시도" : "다시 시도"}
             </button>
           </div>
         )}

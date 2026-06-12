@@ -9,19 +9,39 @@ export type VectorCache = Record<string, VectorCacheEntry>;
 
 import { invoke } from "@tauri-apps/api/core";
 
-export async function getEmbedding(config: LlmConfig, text: string): Promise<number[]> {
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
-    const redactedConfig = { ...config, apiKey: "" };
-    return invoke<number[]>("get_llm_embedding", { config: redactedConfig, text });
+function configForRemoteEmbedding(config: LlmConfig): LlmConfig {
+  const provider = config.embeddingProvider;
+  if (!provider || provider === "local-onnx" || provider === config.provider) {
+    return config;
   }
 
-  const { provider, apiKey, embeddingModel, baseUrl } = config;
-  const model = embeddingModel || (provider === "openai" ? "text-embedding-3-small" : "all-minilm");
+  return {
+    ...config,
+    provider,
+    baseUrl: provider === "custom" ? config.baseUrl : undefined,
+  };
+}
 
+export async function getEmbedding(config: LlmConfig, text: string): Promise<number[]> {
   const sanitizedText = text.trim();
   if (!sanitizedText) {
     return [];
   }
+
+  // local-onnx: Tauri 커맨드 직접 호출
+  if (config.embeddingProvider === "local-onnx") {
+    return invoke<number[]>("get_local_embedding", { text: sanitizedText });
+  }
+
+  const embeddingConfig = configForRemoteEmbedding(config);
+
+  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+    const redactedConfig = { ...embeddingConfig, apiKey: "" };
+    return invoke<number[]>("get_llm_embedding", { config: redactedConfig, text: sanitizedText });
+  }
+
+  const { provider, apiKey, embeddingModel, baseUrl } = embeddingConfig;
+  const model = embeddingModel || (provider === "openai" ? "text-embedding-3-small" : "all-minilm");
 
   switch (provider) {
     case "ollama": {

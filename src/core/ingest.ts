@@ -50,6 +50,32 @@ Rules:
   return [system, user];
 }
 
+function ensureProvenance(result: IngestResult, raw: IngestRaw): IngestResult {
+  let { markdown } = result;
+  const today = raw.ingestDate ?? new Date().toISOString().split("T")[0];
+
+  const fmMatch = markdown.match(/^---\n([\s\S]*?)\n---/);
+  if (fmMatch) {
+    let fm = fmMatch[1];
+    if (!fm.includes("source:")) {
+      const sourceValue =
+        raw.sourceType === "pdf"
+          ? `source_file: ${raw.sourceRef}`
+          : `source: ${raw.sourceRef}`;
+      fm = fm + `\n${sourceValue}`;
+    }
+    if (!fm.includes("ingest_date:")) {
+      fm = fm + `\ningest_date: ${today}`;
+    }
+    if (raw.sourceType && !fm.includes("source_type:")) {
+      fm = fm + `\nsource_type: ${raw.sourceType}`;
+    }
+    markdown = markdown.replace(fmMatch[0], `---\n${fm}\n---`);
+  }
+
+  return { ...result, markdown };
+}
+
 function parseIngestResponse(raw: string, sourceRef: string): IngestResult {
   const tagsMatch = raw.match(/^tags:\s*\[([^\]]+)\]/m);
   const tags = tagsMatch
@@ -78,20 +104,19 @@ export async function ingestToNote(
   }
 
   const messages = buildIngestPrompt(raw, limit);
-  const provider = llmConfig.provider;
 
   let response: string;
   try {
     response = await sendChatMessage(llmConfig, messages);
   } catch (err) {
     throw new Error(
-      `${provider} did not respond: ${err instanceof Error ? err.message : String(err)}`
+      `${llmConfig.provider} did not respond: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
   if (!response || response.trim().length === 0) {
-    throw new Error(`${provider} did not respond`);
+    throw new Error(`${llmConfig.provider} returned an empty response`);
   }
 
-  return parseIngestResponse(response, raw.sourceRef);
+  return ensureProvenance(parseIngestResponse(response, raw.sourceRef), raw);
 }

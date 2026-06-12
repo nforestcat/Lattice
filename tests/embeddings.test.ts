@@ -112,5 +112,47 @@ describe("Vector Embeddings & Cosine Similarity", () => {
       );
       expect(result).toEqual([0.99, -0.01]);
     });
+
+    it("should use the configured remote embedding provider instead of the chat provider", async () => {
+      const mockResponse = {
+        data: [
+          {
+            embedding: [0.25, 0.75],
+            index: 0,
+          },
+        ],
+      };
+
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      const config: LlmConfig = {
+        provider: "ollama",
+        apiKey: "sk-openai-key",
+        model: "llama3",
+        baseUrl: "http://localhost:11434",
+        embeddingProvider: "openai",
+      };
+
+      const result = await getEmbedding(config, "cross provider text");
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://api.openai.com/v1/embeddings",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer sk-openai-key",
+          },
+          body: JSON.stringify({
+            model: "text-embedding-3-small",
+            input: "cross provider text",
+          }),
+        })
+      );
+      expect(result).toEqual([0.25, 0.75]);
+    });
   });
 });
