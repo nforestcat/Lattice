@@ -221,8 +221,9 @@ export function App() {
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git">("paste");
   const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions">("context");
   const editorRef = useRef<ReactCodeMirrorRef>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
+  const previewScrollRef = useRef<HTMLElement | null>(null);
   const isSyncingScroll = useRef(false);
+  const pendingPreviewLineRef = useRef<number | null>(null);
   const [activeUnresolvedTarget, setActiveUnresolvedTarget] = useState<string | null>(null);
   const [includeContext, setIncludeContext] = useState(true);
 
@@ -992,10 +993,31 @@ export function App() {
     (viewMode !== "distill" && viewMode !== "graph" && draft.includes("<<<<<<<") && draft.includes("=======") && draft.includes(">>>>>>>"))
   );
 
+  const focusEditorLine = useCallback((lineNum: number): boolean => {
+    const view = editorRef.current?.view;
+    if (!view) return false;
+    const boundedLine = Math.min(Math.max(lineNum, 1), view.state.doc.lines);
+    const line = view.state.doc.line(boundedLine);
+    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    view.focus();
+    return true;
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "edit" || pendingPreviewLineRef.current === null) return;
+    const frame = requestAnimationFrame(() => {
+      const pendingLine = pendingPreviewLineRef.current;
+      if (pendingLine !== null && focusEditorLine(pendingLine)) {
+        pendingPreviewLineRef.current = null;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusEditorLine, viewMode]);
+
   useEffect(() => {
     if (viewMode !== "split") return;
     const scrollDOM = editorRef.current?.view?.scrollDOM;
-    const preview = previewRef.current;
+    const preview = previewScrollRef.current;
     if (!scrollDOM || !preview) return;
 
     const onEditorScroll = () => {
@@ -1123,28 +1145,27 @@ export function App() {
             </section>
           )}
           {(viewMode === "split" || viewMode === "preview") && (
-            <div ref={previewRef} className="previewContainer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+            <div className="previewContainer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
               {viewMode === "preview" && isActiveNoteConflicted && (
                 <div className="editorConflictBanner">
                   ⚠️ This note has unresolved merge conflicts. Please resolve the conflicts before committing.
                 </div>
               )}
               <article
+                ref={previewScrollRef}
                 className={`preview previewSurface ${vault?.obsidianSettings?.readableLineLength ? "previewReadable" : ""} ${
                   vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "theme-dark" : ""
                 }`}
                 style={{ flex: 1, overflow: 'auto', cursor: 'text' }}
                 dangerouslySetInnerHTML={html}
                 onClick={(e) => {
-                  setViewMode("edit");
-                  const view = editorRef.current?.view;
-                  if (view) {
-                    const target = (e.target as HTMLElement).closest("[data-line]");
-                    const lineNum = target ? parseInt((target as HTMLElement).dataset.line ?? "1", 10) : 1;
-                    const line = view.state.doc.line(Math.min(lineNum, view.state.doc.lines));
-                    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
-                    view.focus();
+                  const target = (e.target as HTMLElement).closest("[data-line]");
+                  const parsedLine = target ? Number.parseInt((target as HTMLElement).dataset.line ?? "1", 10) : 1;
+                  const lineNum = Number.isFinite(parsedLine) ? parsedLine : 1;
+                  if (!focusEditorLine(lineNum)) {
+                    pendingPreviewLineRef.current = lineNum;
                   }
+                  setViewMode("edit");
                 }}
               />
             </div>

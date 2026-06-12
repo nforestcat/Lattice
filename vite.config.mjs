@@ -36,6 +36,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    globals: true
+    globals: true,
+    exclude: ["**/.claude/**", "**/node_modules/**", "**/dist/**"]
   }
 });

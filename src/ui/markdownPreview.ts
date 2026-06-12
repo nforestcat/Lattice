@@ -1,4 +1,4 @@
-import { Marked, Renderer, Lexer } from "marked";
+import { Marked, Renderer, Lexer, type Token, type Tokens } from "marked";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import typescript from "highlight.js/lib/languages/typescript";
@@ -65,20 +65,15 @@ renderer.codespan = ({ text }) => {
 markedPreview.use({ renderer });
 
 export function renderMarkdownPreview(markdownSrc: string): string {
-  // Build a line-number queue by scanning top-level tokens in order.
-  // marked's Lexer preserves document order, so we consume from the front
-  // as each block renderer fires.
   const tokens = Lexer.lex(markdownSrc);
-
-  // Only track line numbers for block types that have custom renderers below.
-  const trackedTypes = new Set(["heading", "paragraph", "blockquote", "list"]);
+  const trackedTypes = new Set<Token["type"]>(["heading", "paragraph", "blockquote", "list"]);
   const lineQueue: number[] = [];
   let line = 1;
   for (const token of tokens) {
     if (trackedTypes.has(token.type)) {
       lineQueue.push(line);
     }
-    line += ((token as any).raw as string ?? "").split("\n").length - 1;
+    line += token.raw.split("\n").length - 1;
   }
 
   let queueIndex = 0;
@@ -88,30 +83,27 @@ export function renderMarkdownPreview(markdownSrc: string): string {
   lineRenderer.code = renderer.code.bind(renderer);
   lineRenderer.codespan = renderer.codespan.bind(renderer);
 
-  lineRenderer.heading = (args) => {
+  lineRenderer.heading = function headingWithLine(this: Renderer, args: Tokens.Heading) {
     const ln = nextLine();
-    return `<h${args.depth} data-line="${ln}">${args.text}</h${args.depth}>\n`;
+    return `<h${args.depth} data-line="${ln}">${this.parser.parseInline(args.tokens)}</h${args.depth}>\n`;
   };
 
-  lineRenderer.paragraph = (args) => {
+  lineRenderer.paragraph = function paragraphWithLine(this: Renderer, args: Tokens.Paragraph) {
     const ln = nextLine();
-    return `<p data-line="${ln}">${args.text}</p>\n`;
+    return `<p data-line="${ln}">${this.parser.parseInline(args.tokens)}</p>\n`;
   };
 
-  lineRenderer.blockquote = (args) => {
+  lineRenderer.blockquote = function blockquoteWithLine(this: Renderer, args: Tokens.Blockquote) {
     const ln = nextLine();
-    return `<blockquote data-line="${ln}">${args.text}</blockquote>\n`;
+    return `<blockquote data-line="${ln}">\n${this.parser.parse(args.tokens)}</blockquote>\n`;
   };
 
-  lineRenderer.list = (args) => {
+  lineRenderer.list = function listWithLine(this: Renderer, args: Tokens.List) {
     const ln = nextLine();
     const tag = args.ordered ? "ol" : "ul";
     const startAttr = args.ordered && args.start !== 1 ? ` start="${args.start}"` : "";
-    const itemsHtml = args.items.map((item) => {
-      const checkbox = item.task ? `<input type="checkbox" disabled${item.checked ? " checked" : ""}> ` : "";
-      return `<li>${checkbox}${item.text}</li>`;
-    }).join("\n");
-    return `<${tag}${startAttr} data-line="${ln}">\n${itemsHtml}\n</${tag}>\n`;
+    const items = args.items.map((item) => this.listitem(item)).join("");
+    return `<${tag} data-line="${ln}"${startAttr}>\n${items}</${tag}>\n`;
   };
 
   const instance = new Marked();
