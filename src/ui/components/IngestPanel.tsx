@@ -44,6 +44,32 @@ function mapErrorMessage(err: string): string {
   return err;
 }
 
+interface QualityBadge {
+  label: string;
+  reason: string;
+}
+
+function computeQualityBadges(markdown: string): QualityBadge[] {
+  const badges: QualityBadge[] = [];
+
+  const sectionCount = (markdown.match(/^##\s+/gm) ?? []).length;
+  if (sectionCount <= 1) {
+    badges.push({ label: "⚠ 내용 부족", reason: "섹션이 1개 이하입니다" });
+  }
+
+  const hasFrontmatter = /^---\n[\s\S]*?\n---/.test(markdown);
+  const hasSource = /^source(_file)?:/m.test(markdown);
+  if (!hasFrontmatter || !hasSource) {
+    badges.push({ label: "⚠ 출처 없음", reason: "source 필드가 없습니다" });
+  }
+
+  if (markdown.length < 500) {
+    badges.push({ label: "⚠ 너무 짧음", reason: `${markdown.length}자 (500자 미만)` });
+  }
+
+  return badges;
+}
+
 export function IngestPanel({
   open,
   onClose,
@@ -66,6 +92,7 @@ export function IngestPanel({
     similarNotes: { path: string; title: string }[];
   } | null>(null);
   const [duplicateDismissed, setDuplicateDismissed] = useState(false);
+  const [showRawExcerpt, setShowRawExcerpt] = useState(false);
 
   if (!open) return null;
 
@@ -73,13 +100,15 @@ export function IngestPanel({
     setError(null);
     setDuplicateCheck(null);
     setDuplicateDismissed(false);
+    setShowRawExcerpt(false);
     setStatus("fetching");
     try {
       const raw = await getRaw();
       setRawPreview(raw);
 
+      let dup: { exactMatch: string | null; similarNotes: { path: string; title: string }[] } | null = null;
       try {
-        const dup = await invoke<{ exactMatch: string | null; similarNotes: { path: string; title: string }[] }>(
+        dup = await invoke<{ exactMatch: string | null; similarNotes: { path: string; title: string }[] }>(
           "check_ingest_duplicate",
           { sourceRef: raw.sourceRef }
         );
@@ -88,7 +117,11 @@ export function IngestPanel({
         // 중복 감지 실패는 무시
       }
 
-      setStatus("preview");
+      if (dup?.exactMatch) {
+        setStatus("preview");
+      } else {
+        void processRaw(raw);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus("error");
@@ -169,6 +202,15 @@ export function IngestPanel({
     }
   }
 
+  function isNoteInserted(noteTitle: string): boolean {
+    return draftMarkdown.includes(`[[${noteTitle}]]`);
+  }
+
+  function insertNoteLink(noteTitle: string) {
+    if (isNoteInserted(noteTitle)) return;
+    setDraftMarkdown((prev) => `${prev}\n\n관련: [[${noteTitle}]]`);
+  }
+
   function reset() {
     setUrl("");
     setStatus("idle");
@@ -181,6 +223,7 @@ export function IngestPanel({
     setDraftMarkdown("");
     setDuplicateCheck(null);
     setDuplicateDismissed(false);
+    setShowRawExcerpt(false);
   }
 
   const busy = status === "fetching" || status === "processing" || status === "saving";
@@ -192,6 +235,13 @@ export function IngestPanel({
     processing: "Ollama로 처리 중…",
     saving: "노트 저장 중…",
   };
+
+  const qualityBadges = status === "review" ? computeQualityBadges(draftMarkdown) : [];
+
+  const reviewSimilarNotes =
+    status === "review" && (duplicateCheck?.similarNotes?.length ?? 0) > 0
+      ? duplicateCheck!.similarNotes
+      : [];
 
   return (
     <div
@@ -218,6 +268,18 @@ export function IngestPanel({
           <div className="ingestSuccess">
             <p>✓ 노트 저장됨{lastCreatedPath ? `: ${lastCreatedPath}` : ""}</p>
             <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                className="primary"
+                onClick={() => {
+                  if (lastCreatedPath) {
+                    void onIngested(lastCreatedPath);
+                    onClose();
+                  }
+                }}
+                disabled={!lastCreatedPath}
+              >
+                노트 열기
+              </button>
               <button className="primary" onClick={reset}>
                 다시 인제스트
               </button>
@@ -231,38 +293,37 @@ export function IngestPanel({
             <p>⚠️ 이미 수집된 콘텐츠입니다.</p>
             <div className="duplicate-actions">
               <button onClick={() => onIngested(duplicateCheck.exactMatch!)}>기존 노트 열기</button>
-              <button onClick={() => setDuplicateDismissed(true)}>계속 진행</button>
-            </div>
-          </div>
-        )}
-
-        {status === "preview" && (duplicateCheck?.similarNotes?.length ?? 0) > 0 && (
-          <p className="similar-warning">
-            유사한 노트가 있습니다: {duplicateCheck!.similarNotes.map((n) => n.title).join(", ")}
-          </p>
-        )}
-
-        {status === "preview" && rawPreview && (
-          <div className="ingestPreview">
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted, #888)", marginBottom: "4px" }}>
-              출처: {rawPreview.sourceRef}
-            </p>
-            <div className="ingestPreviewText">
-              {rawPreview.text.length > 500
-                ? `${rawPreview.text.slice(0, 500)}… (전체 ${rawPreview.text.length.toLocaleString()}자)`
-                : rawPreview.text}
-            </div>
-            <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-              <button className="primary" onClick={() => void processRaw(rawPreview)}>
-                처리하기
-              </button>
-              <button onClick={reset}>취소</button>
+              <button onClick={() => {
+                setDuplicateDismissed(true);
+                if (rawPreview) void processRaw(rawPreview);
+              }}>계속 진행</button>
             </div>
           </div>
         )}
 
         {status === "review" && (
           <div className="ingestReview">
+            {qualityBadges.length > 0 && (
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
+                {qualityBadges.map((b) => (
+                  <span
+                    key={b.label}
+                    title={b.reason}
+                    style={{
+                      fontSize: "0.75rem",
+                      padding: "2px 7px",
+                      borderRadius: "10px",
+                      background: "var(--color-warning-bg, #3a2e00)",
+                      color: "var(--color-warning, #f0c040)",
+                      cursor: "default",
+                    }}
+                  >
+                    {b.label}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <label style={labelStyle}>제목</label>
             <input
               className="ingestUrlInput"
@@ -275,16 +336,68 @@ export function IngestPanel({
                 {titleError}
               </p>
             )}
-            <label style={labelStyle}>
-              태그 (쉼표로 구분)
-            </label>
+            <label style={labelStyle}>태그 (쉼표로 구분)</label>
             <input
               className="ingestUrlInput"
               value={draftTags}
               onChange={(e) => setDraftTags(e.target.value)}
               style={{ marginBottom: "8px" }}
             />
-            <label style={labelStyle}>마크다운</label>
+
+            {reviewSimilarNotes.length > 0 && (
+              <div style={{ marginBottom: "8px" }}>
+                <label style={labelStyle}>유사 노트 연결</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+                  {reviewSimilarNotes.map((n) => {
+                    const inserted = isNoteInserted(n.title);
+                    return (
+                      <button
+                        key={n.path}
+                        onClick={() => insertNoteLink(n.title)}
+                        disabled={inserted}
+                        style={{ fontSize: "0.78rem", padding: "2px 8px" }}
+                        title={n.path}
+                      >
+                        {inserted ? "✓ " : ""}{n.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+              <label style={labelStyle}>마크다운</label>
+              {rawPreview && (
+                <button
+                  onClick={() => setShowRawExcerpt((v) => !v)}
+                  style={{ fontSize: "0.75rem", padding: "1px 6px", background: "none", border: "1px solid var(--border, #444)", borderRadius: "4px", cursor: "pointer", color: "var(--text-muted, #888)" }}
+                >
+                  {showRawExcerpt ? "원문 닫기 ▲" : "원문 보기 ▶"}
+                </button>
+              )}
+            </div>
+            {showRawExcerpt && rawPreview && (
+              <div
+                style={{
+                  fontSize: "0.78rem",
+                  color: "var(--text-muted, #888)",
+                  background: "var(--bg-secondary, #1e1e1e)",
+                  border: "1px solid var(--border, #444)",
+                  borderRadius: "4px",
+                  padding: "8px",
+                  marginBottom: "6px",
+                  maxHeight: "140px",
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {rawPreview.text.length > 1000
+                  ? `${rawPreview.text.slice(0, 1000)}… (전체 ${rawPreview.text.length.toLocaleString()}자)`
+                  : rawPreview.text}
+              </div>
+            )}
             <textarea
               className="ingestMarkdownEditor"
               value={draftMarkdown}
