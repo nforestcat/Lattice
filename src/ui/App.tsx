@@ -221,6 +221,8 @@ export function App() {
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git">("paste");
   const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions">("context");
   const editorRef = useRef<ReactCodeMirrorRef>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const isSyncingScroll = useRef(false);
   const [activeUnresolvedTarget, setActiveUnresolvedTarget] = useState<string | null>(null);
   const [includeContext, setIncludeContext] = useState(true);
 
@@ -990,6 +992,36 @@ export function App() {
     (viewMode !== "distill" && viewMode !== "graph" && draft.includes("<<<<<<<") && draft.includes("=======") && draft.includes(">>>>>>>"))
   );
 
+  useEffect(() => {
+    if (viewMode !== "split") return;
+    const scrollDOM = editorRef.current?.view?.scrollDOM;
+    const preview = previewRef.current;
+    if (!scrollDOM || !preview) return;
+
+    const onEditorScroll = () => {
+      if (isSyncingScroll.current) return;
+      isSyncingScroll.current = true;
+      const ratio = scrollDOM.scrollTop / (scrollDOM.scrollHeight - scrollDOM.clientHeight || 1);
+      preview.scrollTop = ratio * (preview.scrollHeight - preview.clientHeight);
+      requestAnimationFrame(() => { isSyncingScroll.current = false; });
+    };
+
+    const onPreviewScroll = () => {
+      if (isSyncingScroll.current) return;
+      isSyncingScroll.current = true;
+      const ratio = preview.scrollTop / (preview.scrollHeight - preview.clientHeight || 1);
+      scrollDOM.scrollTop = ratio * (scrollDOM.scrollHeight - scrollDOM.clientHeight);
+      requestAnimationFrame(() => { isSyncingScroll.current = false; });
+    };
+
+    scrollDOM.addEventListener("scroll", onEditorScroll);
+    preview.addEventListener("scroll", onPreviewScroll);
+    return () => {
+      scrollDOM.removeEventListener("scroll", onEditorScroll);
+      preview.removeEventListener("scroll", onPreviewScroll);
+    };
+  }, [viewMode]);
+
   return (
     <main className="workspace" style={themeStyles}>
       <Sidebar
@@ -1065,7 +1097,7 @@ export function App() {
                   value={draft}
                   height="100%"
                   extensions={[markdown()]}
-                  theme="light"
+                  theme={vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "dark" : "light"}
                   basicSetup={{ lineNumbers: true, foldGutter: true }}
                   onChange={setDraft}
                 />
@@ -1091,7 +1123,7 @@ export function App() {
             </section>
           )}
           {(viewMode === "split" || viewMode === "preview") && (
-            <div className="previewContainer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+            <div ref={previewRef} className="previewContainer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
               {viewMode === "preview" && isActiveNoteConflicted && (
                 <div className="editorConflictBanner">
                   ⚠️ This note has unresolved merge conflicts. Please resolve the conflicts before committing.
@@ -1103,7 +1135,17 @@ export function App() {
                 }`}
                 style={{ flex: 1, overflow: 'auto', cursor: 'text' }}
                 dangerouslySetInnerHTML={html}
-                onClick={() => { setViewMode("edit"); editorRef.current?.view?.focus(); }}
+                onClick={(e) => {
+                  setViewMode("edit");
+                  const view = editorRef.current?.view;
+                  if (view) {
+                    const target = (e.target as HTMLElement).closest("[data-line]");
+                    const lineNum = target ? parseInt((target as HTMLElement).dataset.line ?? "1", 10) : 1;
+                    const line = view.state.doc.line(Math.min(lineNum, view.state.doc.lines));
+                    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+                    view.focus();
+                  }
+                }}
               />
             </div>
           )}

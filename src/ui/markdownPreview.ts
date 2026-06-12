@@ -1,4 +1,4 @@
-import { Marked, Renderer } from "marked";
+import { Marked, Renderer, Lexer } from "marked";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import typescript from "highlight.js/lib/languages/typescript";
@@ -64,8 +64,59 @@ renderer.codespan = ({ text }) => {
 
 markedPreview.use({ renderer });
 
-export function renderMarkdownPreview(markdown: string): string {
-  return markedPreview.parse(markdown) as string;
+export function renderMarkdownPreview(markdownSrc: string): string {
+  // Build a line-number queue by scanning top-level tokens in order.
+  // marked's Lexer preserves document order, so we consume from the front
+  // as each block renderer fires.
+  const tokens = Lexer.lex(markdownSrc);
+
+  // Only track line numbers for block types that have custom renderers below.
+  const trackedTypes = new Set(["heading", "paragraph", "blockquote", "list"]);
+  const lineQueue: number[] = [];
+  let line = 1;
+  for (const token of tokens) {
+    if (trackedTypes.has(token.type)) {
+      lineQueue.push(line);
+    }
+    line += ((token as any).raw as string ?? "").split("\n").length - 1;
+  }
+
+  let queueIndex = 0;
+  const nextLine = () => lineQueue[queueIndex++] ?? 1;
+
+  const lineRenderer = new Renderer();
+  lineRenderer.code = renderer.code.bind(renderer);
+  lineRenderer.codespan = renderer.codespan.bind(renderer);
+
+  lineRenderer.heading = (args) => {
+    const ln = nextLine();
+    return `<h${args.depth} data-line="${ln}">${args.text}</h${args.depth}>\n`;
+  };
+
+  lineRenderer.paragraph = (args) => {
+    const ln = nextLine();
+    return `<p data-line="${ln}">${args.text}</p>\n`;
+  };
+
+  lineRenderer.blockquote = (args) => {
+    const ln = nextLine();
+    return `<blockquote data-line="${ln}">${args.text}</blockquote>\n`;
+  };
+
+  lineRenderer.list = (args) => {
+    const ln = nextLine();
+    const tag = args.ordered ? "ol" : "ul";
+    const startAttr = args.ordered && args.start !== 1 ? ` start="${args.start}"` : "";
+    const itemsHtml = args.items.map((item) => {
+      const checkbox = item.task ? `<input type="checkbox" disabled${item.checked ? " checked" : ""}> ` : "";
+      return `<li>${checkbox}${item.text}</li>`;
+    }).join("\n");
+    return `<${tag}${startAttr} data-line="${ln}">\n${itemsHtml}\n</${tag}>\n`;
+  };
+
+  const instance = new Marked();
+  instance.use({ renderer: lineRenderer });
+  return instance.parse(markdownSrc) as string;
 }
 
 function normalizeLanguageLabel(lang?: string): string {
