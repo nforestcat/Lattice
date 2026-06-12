@@ -130,6 +130,8 @@ export type IngestRaw = {
   title?: string;
   text: string;
   sourceRef: string;
+  sourceType?: "url" | "pdf" | "text";
+  ingestDate?: string;
 };
 
 export type IngestResult = {
@@ -243,6 +245,7 @@ export type LlmConfig = {
   model: string;
   baseUrl?: string;
   embeddingModel?: string;
+  embeddingProvider?: "openai" | "ollama" | "custom" | "local-onnx";
 };
 
 export type NoteTemplate = {

@@ -33,6 +33,7 @@ Implemented so far:
 - Protect Git sync with **Manual Conflict Safety** by detecting merge conflicts and preventing unsafe operations (commit, auto-commit, pull, push) both in backend Tauri commands and the UI, checking staged files' exact index content (`git show :<path>`) for unresolved conflict markers before committing, displaying non-dismissible warning banners in the editor (edit/split/preview modes), showing sidebar warning alerts, and highlighting conflict markers prominently in diffs
 - Chat with an integrated LLM Copilot in the Distill Workspace (supporting Ollama, OpenAI, Gemini, and Anthropic), with active context bundle auto-injection and streaming responses containing structured proposed edits that instantly populate the pending edit checklist
 - Compute semantic note recommendations using vector embeddings (Ollama or OpenAI/Custom OpenAI-compatible) and store them in a persistent local cache file (`.lattice/embeddings.json`) to minimize API requests and save overhead on subsequent note selections
+- Configure embeddings independently from the chat provider, including an offline Local ONNX option with model status/download controls and backend-routed embedding requests
 - Automatically scan the active editor note for unlinked mentions of other note titles (supporting CJK languages via Unicode property boundary matching) and collect them in a dedicated **Link Suggestions** sidebar tab with cursor insertion and safe "Link All" conversion that avoids nesting existing wiki links
 - Toggle search mode in the sidebar between traditional Keyword search and AI-powered **Semantic Search** to query the entire vault using natural language and rank results by vector embedding similarity scores (with custom match percentage badges)
 - Export and import prompt history runs (including both metadata and full prompt markdown contents) as a single portable JSON archive file
@@ -49,8 +50,10 @@ Implemented so far:
 - Route LLM chat messages and embeddings via Rust backend Tauri commands using `reqwest` to bypass CORS restrictions and eliminate client-side headers like `dangerously-allow-browser`
 - Query available model lists dynamically from providers (Ollama, OpenAI, Gemini, LM Studio) directly from the backend
 - Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`Sidebar`, `EditorToolbar`, `InspectorPanel`, `LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
+- Modularize the Rust Tauri backend into focused command/model modules for vault, Git, config, ingest, LLM, and embedding responsibilities
 - Render unresolved (dead) page links as dashed gray "ghost nodes" in the Graph View, connect them with deduplicated edges, and provide a review-first "Dead Link Resolution Workspace" to review, edit, approve/reject, regenerate rejected drafts, and bulk-create draft stubs while keeping failed creations available for retry
 - Ingest external URL and PDF sources into reviewable Markdown drafts with raw-content preview, localized error/retry states, editable title/tags/body fields, YAML tag preservation, and vault refresh after save
+- Detect duplicate ingested sources before saving, surface exact matches/similar notes in the ingest flow, and preserve source provenance metadata in generated Markdown
 - Keep Git workspace operations covered by backend tests, including unborn repository unstaging, staged rename unstaging, conflict guards, and Windows-safe `cargo test` execution without initializing the Tauri runtime in lib tests
 
 ## LLM Wiki Direction

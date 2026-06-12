@@ -1,6 +1,74 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { LlmConfig, LlmProvider, VaultConfig } from "../../api/types";
 import { vaultApi } from "../../api";
+import { invoke } from "@tauri-apps/api/core";
+
+type ModelStatus = {
+  downloaded: boolean;
+  downloading: boolean;
+  progressPct: number | null;
+  modelSizeMb: number;
+};
+
+function LocalOnnxModelStatus() {
+  const [status, setStatus] = useState<ModelStatus | null>(null);
+
+  useEffect(() => {
+    void invoke<ModelStatus>("get_local_embedding_model_status").then(setStatus).catch(() => {
+      setStatus({ downloaded: false, downloading: false, progressPct: null, modelSizeMb: 90 });
+    });
+  }, []);
+
+  function handleDownload() {
+    setStatus(prev => prev ? { ...prev, downloading: true } : null);
+    void invoke("download_local_embedding_model")
+      .then(() => invoke<ModelStatus>("get_local_embedding_model_status"))
+      .then(setStatus)
+      .catch(() => {
+        setStatus(prev => prev ? { ...prev, downloading: false } : null);
+      });
+  }
+
+  if (!status) {
+    return <span style={{ fontSize: "11px", color: "#6b7280" }}>상태 확인 중...</span>;
+  }
+
+  if (status.downloaded) {
+    return (
+      <span style={{ fontSize: "11px", color: "#16a34a", fontWeight: 600 }}>
+        ✓ 사용 가능
+      </span>
+    );
+  }
+
+  if (status.downloading) {
+    return (
+      <span style={{ fontSize: "11px", color: "#6b7280" }}>
+        <span style={{ display: "inline-block", marginRight: "6px" }}>⏳</span>
+        다운로드 중{status.progressPct != null ? ` (${status.progressPct}%)` : "..."}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleDownload}
+      style={{
+        background: "none",
+        border: "1px solid #3b82f6",
+        color: "#3b82f6",
+        fontSize: "11px",
+        fontWeight: 600,
+        cursor: "pointer",
+        padding: "3px 8px",
+        borderRadius: "4px",
+      }}
+    >
+      다운로드 (약 {status.modelSizeMb}MB)
+    </button>
+  );
+}
 
 interface LlmSettingsPanelProps {
   llmConfig: LlmConfig;
@@ -156,6 +224,31 @@ export function LlmSettingsPanel({
       )}
 
       {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && (
+        <div className="formGroup">
+          <label>Embedding Provider</label>
+          <select
+            value={llmConfig.embeddingProvider || ""}
+            onChange={(e) => {
+              const val = e.target.value as LlmConfig["embeddingProvider"];
+              setLlmConfig(prev => ({ ...prev, embeddingProvider: val || undefined }));
+            }}
+          >
+            <option value="">provider와 동일 (기본)</option>
+            <option value="local-onnx">Local (ONNX) — 오프라인</option>
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama</option>
+          </select>
+        </div>
+      )}
+
+      {llmConfig.embeddingProvider === "local-onnx" && (
+        <div className="formGroup onnx-model-status">
+          <label>ONNX 모델 상태</label>
+          <LocalOnnxModelStatus />
+        </div>
+      )}
+
+      {(llmConfig.provider === "ollama" || llmConfig.provider === "openai" || llmConfig.provider === "custom" || llmConfig.provider === "lm-studio") && llmConfig.embeddingProvider !== "local-onnx" && (
         <div className="formGroup">
           <label>Embedding Model</label>
           <input

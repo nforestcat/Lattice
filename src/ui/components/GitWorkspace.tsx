@@ -59,10 +59,10 @@ function parseDiffGitHeader(line: string): { oldPath: string; newPath: string } 
   // Unquoted paths: diff --git a/path b/path
   // Using a/ and b/ as anchors handles paths with spaces correctly
   let match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-  if (match) return { oldPath: match[1], newPath: match[2] };
+  if (match) return { oldPath: `a/${match[1]}`, newPath: `b/${match[2]}` };
   // Quoted paths (spaces in filenames): diff --git "a/path with spaces" "b/path with spaces"
   match = /^diff --git "a\/(.+)" "b\/(.+)"$/.exec(line);
-  if (match) return { oldPath: match[1], newPath: match[2] };
+  if (match) return { oldPath: `a/${match[1]}`, newPath: `b/${match[2]}` };
   return null;
 }
 
@@ -144,14 +144,14 @@ function parseUnifiedDiff(diff: string): ParsedDiffFile[] {
 
     if (!currentHunk && line.startsWith("--- ")) {
       ensureFile();
-      currentFile.oldPath = normalizeDiffPath(line.slice(4));
+      currentFile.oldPath = currentFile.oldPath || normalizeDiffPath(line.slice(4));
       currentHunk = null;
       continue;
     }
 
     if (!currentHunk && line.startsWith("+++ ")) {
       ensureFile();
-      currentFile.newPath = normalizeDiffPath(line.slice(4));
+      currentFile.newPath = currentFile.newPath || normalizeDiffPath(line.slice(4));
       currentHunk = null;
       continue;
     }

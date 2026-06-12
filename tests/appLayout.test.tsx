@@ -672,7 +672,8 @@ describe("App layout", () => {
       llmConfig: {
         provider: "openai",
         apiKey: "sk-should-not-be-stored",
-        model: "gpt-4o"
+        model: "gpt-4o",
+        embeddingProvider: "local-onnx"
       }
     });
     expect(migratedConfig.version).toBe(1);
@@ -690,7 +691,8 @@ describe("App layout", () => {
     expect(migratedConfig.llmConfig).toEqual(expect.objectContaining({
       provider: "openai",
       apiKey: "",
-      model: "gpt-4o"
+      model: "gpt-4o",
+      embeddingProvider: "local-onnx"
     }));
   });
 
