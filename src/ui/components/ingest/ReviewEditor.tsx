@@ -1,6 +1,9 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import type { IngestRaw } from "../../../api/types";
 import { QualityBadges, computeQualityBadges } from "./QualityBadges";
+import CodeMirror from "@uiw/react-codemirror";
+import { markdown } from "@codemirror/lang-markdown";
+import { renderMarkdownPreview } from "../../markdownPreview";
 
 interface ReviewEditorProps {
   draftTitle: string;
@@ -39,6 +42,7 @@ export function ReviewEditor({
   onSave,
   onRegenerate,
 }: ReviewEditorProps) {
+  const [showPreview, setShowPreview] = useState(false);
   const badges = computeQualityBadges(draftMarkdown);
 
   function isNoteInserted(noteTitle: string): boolean {
@@ -131,13 +135,29 @@ export function ReviewEditor({
         </div>
       )}
 
-      <textarea
-        className="ingestMarkdownEditor"
+      <CodeMirror
         value={draftMarkdown}
-        onChange={(e) => onMarkdownChange(e.target.value)}
-        rows={10}
-        style={{ width: "100%", resize: "vertical", maxHeight: "300px" }}
+        height="200px"
+        extensions={[markdown()]}
+        theme="dark"
+        basicSetup={{ lineNumbers: false, foldGutter: false }}
+        onChange={onMarkdownChange}
+        style={{ borderRadius: "6px", overflow: "hidden", marginBottom: "4px" }}
       />
+      <div style={{ marginBottom: "8px" }}>
+        <button
+          onClick={() => setShowPreview((v) => !v)}
+          style={{ fontSize: "0.75rem", padding: "1px 6px", background: "none", border: "1px solid var(--border, #444)", borderRadius: "4px", cursor: "pointer", color: "var(--text-muted, #888)" }}
+        >
+          {showPreview ? "미리보기 ▲" : "미리보기 ▶"}
+        </button>
+        {showPreview && (
+          <article
+            dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(draftMarkdown) }}
+            style={{ maxHeight: "200px", overflowY: "auto", padding: "8px", border: "1px solid var(--border, #444)", borderRadius: "4px", fontSize: "0.85rem", marginTop: "4px" }}
+          />
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
         <button className="primary" onClick={onSave} disabled={!canSave}>
