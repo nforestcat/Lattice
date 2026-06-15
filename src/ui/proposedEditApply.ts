@@ -23,9 +23,9 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
       await vaultApi.appendAiAudit(record);
     } catch (err) {
       if (type === "delete") {
-        console.warn("[provenance] Failed to write audit log for delete — provenance may be unrecoverable:", err);
+        console.error("[provenance] Failed to write audit log for delete — provenance may be unrecoverable:", err);
       } else {
-        console.error("[provenance] Failed to write audit log (non-fatal):", err);
+        console.warn("[provenance] Failed to write audit log (non-fatal):", err);
       }
     }
   }
@@ -51,7 +51,7 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
         throw new Error(`Target content not found in ${edit.path}`);
       }
 
-      const updatedContent = doc.content.replace(target, replacement);
+      const updatedContent = doc.content.replace(target, () => replacement);
       const stamped = stampAiProvenance(updatedContent, { ...baseProvenance, originalExcerpt: target }, edit.id);
       await vaultApi.saveNote(edit.path, stamped, doc.revision);
       await appendAudit("update", edit.path);
@@ -81,9 +81,9 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
       const stamped = stampAiProvenance(edit.content || "", baseProvenance, edit.id);
       await vaultApi.saveNote(targetPath, stamped, existingRevision);
       await appendAudit("merge", targetPath);
-      // source note deletion — audit separately as delete
-      await appendAudit("delete", edit.path);
+      // source note deletion — audit after delete succeeds to avoid false audit on failure
       await vaultApi.deleteEntry(edit.path);
+      await appendAudit("delete", edit.path);
       return { ...edit, applied: true, provenance: baseProvenance };
     }
   }
