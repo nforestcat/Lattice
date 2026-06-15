@@ -181,6 +181,8 @@ export type VaultApi = {
   getArchiveStatus(): Promise<{ fileCount: number; totalBytes: number }>;
   loadEmbeddingsCache(): Promise<string>;
   saveEmbeddingsCache(content: string): Promise<void>;
+  loadEmbeddingsStatus(): Promise<string>;
+  saveEmbeddingsStatus(content: string): Promise<void>;
   getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]>;
   parseProposedEdits(rawText: string): Promise<ProposedEdit[]>;
   getBacklinkSuggestions(activePath: string): Promise<BacklinkSuggestion[]>;

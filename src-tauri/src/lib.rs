@@ -489,6 +489,10 @@ fn embeddings_cache_path(root: &Path) -> PathBuf {
     root.join(".lattice").join("embeddings.json")
 }
 
+fn embeddings_status_path(root: &Path) -> PathBuf {
+    root.join(".lattice").join("embeddings-status.json")
+}
+
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1598,6 +1602,8 @@ pub fn run() {
             commands::config::check_ingest_duplicate,
             commands::config::load_embeddings_cache,
             commands::config::save_embeddings_cache,
+            commands::config::load_embeddings_status,
+            commands::config::save_embeddings_status,
             commands::config::get_unresolved_links,
             commands::config::parse_proposed_edits,
             commands::config::get_backlink_suggestions,

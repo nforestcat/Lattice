@@ -5,6 +5,19 @@ import type { LlmConfig, VaultSnapshot, ContextBundleCandidate } from "../../api
 import type { NoteMeta } from "../../core/types";
 import { estimateTokens } from "../../core/contextBundle";
 
+export async function embedNote(
+  config: LlmConfig,
+  content: string
+): Promise<{ vector: number[] } | { error: string }> {
+  try {
+    const vector = await getEmbedding(config, content);
+    if (vector.length === 0) return { error: "Empty vector returned" };
+    return { vector };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot | null) {
   const [embeddingsCache, setEmbeddingsCache] = useState<VectorCache>({});
   const [embeddingStatus, setEmbeddingStatus] = useState("");
@@ -38,22 +51,16 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
       for (const note of notesToProcess) {
         const cached = cache[note.path];
         if (!cached || cached.contentHash !== note.contentHash) {
-          try {
-            const doc = await vaultApi.readNote(note.path);
-            noteContents[note.path] = doc.content;
-            const vector = await getEmbedding(config, doc.content);
-            if (vector.length > 0) {
-              cache[note.path] = {
-                contentHash: note.contentHash,
-                vector
-              };
-              cacheUpdated = true;
-            }
-          } catch (err) {
-            console.error(`Failed to generate embedding for ${note.path}:`, err);
+          const doc = await vaultApi.readNote(note.path);
+          noteContents[note.path] = doc.content;
+          const result = await embedNote(config, doc.content);
+          if ("error" in result) {
+            console.error(`Failed to generate embedding for ${note.path}:`, result.error);
             setEmbeddingStatus("Embedding error (API unreachable)");
             return;
           }
+          cache[note.path] = { contentHash: note.contentHash, vector: result.vector };
+          cacheUpdated = true;
         }
       }
 
@@ -183,6 +190,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
         if (!cached || cached.contentHash !== note.contentHash) {
           try {
             const doc = await vaultApi.readNote(note.path);
+            // TODO: migrate to embedNote helper
             const vector = await getEmbedding(config, doc.content);
             if (vector.length > 0) {
               cache[note.path] = {

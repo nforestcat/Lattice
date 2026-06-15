@@ -18,6 +18,7 @@ import { Sidebar } from "./components/Sidebar";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { LinkSuggestionsSidebar } from "./components/LinkSuggestionsSidebar";
+import { EmbeddingsIndexPanel } from "./components/EmbeddingsIndexPanel";
 import { IngestPanel } from "./components/IngestPanel";
 import { ConflictResolver } from "./components/ConflictResolver";
 import { useGit } from "./hooks/useGit";
@@ -221,7 +222,7 @@ export function App() {
   const [showIngestPanel, setShowIngestPanel] = useState(false);
   const [showConflictResolver, setShowConflictResolver] = useState(false);
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git" | "review">("paste");
-  const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions">("context");
+  const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions" | "index">("context");
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const previewScrollRef = useRef<HTMLElement | null>(null);
   const isSyncingScroll = useRef(false);
@@ -1277,9 +1278,18 @@ export function App() {
           >
             Link Suggestions
           </button>
+          <button
+            type="button"
+            className={rightSidebarTab === "index" ? "active" : ""}
+            onClick={() => setRightSidebarTab("index")}
+          >
+            Index
+          </button>
         </div>
 
-        {rightSidebarTab === "suggestions" ? (
+        {rightSidebarTab === "index" ? (
+          <EmbeddingsIndexPanel llmConfig={llmConfig} vault={vault} />
+        ) : rightSidebarTab === "suggestions" ? (
           <LinkSuggestionsSidebar
             activePath={activePath}
             context={context}
