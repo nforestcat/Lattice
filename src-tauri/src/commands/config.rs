@@ -178,6 +178,32 @@ pub(crate) fn save_embeddings_cache(content: String, state: tauri::State<AppStat
 
 #[cfg(not(test))]
 #[tauri::command]
+pub(crate) fn load_embeddings_status(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let path = embeddings_status_path(root);
+    if path.exists() {
+        fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Ok("{}".to_string())
+    }
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn save_embeddings_status(content: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let lattice_dir = root.join(".lattice");
+    if !lattice_dir.exists() {
+        fs::create_dir_all(&lattice_dir).map_err(|e| e.to_string())?;
+    }
+    let path = embeddings_status_path(root);
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
 pub(crate) fn get_backlink_suggestions(active_path: String, state: tauri::State<AppState>) -> Result<Vec<BacklinkSuggestion>, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;

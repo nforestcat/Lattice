@@ -493,6 +493,12 @@ index 89abcde..1234567 100644
     async saveEmbeddingsCache(content: string): Promise<void> {
       localStorage.setItem(`lattice:mock_embeddings:${openRoot}`, content);
     },
+    async loadEmbeddingsStatus(): Promise<string> {
+      return localStorage.getItem(`lattice:mock_embeddings_status:${openRoot}`) || "{}";
+    },
+    async saveEmbeddingsStatus(content: string): Promise<void> {
+      localStorage.setItem(`lattice:mock_embeddings_status:${openRoot}`, content);
+    },
     async getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]> {
       const index = buildVaultIndex(files);
       const unresolvedMap = new Map<string, { path: string; title: string; excerpt: string }[]>();
