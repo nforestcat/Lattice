@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { vaultApi } from "../../api";
 import { sendChatMessage, type ChatMessage } from "../../api/llm";
-import type { ContextBundle, LlmConfig, NoteDocument, NoteTemplate, ProposedEdit, VaultConfig, VaultSnapshot } from "../../api/types";
+import type { AiProvenance, ContextBundle, LlmConfig, NoteDocument, NoteTemplate, ProposedEdit, VaultConfig, VaultSnapshot } from "../../api/types";
 import { DEFAULT_LLM_CONFIG } from "./contextShared";
 
 export interface MetadataSuggestions {
@@ -103,9 +103,10 @@ You can suggest multiple edits. Do not include markdown wraps around the tags.`;
 
       const edits = await vaultApi.parseProposedEdits(response);
       if (edits.length > 0) {
+        const chatProvenance: AiProvenance = { source: "chat", model: llmConfig.model };
         setProposedEdits((prev) => {
           const filteredPrev = prev.filter(p => !edits.some(e => e.path === p.path && e.type === p.type));
-          const checkedEdits = edits.map(e => ({ ...e, checked: true }));
+          const checkedEdits = edits.map(e => ({ ...e, checked: true, provenance: chatProvenance }));
           return [...filteredPrev, ...checkedEdits];
         });
         setStatus(`LLM proposed ${edits.length} wiki edit(s)`);

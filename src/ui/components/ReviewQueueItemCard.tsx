@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { ReviewItemStatus, ReviewQueueItem } from "../../api/types";
+import type { AiProvenance, ReviewItemStatus, ReviewQueueItem } from "../../api/types";
 
 type QueueActionHandler = (id: string) => void | Promise<void>;
 
@@ -124,6 +124,8 @@ export function ReviewQueueItemCard({ item, onApply, onApprove, onReject }: Revi
 
       {item.reason && <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>{item.reason}</div>}
 
+      {item.kind === "proposed_edit" && <ProvenanceBlock provenance={item.provenance} />}
+
       <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
         {(item.status === "new" || item.status === "drafted") && (
           <>
@@ -165,6 +167,37 @@ export function ReviewQueueItemCard({ item, onApply, onApprove, onReject }: Revi
           </ActionButton>
         )}
       </div>
+    </div>
+  );
+}
+
+function ProvenanceBlock({ provenance }: { readonly provenance?: AiProvenance }) {
+  if (provenance === undefined) {
+    return (
+      <div style={{ fontSize: 11, color: "#94a3b8", padding: "4px 8px", background: "#f8fafc", borderRadius: 4, border: "1px solid #e2e8f0" }}>
+        출처 없음 (no provenance recorded)
+      </div>
+    );
+  }
+
+  const isUnlinked = provenance.promptRunId === null;
+
+  return (
+    <div style={{ fontSize: 11, color: "#475569", padding: "6px 10px", background: "#f8fafc", borderRadius: 4, border: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
+      {isUnlinked && (
+        <span style={{ background: "#fef3c7", color: "#92400e", borderRadius: 3, padding: "1px 6px", fontWeight: 600 }}>
+          unlinked prompt
+        </span>
+      )}
+      <span><b>출처:</b> {provenance.source}</span>
+      {provenance.model && <span><b>모델:</b> {provenance.model}</span>}
+      {provenance.confidence !== undefined && <span><b>신뢰도:</b> {(provenance.confidence * 100).toFixed(0)}%</span>}
+      {provenance.appliedAt && <span><b>적용:</b> {new Date(provenance.appliedAt).toLocaleString()}</span>}
+      {provenance.originalExcerpt && (
+        <span style={{ width: "100%", fontStyle: "italic", color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          원문: {provenance.originalExcerpt.slice(0, 80)}{provenance.originalExcerpt.length > 80 ? "…" : ""}
+        </span>
+      )}
     </div>
   );
 }

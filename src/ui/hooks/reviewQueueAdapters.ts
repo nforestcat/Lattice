@@ -65,6 +65,7 @@ export function adaptProposedEdit(edit: ProposedEdit): ReviewQueueItem {
     gitStaged: false,
     createdAt: 0,
     sourceRef: edit,
+    provenance: edit.provenance,
   };
 }
 

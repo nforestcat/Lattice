@@ -24,7 +24,8 @@ import type {
   UnresolvedLinkGroup,
   ProposedEdit,
   BacklinkSuggestion,
-  NoteHealthReport
+  NoteHealthReport,
+  AiAuditRecord
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
@@ -891,6 +892,11 @@ index 89abcde..1234567 100644
       }
 
       return reports;
+    },
+    async appendAiAudit(record: AiAuditRecord): Promise<void> {
+      const key = `lattice:mock_ai_audit:${openRoot}`;
+      const existing = localStorage.getItem(key) || "";
+      localStorage.setItem(key, existing + JSON.stringify(record) + "\n");
     }
   };
 }

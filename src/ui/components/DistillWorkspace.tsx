@@ -342,7 +342,11 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                   type="button"
                   onClick={async () => {
                     const parsed = await vaultApi.parseProposedEdits(distillInputText);
-                    const checkedParsed = parsed.map(p => ({ ...p, checked: true }));
+                    const checkedParsed = parsed.map(p => ({
+                      ...p,
+                      checked: true,
+                      provenance: { source: "manual-paste", promptRunId: null as null },
+                    }));
                     setProposedEdits(checkedParsed);
                     setStatus(`Extracted ${checkedParsed.length} proposed edit(s).`);
                   }}

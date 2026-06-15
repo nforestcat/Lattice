@@ -190,6 +190,18 @@ export type VaultApi = {
   getApiKey(provider: string): Promise<string>;
   fetchProviderModels(provider: string, baseUrl?: string): Promise<string[]>;
   getWikiHealthReport(): Promise<NoteHealthReport[]>;
+  appendAiAudit(record: AiAuditRecord): Promise<void>;
+};
+
+export type AiAuditRecord = {
+  editId: string;
+  editType: "create" | "update" | "merge" | "delete";
+  path: string;
+  promptRunId?: string | null;
+  model?: string;
+  source: string;
+  appliedAt: string;
+  confidence?: number;
 };
 
 export type NoteHealthReport = {
@@ -269,6 +281,16 @@ export type VaultConfig = {
   noteTemplates?: NoteTemplate[];
 };
 
+export type AiProvenance = {
+  source: string;
+  promptRunId?: string | null;
+  contextBundlePaths?: string[];
+  originalExcerpt?: string;
+  confidence?: number;
+  model?: string;
+  appliedAt?: string;
+};
+
 export type ProposedEdit = {
   id: string;
   type: "create" | "update" | "merge" | "delete";
@@ -280,6 +302,7 @@ export type ProposedEdit = {
   reason?: string;
   applied: boolean;
   checked?: boolean;
+  provenance?: AiProvenance;
 };
 
 export type StubDraftReview = {
@@ -326,6 +349,7 @@ export interface ReviewQueueItem {
   gitStaged: boolean;
   createdAt: number;
   sourceRef?: unknown;
+  provenance?: AiProvenance;
 }
 
 
