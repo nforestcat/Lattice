@@ -1,107 +1,64 @@
 # Lattice
 
-Lattice is a local-first wiki for LLM-maintained knowledge.
+Lattice is a local-first desktop wiki for people who use LLMs as part of their thinking and writing workflow.
 
-It started as an Obsidian-style desktop notes app, but the current goal is more specific: help a local Markdown vault become a useful, inspectable context layer for LLM work.
+It turns a folder of Markdown notes into an inspectable context layer: notes stay on disk, links stay readable, and every AI-assisted change is meant to be reviewed before it becomes part of the vault.
+
+## Why It Exists
+
+Most LLM workflows produce useful fragments that are easy to lose: answers, plans, debugging notes, meeting summaries, research trails, and half-formed ideas. Lattice helps move those fragments into a durable Markdown wiki, then helps assemble the right notes back into focused prompts when you need to work with an LLM again.
+
+Lattice is not trying to clone every Obsidian feature. The product direction is narrower:
+
+- Keep Markdown files as the source of truth.
+- Capture loose LLM output into an inbox.
+- Distill raw context into reviewable wiki edits.
+- Build high-quality context bundles from related notes.
+- Surface missing, stale, orphaned, duplicated, or weakly linked notes.
+- Make Git-backed vault changes visible before they are committed or synced.
 
 ## Current Status
 
-This is an early v1 desktop app built with Tauri 2, React, TypeScript, Vite, and Rust.
+This is an early v1 app built with Tauri 2, React, TypeScript, Vite, and Rust.
 
-Implemented so far:
+The app currently supports:
 
-- Open a local Markdown vault folder
-- Browse notes in a folder tree
-- Create, rename, and delete notes/folders with desktop-safe confirmation dialogs
-- Edit Markdown with CodeMirror
-- View rendered Markdown preview beside the editor, including styled inline code and fenced code blocks with language badges and premium syntax highlighting (powered by `highlight.js`)
-- Parse wiki links, backlinks, outgoing links, tags, and frontmatter
-- View and edit note relationships in a graph
-- Generate LLM context bundles from selected related notes (with Short/Standard/Full modes, Purpose instructions, and tailored task presets like Ask, Refactor, Summarize, Plan, Debug)
-- Recommend related notes beyond explicit wiki links with relevance scores, matching reasons, and body excerpts (by shared tags or unlinked mentions), with options to sort and filter candidates in the UI by score, title, or connection type
-- Persist custom context bundle selections, presets, purposes, modes, and limits across note visits using a type-safe, versioned vault-local configuration file (`.lattice/config.json`) with an automated config migration layer in both TypeScript and Rust to normalize and upgrade legacy files while preserving valid fields from partially malformed configs
-- Estimate token consumption, track context window budget with model-agnostic size presets (Small 8K, Medium 32K, Large 128K, Huge 200K, or Custom), display the final bundle actual token count with a visual progress bar, and offer automated pruning of recommended candidates (sorted by score) matching the actual generated bundle token limit
-- Draft, preview, copy, and log final combined LLM prompts containing custom instructions and context bundles within the integrated **Prompt Workspace** (with prompt drafts persisted per note, prompt copy events recorded in a local-first **Prompt History** timeline featuring text search, active note toggles, preset dropdown filters, collapsible card previews displaying SHA-256 hash/included notes details, and an interactive **History Diff** view comparing stored vs current prompt configurations, with prompt copies retrieved from a dedicated **Full Prompt Archive** folder `.lattice/runs/<run_id>.md` that is excluded from vault note scanning, archive status/delete/prune controls, and built-in/custom **Prompt Templates** with placeholders like `{active_note}`, `{selected_notes}`, `{date}`, and `{vault_name}` resolving dynamically on selection)
-- Audit context bundles via the **Bundle Audit & Diff** view to inspect exactly why each note was included (connection reason), view heuristic quality badges (Useful, Redundant, Too Large, Stale), and trace differences (added/removed notes, token size delta) from the previous generation
-- Distill raw LLM conversations, inbox captures, or meeting notes into reviewable proposed wiki edits (`create`, `update`, `merge`, `delete`) that can be edited inline and applied with confirmation
-- Fast and optimized production bundling using Vite code-splitting manual chunks, isolating heavy dependencies (React Flow, CodeMirror, highlight.js, marked) to minimize main JS entry bundle size below 62 KB
-- Detect selected Obsidian vault metadata from `.obsidian` settings and import compatible appearance/readability hints such as readable line length, theme, accent color, enabled core plugin names, attachment folder path, enabled CSS snippets list, and custom hotkeys, applying the accent color and dark theme overrides dynamically to custom-theme the entire application and Markdown preview.
-- Capture loose ideas or LLM answers into daily Inbox notes
-- Triage Inbox captures (into new notes, append to existing notes, or mark processed)
-- Create snapshots and optionally auto-commit saves in existing Git vaults
-- Review vault changes in a visual **Git Workspace** with staged/unstaged/untracked file groups, upgraded unified diffs with file headers, old/new line numbers, collapsible hunks, higher-contrast added/deleted rows, per-file stage/unstage controls, clean-repository status, commit message validation, Stage All, Commit, Pull, and Push actions
-- Protect Git sync with **Manual Conflict Safety** by detecting merge conflicts and preventing unsafe operations (commit, auto-commit, pull, push) both in backend Tauri commands and the UI, checking staged files' exact index content (`git show :<path>`) for unresolved conflict markers before committing, displaying non-dismissible warning banners in the editor (edit/split/preview modes), showing sidebar warning alerts, and highlighting conflict markers prominently in diffs
-- Chat with an integrated LLM Copilot in the Distill Workspace (supporting Ollama, OpenAI, Gemini, and Anthropic), with active context bundle auto-injection and streaming responses containing structured proposed edits that instantly populate the pending edit checklist
-- Compute semantic note recommendations using vector embeddings (Ollama or OpenAI/Custom OpenAI-compatible) and store them in a persistent local cache file (`.lattice/embeddings.json`) to minimize API requests and save overhead on subsequent note selections
-- Configure embeddings independently from the chat provider, including an offline Local ONNX option with model status/download controls and backend-routed embedding requests
-- Automatically scan the active editor note for unlinked mentions of other note titles (supporting CJK languages via Unicode property boundary matching) and collect them in a dedicated **Link Suggestions** sidebar tab with cursor insertion and safe "Link All" conversion that avoids nesting existing wiki links
-- Toggle search mode in the sidebar between traditional Keyword search and AI-powered **Semantic Search** to query the entire vault using natural language and rank results by vector embedding similarity scores (with custom match percentage badges)
-- Export and import prompt history runs (including both metadata and full prompt markdown contents) as a single portable JSON archive file
-- Configure age-based prompt run retention policies (7, 30, or 90 days) inside the Settings panel to automatically prune expired history runs in the background on startup or trigger them manually on demand
-- Render an interactive **Semantic Graph View** powered by a custom 2D Spring Force Layout simulation that pulls structurally linked and semantically similar notes closer together
-- Color code graph nodes dynamically based on their embedding similarity to the active selected note (with glowing emerald border highlights for similarity >= 0.7) and draw animated dotted green connection lines labeled with exact match percentages (e.g., `85% Match`)
-- Scan the vault for unresolved (dead) wiki links, draft context-aware Markdown stub note entries using the integrated LLM Copilot (incorporating referring context excerpts), and create/write the note to the vault in one click to resolve the links
-- Audit vault quality with a **Wiki Health Scorecard** that flags orphan notes, stale notes, overly broad notes, duplicate content, missing summaries, and weak backlink patterns with per-note scores
-- Recommend bidirectional backlink suggestions (both unlinked mentions and semantically similar notes) in the **Link Suggestions** sidebar with inline excerpts, match scores, cursor insertion, source-note navigation, and one-click actions to add links
-- Generate AI-powered metadata suggestions (tags and YAML frontmatter properties) for the active note, allowing users to interactively toggle and apply recommendations
-- Filter graph view nodes interactively by tags, frontmatter metadata properties (using key-value or query inputs), and semantic similarity threshold range slider
-- Keep the vector embeddings cache fresh by indexing semantic recommendations from the currently opened vault notes and using a debounced synchronization hook that recalculates active note embeddings only after the draft content changes and the user stops typing
-- Securely store LLM API keys in the operating system keyring when available, with an in-memory fallback for sessions where the keyring backend is unavailable
-- Route LLM chat messages and embeddings via Rust backend Tauri commands using `reqwest` to bypass CORS restrictions and eliminate client-side headers like `dangerously-allow-browser`
-- Query available model lists dynamically from providers (Ollama, OpenAI, Gemini, LM Studio) directly from the backend
-- Modularize the frontend structure by code-splitting the 4,600+ line `App.tsx` file into independent components (`Sidebar`, `EditorToolbar`, `InspectorPanel`, `LlmSettingsPanel`, `DistillWorkspace`, `PromptHistoryPanel`, `GraphView`) reducing the main entry bundle size and warnings
-- Modularize the Rust Tauri backend into focused command/model modules for vault, Git, config, ingest, LLM, and embedding responsibilities
-- Render unresolved (dead) page links as dashed gray "ghost nodes" in the Graph View, connect them with deduplicated edges, and provide a review-first "Dead Link Resolution Workspace" to review, edit, approve/reject, regenerate rejected drafts, and bulk-create draft stubs while keeping failed creations available for retry
-- Ingest external URL and PDF sources into reviewable Markdown drafts with raw-content preview, localized error/retry states, editable title/tags/body fields, YAML tag preservation, and vault refresh after save
-- Detect duplicate ingested sources before saving, surface exact matches/similar notes in the ingest flow, and preserve source provenance metadata in generated Markdown
-- Keep Git workspace operations covered by backend tests, including unborn repository unstaging, staged rename unstaging, conflict guards, and Windows-safe `cargo test` execution without initializing the Tauri runtime in lib tests
+- Opening a local Markdown vault and browsing it as a folder tree.
+- Creating, renaming, deleting, editing, and previewing Markdown notes.
+- Parsing wiki links, backlinks, outgoing links, tags, and frontmatter.
+- Viewing note relationships in structural and semantic graph views.
+- Generating LLM context bundles with presets, purpose instructions, token budgets, pruning, and bundle audit details.
+- Drafting final prompts in a Prompt Workspace, with per-note drafts, templates, copy history, archived full prompts, retention controls, export/import, and diff views.
+- Distilling raw captures, conversations, meeting notes, URLs, and PDFs into reviewable proposed wiki edits.
+- Using an integrated LLM Copilot for chat, distillation, dead-link stub drafting, and metadata suggestions.
+- Recommending related notes through wiki links, shared tags, unlinked mentions, backlinks, semantic similarity, and CJK-aware title matching.
+- Running semantic search and semantic graph filtering through cached embeddings.
+- Auditing vault health for orphan notes, stale notes, broad notes, duplicate content, missing summaries, weak backlinks, unresolved links, and backlink opportunities.
+- Reviewing Git changes inside the app, including staged and unstaged diffs, stage/unstage actions, commit validation, pull/push controls, snapshots, auto-commit support, and merge-conflict guards.
+- Detecting compatible Obsidian vault metadata and applying appearance/readability hints where possible.
+- Storing LLM API keys through the operating system keyring when available, with backend-routed provider calls to avoid browser-side API headers.
 
-## LLM Wiki Direction
-Lattice is not trying to clone every Obsidian feature.
+## Getting Started
 
-The main product direction is:
-
-- Capture useful LLM conversation fragments into a local wiki
-- Promote rough captures into durable notes
-- Distill raw context into reviewable wiki edits before applying changes
-- Build high-quality context bundles from local notes
-- Help discover related notes that are not linked yet
-- Keep Markdown files as the source of truth
-
-## Development
-
-Install dependencies:
+Install JavaScript dependencies:
 
 ```bash
 npm install
 ```
 
-Run the web dev server:
+Run the browser development app:
 
 ```bash
 npm run dev
 ```
 
-Run the Tauri desktop app:
+Run the desktop app:
 
 ```bash
 npm run dev:tauri
 ```
 
-Run tests:
-
-```bash
-npm test
-```
-
-Run Rust backend tests:
-
-```bash
-cd src-tauri
-cargo test
-```
-
-Build the frontend:
+Run the TypeScript and frontend build:
 
 ```bash
 npm run build
@@ -113,26 +70,60 @@ Build the desktop app:
 npm run build:tauri
 ```
 
-On Windows, if Rust commands are not found after installation, make sure Cargo is on PATH:
+## Tests
+
+Run the Vitest suite:
+
+```bash
+npm test
+```
+
+Run the Rust backend tests:
+
+```bash
+cd src-tauri
+cargo test
+```
+
+On Windows, if Rust commands are not available after installing Rust, make sure Cargo is on `PATH`:
 
 ```powershell
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 ```
 
-## Architecture
+## Project Layout
 
-- `src/core`: Markdown parsing, indexing, context bundle, capture logic
-- `src/api`: shared frontend API types plus mock/Tauri adapters
-- `src/ui`: React app UI, including split-out workspaces and panels such as `GitWorkspace`, `GraphView`, `InspectorPanel`, `IngestPanel`, and `PromptHistoryPanel`
-- `src-tauri`: Rust backend and Tauri commands
-- `tests`: Vitest coverage for core behavior and UI smoke tests
+- `src/core`: Markdown parsing, vault indexing, context bundles, capture parsing, ingest helpers, and provenance logic.
+- `src/api`: Shared frontend API types plus mock and Tauri adapters.
+- `src/ui`: React UI, hooks, workspaces, panels, graph views, editor flows, and prompt/history surfaces.
+- `src-tauri`: Rust backend commands for vault files, config, Git, ingest, LLM calls, embeddings, key storage, and desktop integration.
+- `tests`: Vitest coverage for core behavior and UI smoke tests.
 
-Markdown files are the source of truth. Generated indexes, graph data, and context bundles are rebuildable from the vault. Lattice-owned `.lattice` internals are kept out of the visible note index.
+## Local Data Model
 
-## Next Ideas
+The vault's Markdown files are the durable source of truth. Lattice-owned runtime files live under `.lattice/` inside the selected vault and are excluded from normal note scanning.
 
-- Add local offline embeddings support using native ONNX runtimes
-- Add bidirectional synchronization and conflict resolution for multi-device vaults
+Common generated files include:
+
+- `.lattice/config.json`: versioned vault-local preferences and context bundle settings.
+- `.lattice/embeddings.json`: cached semantic embeddings.
+- `.lattice/runs/<run_id>.md`: archived full prompt copies.
+
+Indexes, graphs, recommendations, context bundles, and health reports are rebuildable from the vault plus these local cache/config files.
+
+## Development Notes
+
+- The web app can run against mock/demo vault behavior.
+- The desktop app uses Tauri commands for filesystem, Git, keyring, ingest, LLM, and embedding operations.
+- Heavy frontend dependencies are split into Vite manual chunks to keep the main entry bundle small.
+- Git conflict safety is enforced in both the Rust backend and the React UI before risky operations such as commit, pull, push, or auto-commit.
+
+## Roadmap
+
+- Improve local/offline embedding setup and model management.
+- Deepen review workflows for proposed wiki edits.
+- Expand multi-device sync and conflict-resolution support for Git-backed vaults.
+- Keep tightening the boundary between generated cache data and user-owned Markdown.
 
 ## License
 
