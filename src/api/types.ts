@@ -294,4 +294,38 @@ export type GitFileChange = {
   staged: boolean;
 };
 
+export type ReviewItemKind =
+  | "inbox_capture"
+  | "ingest_draft"
+  | "proposed_edit"
+  | "missing_summary"
+  | "dead_link"
+  | "backlink_suggestion"
+  | "duplicate_warning"
+  | "orphan_note"
+  | "stale_note";
+
+export type ReviewItemStatus =
+  | "new"
+  | "drafted"
+  | "approved"
+  | "applied"
+  | "rejected"
+  | "committed";
+
+export interface ReviewQueueItem {
+  id: string;
+  sourceId: string;
+  kind: ReviewItemKind;
+  status: ReviewItemStatus;
+  path: string;
+  title: string;
+  original?: string;
+  proposed?: string;
+  reason?: string;
+  gitStaged: boolean;
+  createdAt: number;
+  sourceRef?: unknown;
+}
+
 

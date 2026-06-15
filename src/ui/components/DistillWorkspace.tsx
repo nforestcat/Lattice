@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ReviewQueuePanel } from "./ReviewQueuePanel";
 import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview, GitStatus, GitFileChange } from "../../api/types";
 import type { ChatMessage } from "../../api/llm";
 import { vaultApi } from "../../api";
@@ -22,8 +23,9 @@ interface DistillWorkspaceProps {
   setStatus: (status: string) => void;
   contextBundle: ContextBundle | null;
 
-  distillTab: "paste" | "chat" | "auditor" | "git";
-  setDistillTab: (tab: "paste" | "chat" | "auditor" | "git") => void;
+  distillTab: "paste" | "chat" | "auditor" | "git" | "review";
+  setDistillTab: (tab: "paste" | "chat" | "auditor" | "git" | "review") => void;
+  reviewQueue?: import("../hooks/useReviewQueue").ReviewQueueHook;
   gitStatus: GitStatus | null;
   gitChanges: GitFileChange[];
   selectedGitFile: string | null;
@@ -161,7 +163,8 @@ export function DistillWorkspace({
   onCommit,
   onPull,
   onPush,
-  onLoadDiff
+  onLoadDiff,
+  reviewQueue,
 }: DistillWorkspaceProps) {
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
@@ -249,6 +252,12 @@ export function DistillWorkspace({
           }}
         >
           Git Workspace
+        </button>
+        <button
+          className={distillTab === "review" ? "active" : ""}
+          onClick={() => setDistillTab("review")}
+        >
+          검토 대기열
         </button>
       </div>
 
@@ -946,6 +955,14 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                 </div>
               ))}
             </div>
+          )}
+          {distillTab === "review" && reviewQueue && (
+            <ReviewQueuePanel
+              items={reviewQueue.items}
+              onApply={reviewQueue.applyItem}
+              onApprove={reviewQueue.approveItem}
+              onReject={reviewQueue.rejectItem}
+            />
           )}
         </div>
       </div>
