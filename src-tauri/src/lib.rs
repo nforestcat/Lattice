@@ -1594,6 +1594,7 @@ pub fn run() {
             commands::config::get_archive_status,
             commands::config::delete_archived_prompt,
             commands::config::prune_archived_prompts,
+            commands::config::append_ai_audit,
             commands::config::check_ingest_duplicate,
             commands::config::load_embeddings_cache,
             commands::config::save_embeddings_cache,

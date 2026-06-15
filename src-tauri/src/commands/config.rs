@@ -131,6 +131,27 @@ pub(crate) fn save_vault_config(config: VaultConfig, state: tauri::State<AppStat
 
 #[cfg(not(test))]
 #[tauri::command]
+pub(crate) fn append_ai_audit(record: serde_json::Value, state: tauri::State<AppState>) -> Result<(), String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?;
+    let lattice_dir = root.join(".lattice");
+    if !lattice_dir.exists() {
+        fs::create_dir_all(&lattice_dir).map_err(|e| e.to_string())?;
+    }
+    let audit_path = lattice_dir.join("ai-audit.jsonl");
+    let line = serde_json::to_string(&record).map_err(|e| e.to_string())? + "\n";
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&audit_path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
 pub(crate) fn load_embeddings_cache(state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;

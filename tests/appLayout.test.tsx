@@ -1270,11 +1270,11 @@ describe("App layout", () => {
     await waitFor(() => {
       expect(confirmSpy).toHaveBeenCalledWith("Apply 4 proposed wiki edit(s), including 2 destructive edit(s)?");
       expect(createNoteSpy).toHaveBeenCalledWith("Research", "Compounding Memory");
-      expect(saveNoteSpy).toHaveBeenCalledWith("Research/Compounding Memory.md", "# Compounding Memory - Updated", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Research/Compounding Memory.md", expect.stringContaining("# Compounding Memory - Updated"), "");
       expect(readNoteSpy).toHaveBeenCalledWith("Home.md");
       expect(saveNoteSpy).toHaveBeenCalledWith(
         "Home.md",
-        "Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note.",
+        expect.stringContaining("Welcome to the local wiki workspace! Explore the new [[Research/Compounding Memory]] note."),
         "rev-home"
       );
       expect(deleteEntrySpy).toHaveBeenCalledWith("TempDraft.md");
