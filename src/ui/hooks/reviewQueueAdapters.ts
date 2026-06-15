@@ -8,6 +8,11 @@ import type {
   ReviewItemKind,
 } from "../../api/types";
 
+function captureCreatedAt(title: string): number {
+  const parsed = new Date(`${title.replace(" ", "T")}:00`).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export function adaptInboxCapture(item: InboxCaptureBlock): ReviewQueueItem {
   return {
     id: item.id,
@@ -18,7 +23,7 @@ export function adaptInboxCapture(item: InboxCaptureBlock): ReviewQueueItem {
     title: item.title,
     proposed: item.markdown,
     gitStaged: false,
-    createdAt: Date.now(),
+    createdAt: captureCreatedAt(item.title),
   };
 }
 
@@ -41,7 +46,7 @@ export function adaptStubDraft(
     title: `Draft: ${target}`,
     proposed: review.content,
     gitStaged: false,
-    createdAt: Date.now(),
+    createdAt: 0,
   };
 }
 
@@ -58,7 +63,7 @@ export function adaptProposedEdit(edit: ProposedEdit): ReviewQueueItem {
     proposed: edit.replacementContent ?? edit.content,
     reason: edit.reason,
     gitStaged: false,
-    createdAt: Date.now(),
+    createdAt: 0,
     sourceRef: edit,
   };
 }
@@ -87,7 +92,7 @@ export function adaptHealthIssue(
     path: report.path,
     title: `${report.title}: ${issue}`,
     gitStaged: false,
-    createdAt: Date.now(),
+    createdAt: 0,
     sourceRef: report,
   };
 }
@@ -105,7 +110,7 @@ export function adaptBacklinkSuggestion(
     proposed: `[[${sug.targetTitle}]]`,
     reason: sug.excerpt,
     gitStaged: false,
-    createdAt: Date.now(),
+    createdAt: 0,
     sourceRef: sug,
   };
 }
