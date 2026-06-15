@@ -17,6 +17,8 @@ import {
   adaptBacklinkSuggestion,
 } from "./reviewQueueAdapters";
 
+type TransitionResult = boolean | void | Promise<boolean | void>;
+
 export interface ReviewQueueSources {
   inboxCaptures: InboxCaptureBlock[];
   bulkDrafts: Record<string, StubDraftReview>;
@@ -24,18 +26,19 @@ export interface ReviewQueueSources {
   healthReports: NoteHealthReport[];
   backlinkSuggestions: BacklinkSuggestion[];
   gitStagedPaths?: Set<string>;
-  onApplyInboxCapture?: (id: string) => void;
-  onApplyProposedEdit?: (id: string) => void;
-  onApproveStubDraft?: (target: string) => void;
-  onRejectStubDraft?: (target: string) => void;
+  onApplyInboxCapture?: (id: string) => TransitionResult;
+  onApplyProposedEdit?: (id: string) => TransitionResult;
+  onApplyBacklinkSuggestion?: (id: string) => TransitionResult;
+  onApproveStubDraft?: (target: string) => TransitionResult;
+  onRejectStubDraft?: (target: string) => TransitionResult;
 }
 
 export interface ReviewQueueHook {
   items: ReviewQueueItem[];
   filterItems: (kind?: ReviewItemKind, status?: ReviewItemStatus) => ReviewQueueItem[];
-  applyItem: (id: string) => void;
-  approveItem: (id: string) => void;
-  rejectItem: (id: string) => void;
+  applyItem: (id: string) => Promise<void>;
+  approveItem: (id: string) => Promise<void>;
+  rejectItem: (id: string) => Promise<void>;
 }
 
 const ACTIVE_STATUSES: ReviewItemStatus[] = ["new", "drafted"];
@@ -57,6 +60,7 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     gitStagedPaths,
     onApplyInboxCapture,
     onApplyProposedEdit,
+    onApplyBacklinkSuggestion,
     onApproveStubDraft,
     onRejectStubDraft,
   } = sources;
@@ -125,30 +129,39 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
   function transitionItem(
     id: string,
     status: ReviewItemStatus,
-    onTransition?: (item: ReviewQueueItem) => void
-  ) {
+    onTransition?: (item: ReviewQueueItem) => TransitionResult
+  ): Promise<void> {
     const item = items.find((i) => i.id === id);
-    if (!item) return;
-    setOverrides(prev => ({ ...prev, [id]: status }));
-    onTransition?.(item);
-  }
+    if (!item) return Promise.resolve();
 
-  function applyItem(id: string) {
-    transitionItem(id, "applied", (item) => {
-      if (item.kind === "inbox_capture") onApplyInboxCapture?.(item.sourceId);
-      if (item.kind === "proposed_edit") onApplyProposedEdit?.(item.sourceId);
+    return Promise.resolve(onTransition?.(item)).then((result) => {
+      if (result === false) {
+        return;
+      }
+      setOverrides(prev => ({ ...prev, [id]: status }));
     });
   }
 
-  function approveItem(id: string) {
-    transitionItem(id, "approved", (item) => {
-      if (item.kind === "ingest_draft") onApproveStubDraft?.(item.sourceId);
+  async function applyItem(id: string) {
+    await transitionItem(id, "applied", (item) => {
+      if (item.kind === "inbox_capture") return onApplyInboxCapture?.(item.sourceId) ?? false;
+      if (item.kind === "proposed_edit") return onApplyProposedEdit?.(item.sourceId) ?? false;
+      if (item.kind === "backlink_suggestion") return onApplyBacklinkSuggestion?.(item.sourceId) ?? false;
+      return false;
     });
   }
 
-  function rejectItem(id: string) {
-    transitionItem(id, "rejected", (item) => {
-      if (item.kind === "ingest_draft") onRejectStubDraft?.(item.sourceId);
+  async function approveItem(id: string) {
+    await transitionItem(id, "approved", (item) => {
+      if (item.kind === "ingest_draft") return onApproveStubDraft?.(item.sourceId);
+      return undefined;
+    });
+  }
+
+  async function rejectItem(id: string) {
+    await transitionItem(id, "rejected", (item) => {
+      if (item.kind === "ingest_draft") return onRejectStubDraft?.(item.sourceId);
+      return undefined;
     });
   }
 

@@ -261,7 +261,14 @@ export function DistillWorkspace({
         </button>
       </div>
 
-      {distillTab === "git" ? (
+      {distillTab === "review" && reviewQueue ? (
+        <ReviewQueuePanel
+          items={reviewQueue.items}
+          onApply={reviewQueue.applyItem}
+          onApprove={reviewQueue.approveItem}
+          onReject={reviewQueue.rejectItem}
+        />
+      ) : distillTab === "git" ? (
         <GitWorkspace
           gitStatus={gitStatus}
           gitChanges={gitChanges}
@@ -955,14 +962,6 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                 </div>
               ))}
             </div>
-          )}
-          {distillTab === "review" && reviewQueue && (
-            <ReviewQueuePanel
-              items={reviewQueue.items}
-              onApply={reviewQueue.applyItem}
-              onApprove={reviewQueue.approveItem}
-              onReject={reviewQueue.rejectItem}
-            />
           )}
         </div>
       </div>

@@ -31,6 +31,7 @@ import { useStubDrafting } from "./hooks/useStubDrafting";
 import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
+import { applyProposedEditToVault } from "./proposedEditApply";
 import {
   PRESETS as SHARED_PRESETS,
   type PresetType as SharedPresetType,
@@ -426,8 +427,14 @@ export function App() {
     onApplyInboxCapture: (id) => {
       void markInboxCaptureProcessed(id);
     },
-    onApplyProposedEdit: (id) => {
-      setProposedEdits((prev) => prev.map((e) => e.id === id ? { ...e, applied: true } : e));
+    onApplyProposedEdit: (id) => applyProposedEditFromQueue(id),
+    onApplyBacklinkSuggestion: async (id) => {
+      const suggestion = backlinkSuggestions.find((item) => item.id === id);
+      if (!suggestion) {
+        return false;
+      }
+      await applyBacklinkSuggestion(suggestion);
+      return true;
     },
     onApproveStubDraft: (target) => approveDraft(target),
     onRejectStubDraft: (target) => rejectDraft(target),
@@ -803,18 +810,25 @@ export function App() {
     void runHealthAudit();
   }
 
+  async function applyProposedEditFromQueue(id: string): Promise<boolean> {
+    return applySelectedProposedEdits(new Set([id]));
+  }
+
   async function applyCheckedEdits() {
-    const checkedEdits = proposedEdits.filter((edit) => edit.checked && !edit.applied);
-    if (checkedEdits.length === 0) {
-      return;
-    }
+    await applySelectedProposedEdits(null);
+  }
+
+  async function applySelectedProposedEdits(selectedIds: ReadonlySet<string> | null): Promise<boolean> {
+    const shouldApply = (edit: ProposedEdit) => !edit.applied && (selectedIds ? selectedIds.has(edit.id) : edit.checked);
+    const checkedEdits = proposedEdits.filter(shouldApply);
+    if (checkedEdits.length === 0) return false;
 
     const destructiveCount = checkedEdits.filter((edit) => edit.type === "delete" || edit.type === "merge").length;
     const message = destructiveCount > 0
       ? `Apply ${checkedEdits.length} proposed wiki edit(s), including ${destructiveCount} destructive edit(s)?`
       : `Apply ${checkedEdits.length} proposed wiki edit(s)?`;
     if (!(await askConfirm(message, "Apply Proposed Wiki Edits"))) {
-      return;
+      return false;
     }
 
     let appliedCount = 0;
@@ -822,67 +836,25 @@ export function App() {
 
     for (let i = 0; i < nextEdits.length; i++) {
       const edit = nextEdits[i];
-      if (edit.applied || !edit.checked) {
+      if (!shouldApply(edit)) {
         continue;
       }
 
       try {
-        if (edit.type === "create") {
-          const pathParts = edit.path.split("/");
-          const title = pathParts.pop()?.replace(/\.md$/, "") || "";
-          const parent = pathParts.length > 0 ? pathParts.join("/") : null;
-
-          const result = await vaultApi.createNote(parent, title);
-          await vaultApi.saveNote(result.selectedPath || edit.path, edit.content || "", "");
-          appliedCount++;
-          nextEdits[i] = { ...edit, applied: true, path: result.selectedPath || edit.path };
-        } else if (edit.type === "update") {
-          const doc = await vaultApi.readNote(edit.path);
-          const target = edit.targetContent || "";
-          const replacement = edit.replacementContent || "";
-
-          if (!doc.content.includes(target)) {
-            throw new Error(`Target content not found in ${edit.path}`);
-          }
-
-          const updatedContent = doc.content.replace(target, replacement);
-          await vaultApi.saveNote(edit.path, updatedContent, doc.revision);
-          appliedCount++;
-          nextEdits[i] = { ...edit, applied: true };
-        } else if (edit.type === "delete") {
-          await vaultApi.deleteEntry(edit.path);
-          appliedCount++;
-          nextEdits[i] = { ...edit, applied: true };
-        } else if (edit.type === "merge") {
-          let targetPath = edit.newPath || "";
-          let existingRevision = "";
-          try {
-            const doc = await vaultApi.readNote(targetPath);
-            existingRevision = doc.revision;
-          } catch (_) {
-            const pathParts = targetPath.split("/");
-            const title = pathParts.pop()?.replace(/\.md$/, "") || "";
-            const parent = pathParts.length > 0 ? pathParts.join("/") : null;
-            const result = await vaultApi.createNote(parent, title);
-            targetPath = result.selectedPath || targetPath;
-          }
-
-          await vaultApi.saveNote(targetPath, edit.content || "", existingRevision);
-          await vaultApi.deleteEntry(edit.path);
-          appliedCount++;
-          nextEdits[i] = { ...edit, applied: true };
-        }
+        nextEdits[i] = await applyProposedEditToVault(edit);
+        appliedCount++;
       } catch (err) {
         console.error("Failed to apply proposed edit", edit, err);
         setStatus(`Error applying edit to ${edit.path}: ${errorMessage(err)}`);
         setProposedEdits(nextEdits);
-        return;
+        return false;
       }
     }
 
     setProposedEdits(nextEdits);
     setStatus(`Successfully applied ${appliedCount} wiki edit(s).`);
     await refreshVault(activePath);
+    return true;
   }
 
   function compileTemplate(templateText: string): string {
