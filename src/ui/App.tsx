@@ -30,6 +30,7 @@ import { usePromptHistory } from "./hooks/usePromptHistory";
 import { useStubDrafting } from "./hooks/useStubDrafting";
 import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
+import { useReviewQueue } from "./hooks/useReviewQueue";
 import {
   PRESETS as SHARED_PRESETS,
   type PresetType as SharedPresetType,
@@ -218,7 +219,7 @@ export function App() {
   const [currentPromptHash, setCurrentPromptHash] = useState<string | null>(null);
   const [showIngestPanel, setShowIngestPanel] = useState(false);
   const [showConflictResolver, setShowConflictResolver] = useState(false);
-  const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git">("paste");
+  const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git" | "review">("paste");
   const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions">("context");
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const previewScrollRef = useRef<HTMLElement | null>(null);
@@ -413,6 +414,23 @@ export function App() {
     setResults,
     setStatus,
     selectNote: (path) => selectNote(path),
+  });
+
+  const reviewQueue = useReviewQueue({
+    inboxCaptures,
+    bulkDrafts,
+    proposedEdits,
+    healthReports,
+    backlinkSuggestions,
+    gitStagedPaths: new Set(gitChanges.filter(c => c.staged).map(c => c.path)),
+    onApplyInboxCapture: (id) => {
+      void markInboxCaptureProcessed(id);
+    },
+    onApplyProposedEdit: (id) => {
+      setProposedEdits((prev) => prev.map((e) => e.id === id ? { ...e, applied: true } : e));
+    },
+    onApproveStubDraft: (target) => approveDraft(target),
+    onRejectStubDraft: (target) => rejectDraft(target),
   });
 
   const promptHistory = usePromptHistory({
@@ -1265,6 +1283,7 @@ export function App() {
               onPull={handleGitPull}
               onPush={handleGitPush}
               onLoadDiff={loadGitDiff}
+              reviewQueue={reviewQueue}
             />
           )}
         </div>
