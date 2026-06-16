@@ -2,6 +2,33 @@ import { vaultApi } from "../api";
 import type { AiAuditRecord, ProposedEdit } from "../api/types";
 import { stampAiProvenance } from "../core/provenance";
 
+function errorMessage(error: unknown): string | null {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return null;
+}
+
+function isMissingNoteReadError(error: unknown): boolean {
+  const message = errorMessage(error)?.toLowerCase();
+  if (message === undefined) return false;
+  return (
+    message.includes("not found") ||
+    message.includes("cannot find the file") ||
+    message.includes("no such file or directory") ||
+    message.includes("os error 2")
+  );
+}
+
+function rethrowReadNoteError(error: unknown): never {
+  if (error instanceof Error) throw error;
+  const message = errorMessage(error) ?? "Unknown note read failure";
+  throw new Error(message);
+}
+
+function requiredAuditError(type: ProposedEdit["type"], path: string, cause: unknown): Error {
+  return new Error(`Failed to write required ${type} audit log for ${path}`, { cause });
+}
+
 export async function applyProposedEditToVault(edit: ProposedEdit): Promise<ProposedEdit> {
   const appliedAt = new Date().toISOString();
   const baseProvenance = edit.provenance
@@ -24,6 +51,7 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
     } catch (err) {
       if (type === "delete") {
         console.error("[provenance] Failed to write audit log for delete — provenance may be unrecoverable:", err);
+        throw requiredAuditError(type, path, err);
       } else {
         console.warn("[provenance] Failed to write audit log (non-fatal):", err);
       }
@@ -68,8 +96,8 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
         const doc = await vaultApi.readNote(targetPath);
         existingRevision = doc.revision;
       } catch (error) {
-        if (!(error instanceof Error)) {
-          throw error;
+        if (!isMissingNoteReadError(error)) {
+          rethrowReadNoteError(error);
         }
         const pathParts = targetPath.split("/");
         const title = pathParts.pop()?.replace(/\.md$/, "") || "";
