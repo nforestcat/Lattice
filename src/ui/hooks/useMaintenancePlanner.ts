@@ -25,6 +25,11 @@ export interface UseMaintenancePlannerResult {
   clearSuggestion: (itemId: string) => void;
 }
 
+async function readNoteExcerpt(path: string): Promise<string> {
+  const doc = await vaultApi.readNote(path);
+  return doc.content.slice(0, 1500);
+}
+
 export function useMaintenancePlanner(): UseMaintenancePlannerResult {
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const generatingRef = useRef<Set<string>>(new Set());
@@ -86,12 +91,7 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
           }
         }
 
-        const noteExcerpt =
-          typeof item.sourceRef === "object" &&
-          item.sourceRef !== null &&
-          "content" in item.sourceRef
-            ? String((item.sourceRef as { content: string }).content).slice(0, 1500)
-            : "";
+        const noteExcerpt = await readNoteExcerpt(item.path);
 
         const prompt = buildMaintenancePrompt(
           item.suggestionKind,
