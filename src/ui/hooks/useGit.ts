@@ -49,12 +49,17 @@ export function useGit(callbacks: UseGitCallbacks) {
   const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
   const [unresolvedLinks, setUnresolvedLinks] = useState<UnresolvedLinkGroup[]>([]);
   const [isScanningUnresolved, setIsScanningUnresolved] = useState(false);
+  const [pendingPullWarning, setPendingPullWarning] = useState<{ dirtyFiles: GitFileChange[] } | null>(null);
+  const [stashRetainedRef, setStashRetainedRef] = useState<string | null>(null);
+  const [mergeHeadExists, setMergeHeadExists] = useState<boolean>(false);
+  const [forceFreshConflictResolver, setForceFreshConflictResolver] = useState<boolean>(false);
 
   async function refreshGitWorkspace(intendedSelection?: { path: string; staged: boolean }) {
     setIsGitLoading(true);
     try {
       const status = await vaultApi.getGitStatus();
       setGitStatus(status);
+      void refreshMergeHeadExists();
       if (status.isRepo) {
         const changes = await vaultApi.getGitChanges();
         setGitChanges(changes);
@@ -165,9 +170,46 @@ export function useGit(callbacks: UseGitCallbacks) {
     }
   }
 
+  async function handleSuggestCommitMessage() {
+    if (commitMessage.trim()) return;
+    try {
+      const msg = await vaultApi.gitSuggestCommitMessage();
+      setCommitMessage(msg);
+    } catch (err: any) {
+      setGitOutputLog(`Could not suggest commit message: ${err?.message || err}`);
+    }
+  }
+
+  async function refreshMergeHeadExists() {
+    try {
+      const exists = await vaultApi.gitMergeHeadExists();
+      setMergeHeadExists(exists);
+      return exists;
+    } catch {
+      return false;
+    }
+  }
+
   async function handleGitPull() {
     setIsGitLoading(true);
     try {
+      const preflight = await vaultApi.gitPullPreflight();
+      if (!preflight.isClean) {
+        setPendingPullWarning({ dirtyFiles: preflight.dirtyFiles });
+        return;
+      }
+      await handlePullAnyway();
+    } catch (err: any) {
+      setGitOutputLog(`Pull preflight failed:\n${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handlePullAnyway() {
+    setIsGitLoading(true);
+    try {
+      setPendingPullWarning(null);
       setGitOutputLog("Pulling from remote repository...");
       const output = await vaultApi.gitPull();
       setGitOutputLog(output);
@@ -175,6 +217,65 @@ export function useGit(callbacks: UseGitCallbacks) {
       await refreshVault(activePath);
     } catch (err: any) {
       setGitOutputLog(`Pull failed:\n${err?.message || err}`);
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  function cancelPendingPull() {
+    setPendingPullWarning(null);
+  }
+
+  async function handleStashAndPull() {
+    setIsGitLoading(true);
+    try {
+      setPendingPullWarning(null);
+      setGitOutputLog("Stashing local changes...");
+      await vaultApi.gitStashPush();
+    } catch (err: any) {
+      setGitOutputLog(`Stash failed, pull aborted:\n${err?.message || err}`);
+      setIsGitLoading(false);
+      return;
+    }
+
+    try {
+      setGitOutputLog("Pulling from remote repository...");
+      const pullOutput = await vaultApi.gitPull();
+
+      const popResult = await vaultApi.gitStashPop(false);
+      if (popResult.status === "clean") {
+        setGitOutputLog(`${pullOutput}\nStash applied cleanly.`);
+        setStashRetainedRef(null);
+      } else {
+        setStashRetainedRef(popResult.stashRef);
+        setForceFreshConflictResolver(true);
+        setGitOutputLog(`${pullOutput}\nStash pop conflicted — stash retained as ${popResult.stashRef}.`);
+      }
+      await refreshGitWorkspace();
+      await refreshVault(activePath);
+    } catch (pullErr: any) {
+      try {
+        await vaultApi.gitStashPop(true);
+        setGitOutputLog(`Pull failed:\n${pullErr?.message || pullErr}\nStashed changes restored.`);
+      } catch (popErr: any) {
+        setGitOutputLog(`Pull failed:\n${pullErr?.message || pullErr}\nAlso failed to restore stash:\n${popErr?.message || popErr}`);
+      }
+      setStashRetainedRef(null);
+      await refreshGitWorkspace();
+    } finally {
+      setIsGitLoading(false);
+    }
+  }
+
+  async function handleDropStash() {
+    if (gitStatus?.hasConflicts || mergeHeadExists) return;
+    setIsGitLoading(true);
+    try {
+      await vaultApi.gitStashDrop();
+      setStashRetainedRef(null);
+      setGitOutputLog("Stash dropped.");
+    } catch (err: any) {
+      setGitOutputLog(`Failed to drop stash:\n${err?.message || err}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -233,6 +334,8 @@ export function useGit(callbacks: UseGitCallbacks) {
     setGitStatus(await vaultApi.getGitStatus());
   }
 
+  const canDropStash = !!stashRetainedRef && !gitStatus?.hasConflicts && !mergeHeadExists;
+
   return {
     gitStatus, setGitStatus,
     gitChanges, setGitChanges,
@@ -251,8 +354,18 @@ export function useGit(callbacks: UseGitCallbacks) {
     loadGitDiff,
     handleGitStageAll,
     handleGitCommit,
+    handleSuggestCommitMessage,
     handleGitPull,
     handleGitPush,
+    pendingPullWarning,
+    stashRetainedRef,
+    mergeHeadExists,
+    forceFreshConflictResolver, setForceFreshConflictResolver,
+    canDropStash,
+    handlePullAnyway,
+    cancelPendingPull,
+    handleStashAndPull,
+    handleDropStash,
     openUnresolvedTarget,
     selectUnresolvedTarget,
     draftUnresolvedTarget,

@@ -19,33 +19,39 @@ interface ConflictResolverProps {
   open: boolean;
   onClose: () => void;
   onResolved: () => void;
+  forceFresh?: boolean;
 }
 
 const STATE_PATH = ".lattice/conflict-state.json";
 
-export function ConflictResolver({ open, onClose, onResolved }: ConflictResolverProps) {
+export function ConflictResolver({ open, onClose, onResolved, forceFresh = false }: ConflictResolverProps) {
   const [conflictFiles, setConflictFiles] = useState<ConflictFile[]>([]);
   const [markedFiles, setMarkedFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [editingHunk, setEditingHunk] = useState<{ path: string; index: number } | null>(null);
   const [manualContent, setManualContent] = useState("");
+  const [freshLoadComplete, setFreshLoadComplete] = useState(false);
 
   // Load conflict state: try persisted state first, fall back to server
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    setFreshLoadComplete(false);
 
     async function load() {
-      try {
-        const raw = await invoke<string>("read_note", { path: STATE_PATH });
-        const saved = JSON.parse(raw) as { files: ConflictFile[]; savedAt: string };
-        if (saved.files && saved.files.length > 0) {
-          setConflictFiles(saved.files);
-          setLoading(false);
-          return;
+      if (!forceFresh) {
+        try {
+          const raw = await invoke<string>("read_note", { path: STATE_PATH });
+          const saved = JSON.parse(raw) as { files: ConflictFile[]; savedAt: string };
+          if (saved.files && saved.files.length > 0) {
+            setConflictFiles(saved.files);
+            setLoading(false);
+            setFreshLoadComplete(true);
+            return;
+          }
+        } catch {
+          // No saved state — load fresh from server
         }
-      } catch {
-        // No saved state — load fresh from server
       }
 
       try {
@@ -56,15 +62,16 @@ export function ConflictResolver({ open, onClose, onResolved }: ConflictResolver
         setConflictFiles([]);
       } finally {
         setLoading(false);
+        setFreshLoadComplete(true);
       }
     }
 
     void load();
-  }, [open]);
+  }, [open, forceFresh]);
 
   // Persist state whenever files change
   useEffect(() => {
-    if (!open || conflictFiles.length === 0) return;
+    if (!open || conflictFiles.length === 0 || !freshLoadComplete) return;
     const state = { files: conflictFiles, savedAt: new Date().toISOString() };
     void invoke("save_note", {
       path: STATE_PATH,
@@ -73,7 +80,7 @@ export function ConflictResolver({ open, onClose, onResolved }: ConflictResolver
     }).catch(() => {
       // best-effort, ignore failures
     });
-  }, [conflictFiles, open]);
+  }, [conflictFiles, open, freshLoadComplete]);
 
   // When all files resolved, call onResolved
   useEffect(() => {
@@ -140,6 +147,11 @@ export function ConflictResolver({ open, onClose, onResolved }: ConflictResolver
     setManualContent(initialContent);
   }
 
+  const isFileResolved = (f: ConflictFile) =>
+    f.hunks.every((h) => h.resolved) && markedFiles.has(f.path);
+  const totalFiles = conflictFiles.length;
+  const resolvedFiles = conflictFiles.filter(isFileResolved).length;
+
   if (!open) return null;
 
   return (
@@ -158,6 +170,25 @@ export function ConflictResolver({ open, onClose, onResolved }: ConflictResolver
 
         {!loading && conflictFiles.length === 0 && (
           <p className="muted" style={{ padding: "1rem" }}>충돌이 없습니다.</p>
+        )}
+
+        {!loading && totalFiles > 0 && (
+          <div style={{ padding: "0.75rem 1rem", borderBottom: "1px solid var(--border-color, #e0e0e0)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem", fontSize: "0.85rem" }}>
+              <span>진행률</span>
+              <span>{resolvedFiles}/{totalFiles} 파일 해결됨</span>
+            </div>
+            <div style={{ background: "var(--border-color, #e0e0e0)", borderRadius: 4, height: 6, overflow: "hidden" }}>
+              <div
+                style={{
+                  background: resolvedFiles === totalFiles ? "var(--success-color, #4caf50)" : "var(--primary-color, #1976d2)",
+                  width: totalFiles > 0 ? `${Math.round((resolvedFiles / totalFiles) * 100)}%` : "0%",
+                  height: "100%",
+                  transition: "width 0.2s ease",
+                }}
+              />
+            </div>
+          </div>
         )}
 
         {!loading && conflictFiles.map((file) => {

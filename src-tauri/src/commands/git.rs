@@ -311,3 +311,63 @@ pub(crate) fn mark_conflict_resolved(
     git_output(root, &["add", "--", &path])?;
     Ok(())
 }
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn suggest_commit_message(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    suggest_commit_message_in_root(root)
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn git_pull_preflight(state: tauri::State<AppState>) -> Result<PullPreflight, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_pull_preflight_in_root(root)
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn git_stash_push(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_stash_push_in_root(root)
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn git_stash_pop(with_index: bool, state: tauri::State<AppState>) -> Result<StashPopResult, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_stash_pop_in_root(root, with_index)
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn git_stash_drop(state: tauri::State<AppState>) -> Result<String, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    git_stash_drop_in_root(root)
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+pub(crate) fn git_merge_head_exists(state: tauri::State<AppState>) -> Result<bool, String> {
+    let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let Some(root) = &guard.root_path else {
+        return Err("No vault open".to_string());
+    };
+    Ok(git_merge_head_exists_in_root(root))
+}

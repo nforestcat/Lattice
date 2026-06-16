@@ -22,7 +22,9 @@ import type {
   BacklinkSuggestion,
   NoteHealthReport,
   GitFileChange,
-  AiAuditRecord
+  AiAuditRecord,
+  PullPreflight,
+  StashPopResult
 } from "./types";
 
 export function createTauriVaultApi(): VaultApi {
@@ -69,6 +71,12 @@ export function createTauriVaultApi(): VaultApi {
     gitCommit: (message: string) => invoke<string>("git_commit", { message }),
     gitPull: () => invoke<string>("git_pull"),
     gitPush: () => invoke<string>("git_push"),
+    gitSuggestCommitMessage: () => invoke<string>("suggest_commit_message"),
+    gitPullPreflight: () => invoke<PullPreflight>("git_pull_preflight"),
+    gitStashPush: () => invoke<string>("git_stash_push"),
+    gitStashPop: (withIndex: boolean) => invoke<StashPopResult>("git_stash_pop", { withIndex }),
+    gitStashDrop: () => invoke<string>("git_stash_drop"),
+    gitMergeHeadExists: () => invoke<boolean>("git_merge_head_exists"),
     getVaultConfig: () => invoke<VaultConfig>("get_vault_config"),
     saveVaultConfig: (config: VaultConfig) => invoke<void>("save_vault_config", { config }),
     archivePromptRun: (runId: string, content: string) => invoke<string>("archive_prompt_run", { runId, content }),
