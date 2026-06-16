@@ -66,7 +66,7 @@ describe("applyProposedEditToVault", () => {
     expect(appendAuditSpy).toHaveBeenCalledWith(expect.objectContaining({ editId: "edit-update", editType: "update" }));
   });
 
-  it("rejects delete edits when the required delete audit cannot be written", async () => {
+  it("rejects delete edits before deleting when the required delete audit cannot be written", async () => {
     const edit = {
       id: "edit-delete",
       type: "delete",
@@ -82,10 +82,10 @@ describe("applyProposedEditToVault", () => {
       "Failed to write required delete audit log for Notes/Remove.md",
     );
 
-    expect(deleteEntrySpy).toHaveBeenCalledWith("Notes/Remove.md");
+    expect(deleteEntrySpy).not.toHaveBeenCalled();
     expect(appendAuditSpy).toHaveBeenCalledWith(expect.objectContaining({ editId: "edit-delete", editType: "delete" }));
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[provenance] Failed to write audit log for delete — provenance may be unrecoverable:",
+      "[provenance] Failed to write required delete audit log; delete aborted:",
       expect.any(Error),
     );
   });
@@ -131,5 +131,33 @@ describe("applyProposedEditToVault", () => {
     await expect(applyProposedEditToVault(edit)).rejects.toThrow("Permission denied");
 
     expect(createNoteSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects merge source deletion before deleting when the required delete audit cannot be written", async () => {
+    const edit = {
+      id: "edit-merge-audit-fails",
+      type: "merge",
+      path: "Notes/Source.md",
+      newPath: "Archive/Merged.md",
+      content: "# Merged",
+      applied: false,
+      provenance: { source: "manual-paste", promptRunId: null },
+    } satisfies ProposedEdit;
+    vi.spyOn(vaultApi, "readNote").mockResolvedValue(noteDocument("# Existing target", "rev-target"));
+    vi.spyOn(vaultApi, "saveNote").mockResolvedValue(saveResult());
+    const deleteEntrySpy = vi.spyOn(vaultApi, "deleteEntry").mockResolvedValue(mutationResult());
+    const appendAuditSpy = vi
+      .spyOn(vaultApi, "appendAiAudit")
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("disk full"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(applyProposedEditToVault(edit)).rejects.toThrow(
+      "Failed to write required delete audit log for Notes/Source.md",
+    );
+
+    expect(appendAuditSpy).toHaveBeenCalledWith(expect.objectContaining({ editType: "merge", path: "Archive/Merged.md" }));
+    expect(appendAuditSpy).toHaveBeenCalledWith(expect.objectContaining({ editType: "delete", path: "Notes/Source.md" }));
+    expect(deleteEntrySpy).not.toHaveBeenCalled();
   });
 });

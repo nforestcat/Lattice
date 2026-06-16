@@ -35,7 +35,11 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
     ? { ...edit.provenance, appliedAt }
     : { source: "unknown", appliedAt };
 
-  async function appendAudit(type: ProposedEdit["type"], path: string): Promise<void> {
+  async function appendAudit(
+    type: ProposedEdit["type"],
+    path: string,
+    options: { readonly required?: boolean } = {},
+  ): Promise<void> {
     const record: AiAuditRecord = {
       editId: edit.id,
       editType: type,
@@ -49,8 +53,8 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
     try {
       await vaultApi.appendAiAudit(record);
     } catch (err) {
-      if (type === "delete") {
-        console.error("[provenance] Failed to write audit log for delete — provenance may be unrecoverable:", err);
+      if (options.required === true) {
+        console.error("[provenance] Failed to write required delete audit log; delete aborted:", err);
         throw requiredAuditError(type, path, err);
       } else {
         console.warn("[provenance] Failed to write audit log (non-fatal):", err);
@@ -86,8 +90,8 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
       return { ...edit, applied: true, provenance: { ...baseProvenance, originalExcerpt: target } };
     }
     case "delete":
+      await appendAudit("delete", edit.path, { required: true });
       await vaultApi.deleteEntry(edit.path);
-      await appendAudit("delete", edit.path);
       return { ...edit, applied: true, provenance: baseProvenance };
     case "merge": {
       let targetPath = edit.newPath || "";
@@ -109,9 +113,8 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
       const stamped = stampAiProvenance(edit.content || "", baseProvenance, edit.id);
       await vaultApi.saveNote(targetPath, stamped, existingRevision);
       await appendAudit("merge", targetPath);
-      // source note deletion — audit after delete succeeds to avoid false audit on failure
+      await appendAudit("delete", edit.path, { required: true });
       await vaultApi.deleteEntry(edit.path);
-      await appendAudit("delete", edit.path);
       return { ...edit, applied: true, provenance: baseProvenance };
     }
   }
