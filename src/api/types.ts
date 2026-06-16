@@ -60,6 +60,17 @@ export type GitSettings = {
   autoGitEnabled: boolean;
 };
 
+export type PullPreflight = {
+  isClean: boolean;
+  dirtyFiles: GitFileChange[];
+  hasConflicts: boolean;
+};
+
+export type StashPopResult = {
+  status: "clean" | "conflict";
+  stashRef: string | null;
+};
+
 export type LinkMutationResult = {
   note: NoteDocument;
   graph: GraphData;
@@ -172,6 +183,12 @@ export type VaultApi = {
   gitCommit(message: string): Promise<string>;
   gitPull(): Promise<string>;
   gitPush(): Promise<string>;
+  gitSuggestCommitMessage(): Promise<string>;
+  gitPullPreflight: () => Promise<PullPreflight>;
+  gitStashPush: () => Promise<string>;
+  gitStashPop: (withIndex: boolean) => Promise<StashPopResult>;
+  gitStashDrop: () => Promise<string>;
+  gitMergeHeadExists: () => Promise<boolean>;
   getVaultConfig(): Promise<VaultConfig>;
   saveVaultConfig(config: VaultConfig): Promise<void>;
   archivePromptRun(runId: string, content: string): Promise<string>;

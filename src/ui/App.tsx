@@ -352,8 +352,18 @@ export function App() {
     loadGitDiff,
     handleGitStageAll,
     handleGitCommit,
+    handleSuggestCommitMessage,
     handleGitPull,
     handleGitPush,
+    pendingPullWarning,
+    stashRetainedRef,
+    canDropStash,
+    handlePullAnyway,
+    cancelPendingPull,
+    handleStashAndPull,
+    handleDropStash,
+    forceFreshConflictResolver,
+    setForceFreshConflictResolver,
     openUnresolvedTarget,
     selectUnresolvedTarget,
     draftUnresolvedTarget,
@@ -1076,9 +1086,11 @@ export function App() {
 
       <ConflictResolver
         open={showConflictResolver}
-        onClose={() => setShowConflictResolver(false)}
+        forceFresh={forceFreshConflictResolver}
+        onClose={() => { setShowConflictResolver(false); setForceFreshConflictResolver(false); }}
         onResolved={() => {
           setShowConflictResolver(false);
+          setForceFreshConflictResolver(false);
           void refreshGitWorkspace();
         }}
       />
@@ -1253,9 +1265,17 @@ export function App() {
               onStageFile={handleGitStageFile}
               onUnstageFile={handleGitUnstageFile}
               onCommit={handleGitCommit}
+              onSuggestCommitMessage={handleSuggestCommitMessage}
               onPull={handleGitPull}
               onPush={handleGitPush}
               onLoadDiff={loadGitDiff}
+              pendingPullWarning={pendingPullWarning}
+              stashRetainedRef={stashRetainedRef}
+              canDropStash={canDropStash}
+              onPullAnyway={handlePullAnyway}
+              onCancelPendingPull={cancelPendingPull}
+              onStashAndPull={handleStashAndPull}
+              onDropStash={handleDropStash}
               reviewQueue={reviewQueue}
             />
           )}

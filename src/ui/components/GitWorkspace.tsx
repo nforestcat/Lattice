@@ -19,9 +19,17 @@ interface GitWorkspaceProps {
   onStageFile: (path: string) => Promise<void>;
   onUnstageFile: (path: string) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
+  onSuggestCommitMessage: () => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;
   onLoadDiff: (path: string, staged: boolean) => Promise<void>;
+  pendingPullWarning: { dirtyFiles: GitFileChange[] } | null;
+  stashRetainedRef: string | null;
+  canDropStash: boolean;
+  onPullAnyway: () => Promise<void>;
+  onCancelPendingPull: () => void;
+  onStashAndPull: () => Promise<void>;
+  onDropStash: () => Promise<void>;
 }
 
 type ParsedDiffLine = {
@@ -226,9 +234,17 @@ export function GitWorkspace({
   onStageFile,
   onUnstageFile,
   onCommit,
+  onSuggestCommitMessage,
   onPull,
   onPush,
-  onLoadDiff
+  onLoadDiff,
+  pendingPullWarning,
+  stashRetainedRef,
+  canDropStash,
+  onPullAnyway,
+  onCancelPendingPull,
+  onStashAndPull,
+  onDropStash
 }: GitWorkspaceProps) {
   const [isConsoleOpen, setIsConsoleOpen] = useState(true);
   const [collapsedHunks, setCollapsedHunks] = useState<Set<string>>(new Set());
@@ -331,6 +347,15 @@ export function GitWorkspace({
             />
             <button
               type="button"
+              className="smallButton"
+              style={{ width: "100%", marginBottom: "4px" }}
+              disabled={isGitLoading || stagedChanges.length === 0}
+              onClick={() => void onSuggestCommitMessage()}
+            >
+              Suggest Message
+            </button>
+            <button
+              type="button"
               className="smallButton primary"
               style={{ width: "100%", marginTop: "6px" }}
               disabled={isGitLoading || !commitMessage.trim() || stagedChanges.length === 0 || gitStatus?.hasConflicts || selectedDiffHasMarkers}
@@ -339,6 +364,37 @@ export function GitWorkspace({
               Commit Selected ({stagedChanges.length})
             </button>
           </div>
+
+          {pendingPullWarning && (
+            <div className="gitConflictWarningCard" style={{ marginBottom: "8px" }}>
+              <h4>⚠️ Uncommitted Changes</h4>
+              <p>Pulling now may conflict with {pendingPullWarning.dirtyFiles.length} dirty file(s) (including untracked notes):</p>
+              <ul style={{ maxHeight: 100, overflowY: "auto", fontSize: "0.85rem" }}>
+                {pendingPullWarning.dirtyFiles.map(f => <li key={f.path}>{f.path}</li>)}
+              </ul>
+              <div className="gitActionsRow">
+                <button type="button" className="smallButton primary" disabled={isGitLoading} onClick={() => void onStashAndPull()}>Stash & Pull</button>
+                <button type="button" className="smallButton" disabled={isGitLoading} onClick={() => void onPullAnyway()}>Pull anyway</button>
+                <button type="button" className="smallButton" disabled={isGitLoading} onClick={onCancelPendingPull}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {stashRetainedRef && (
+            <div className="gitConflictWarningCard" style={{ marginBottom: "8px" }}>
+              <h4>📦 Stash Retained</h4>
+              <p>Your stashed changes conflicted on pop and are retained as <code>{stashRetainedRef}</code>. Resolve the conflicts, commit, then drop the stash.</p>
+              <button
+                type="button"
+                className="smallButton"
+                disabled={!canDropStash || isGitLoading}
+                title={!canDropStash ? "충돌 해소 후 커밋을 완료해야 stash를 버릴 수 있습니다." : undefined}
+                onClick={() => void onDropStash()}
+              >
+                Drop stash
+              </button>
+            </div>
+          )}
 
           <div className="gitSyncBox">
             <span className="boxLabel">Sync with Remote</span>

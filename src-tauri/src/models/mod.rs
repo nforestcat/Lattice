@@ -238,6 +238,21 @@ pub struct GitSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PullPreflight {
+    pub is_clean: bool,
+    pub dirty_files: Vec<GitFileChange>,
+    pub has_conflicts: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashPopResult {
+    pub status: String, // "clean" | "conflict"
+    pub stash_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromptRun {
     pub id: String,
     pub question: String,

@@ -44,9 +44,17 @@ interface DistillWorkspaceProps {
   onStageFile: (path: string) => Promise<void>;
   onUnstageFile: (path: string) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
+  onSuggestCommitMessage: () => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;
   onLoadDiff: (path: string, staged: boolean) => Promise<void>;
+  pendingPullWarning: { dirtyFiles: GitFileChange[] } | null;
+  stashRetainedRef: string | null;
+  canDropStash: boolean;
+  onPullAnyway: () => Promise<void>;
+  onCancelPendingPull: () => void;
+  onStashAndPull: () => Promise<void>;
+  onDropStash: () => Promise<void>;
   distillInputText: string;
   setDistillInputText: (text: string) => void;
   proposedEdits: ProposedEdit[];
@@ -162,9 +170,17 @@ export function DistillWorkspace({
   onStageFile,
   onUnstageFile,
   onCommit,
+  onSuggestCommitMessage,
   onPull,
   onPush,
   onLoadDiff,
+  pendingPullWarning,
+  stashRetainedRef,
+  canDropStash,
+  onPullAnyway,
+  onCancelPendingPull,
+  onStashAndPull,
+  onDropStash,
   reviewQueue,
 }: DistillWorkspaceProps) {
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
@@ -337,9 +353,17 @@ export function DistillWorkspace({
           onStageFile={onStageFile}
           onUnstageFile={onUnstageFile}
           onCommit={onCommit}
+          onSuggestCommitMessage={onSuggestCommitMessage}
           onPull={onPull}
           onPush={onPush}
           onLoadDiff={onLoadDiff}
+          pendingPullWarning={pendingPullWarning}
+          stashRetainedRef={stashRetainedRef}
+          canDropStash={canDropStash}
+          onPullAnyway={onPullAnyway}
+          onCancelPendingPull={onCancelPendingPull}
+          onStashAndPull={onStashAndPull}
+          onDropStash={onDropStash}
         />
       ) : (
         <div className="distillWorkspaceLayout">

@@ -25,7 +25,9 @@ import type {
   ProposedEdit,
   BacklinkSuggestion,
   NoteHealthReport,
-  AiAuditRecord
+  AiAuditRecord,
+  PullPreflight,
+  StashPopResult
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
@@ -432,6 +434,24 @@ index 89abcde..1234567 100644
     },
     async gitPush(): Promise<string> {
       return "Everything up-to-date";
+    },
+    async gitSuggestCommitMessage(): Promise<string> {
+      return "chore(wiki): update 1 file(s)\n\n- modify: example.md";
+    },
+    async gitPullPreflight(): Promise<PullPreflight> {
+      return { isClean: true, dirtyFiles: [], hasConflicts: false };
+    },
+    async gitStashPush(): Promise<string> {
+      return "Saved working directory and index state WIP on main";
+    },
+    async gitStashPop(_withIndex: boolean): Promise<StashPopResult> {
+      return { status: "clean", stashRef: null };
+    },
+    async gitStashDrop(): Promise<string> {
+      return "Dropped stash";
+    },
+    async gitMergeHeadExists(): Promise<boolean> {
+      return false;
     },
     async getVaultConfig(): Promise<VaultConfig> {
       const saved = localStorage.getItem(`lattice:mock_config:${openRoot}`);

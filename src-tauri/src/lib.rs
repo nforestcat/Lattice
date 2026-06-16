@@ -375,6 +375,127 @@ fn git_push_in_root(root: &Path) -> Result<String, String> {
     git_output_all(root, &["push"])
 }
 
+const STASH_MARKER: &str = "wiki-pull-autostash";
+
+pub(crate) fn git_pull_preflight_in_root(root: &Path) -> Result<PullPreflight, String> {
+    let dirty_files = git_changes_for_root(root)?;
+    let is_clean = dirty_files.is_empty();
+    let has_conflicts_now = has_conflicts(root);
+    Ok(PullPreflight {
+        is_clean,
+        dirty_files,
+        has_conflicts: has_conflicts_now,
+    })
+}
+
+pub(crate) fn git_stash_push_in_root(root: &Path) -> Result<String, String> {
+    git_output_all(
+        root,
+        &["stash", "push", "--include-untracked", "-m", STASH_MARKER],
+    )
+}
+
+fn parse_stash_list_for_marker(list_output: &str) -> Option<String> {
+    for line in list_output.lines() {
+        if line.contains(STASH_MARKER) {
+            if let Some(idx) = line.find(':') {
+                return Some(line[..idx].trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn resolve_stash_ref_by_marker(root: &Path) -> Result<Option<String>, String> {
+    let list = git_output(root, &["stash", "list"])?;
+    Ok(parse_stash_list_for_marker(&list))
+}
+
+pub(crate) fn git_stash_pop_in_root(root: &Path, with_index: bool) -> Result<StashPopResult, String> {
+    let Some(stash_ref) = resolve_stash_ref_by_marker(root)? else {
+        return Err("No autostash entry found".to_string());
+    };
+    let mut args: Vec<&str> = vec!["stash", "pop"];
+    if with_index {
+        args.push("--index");
+    }
+    args.push(stash_ref.as_str());
+
+    match git_output_all(root, &args) {
+        Ok(_) => Ok(StashPopResult {
+            status: "clean".to_string(),
+            stash_ref: None,
+        }),
+        Err(_) => {
+            // pop이 실패(충돌)했어도 stash entry가 남아있을 수 있음 -> 재해석
+            let surviving_ref = resolve_stash_ref_by_marker(root)?;
+            Ok(StashPopResult {
+                status: "conflict".to_string(),
+                stash_ref: surviving_ref,
+            })
+        }
+    }
+}
+
+pub(crate) fn git_stash_drop_in_root(root: &Path) -> Result<String, String> {
+    let Some(stash_ref) = resolve_stash_ref_by_marker(root)? else {
+        return Err("No autostash entry found to drop".to_string());
+    };
+    git_output_all(root, &["stash", "drop", &stash_ref])
+}
+
+pub(crate) fn git_merge_head_exists_in_root(root: &Path) -> bool {
+    Command::new("git")
+        .args(&["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .current_dir(root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+pub(crate) fn format_commit_message(entries: &[(String, String)]) -> String {
+    let mut added = vec![];
+    let mut modified = vec![];
+    let mut deleted = vec![];
+    let mut other = vec![];
+
+    for (status, path) in entries {
+        match status.as_str() {
+            "A" => added.push(path.as_str()),
+            "M" => modified.push(path.as_str()),
+            "D" => deleted.push(path.as_str()),
+            _ => other.push(path.as_str()),
+        }
+    }
+
+    let total = entries.len();
+    let mut lines = vec![format!("chore(wiki): update {} file(s)", total)];
+    lines.push(String::new());
+    for p in &added    { lines.push(format!("- add: {}", p)); }
+    for p in &modified { lines.push(format!("- modify: {}", p)); }
+    for p in &deleted  { lines.push(format!("- delete: {}", p)); }
+    for p in &other    { lines.push(format!("- change: {}", p)); }
+    lines.join("\n")
+}
+
+pub(crate) fn suggest_commit_message_in_root(root: &std::path::Path) -> Result<String, String> {
+    let output = git_output(root, &["diff", "--cached", "--name-status"])?;
+    let entries: Vec<(String, String)> = output
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            let mut parts = l.splitn(2, '\t');
+            let status = parts.next()?.trim().to_string();
+            let path = parts.next()?.trim().to_string();
+            Some((status, path))
+        })
+        .collect();
+    if entries.is_empty() {
+        return Err("No staged changes".to_string());
+    }
+    Ok(format_commit_message(&entries))
+}
+
 fn migrate_config(mut config: VaultConfig) -> VaultConfig {
     if config.version.is_none() || config.version.unwrap() < 1 {
         config.version = Some(1);
@@ -1591,6 +1712,12 @@ pub fn run() {
             commands::git::get_conflict_files,
             commands::git::resolve_conflict_hunk,
             commands::git::mark_conflict_resolved,
+            commands::git::suggest_commit_message,
+            commands::git::git_pull_preflight,
+            commands::git::git_stash_push,
+            commands::git::git_stash_pop,
+            commands::git::git_stash_drop,
+            commands::git::git_merge_head_exists,
             commands::config::get_vault_config,
             commands::config::save_vault_config,
             commands::config::archive_prompt_run,
@@ -2205,6 +2332,180 @@ mod tests {
         git_output(&root, &["add", test_file]).unwrap();
         let commit_res3 = git_commit_in_root(&root, "Resolved commit");
         assert!(commit_res3.is_ok());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_parse_stash_list_single_marker() {
+        let list = "stash@{0}: On main: wiki-pull-autostash";
+        assert_eq!(parse_stash_list_for_marker(list), Some("stash@{0}".to_string()));
+    }
+
+    #[test]
+    fn test_parse_stash_list_marker_at_nonzero_ref() {
+        let list = "stash@{0}: WIP on main: unrelated work\n\
+                    stash@{1}: On main: wiki-pull-autostash\n\
+                    stash@{2}: WIP on feature: other";
+        assert_eq!(parse_stash_list_for_marker(list), Some("stash@{1}".to_string()));
+    }
+
+    #[test]
+    fn test_parse_stash_list_no_marker() {
+        let list = "stash@{0}: WIP on main: some work\n\
+                    stash@{1}: WIP on feature: other";
+        assert_eq!(parse_stash_list_for_marker(list), None);
+    }
+
+    #[test]
+    fn test_format_commit_message_groups_by_status() {
+        let entries = vec![
+            ("A".to_string(), "a.md".to_string()),
+            ("M".to_string(), "b.md".to_string()),
+        ];
+        let message = format_commit_message(&entries);
+        assert_eq!(
+            message,
+            "chore(wiki): update 2 file(s)\n\n- add: a.md\n- modify: b.md"
+        );
+    }
+
+    #[test]
+    fn test_format_commit_message_multiple_per_status_and_other() {
+        let entries = vec![
+            ("A".to_string(), "a.md".to_string()),
+            ("A".to_string(), "a2.md".to_string()),
+            ("D".to_string(), "c.md".to_string()),
+            ("R".to_string(), "d.md".to_string()),
+        ];
+        let message = format_commit_message(&entries);
+        assert_eq!(
+            message,
+            "chore(wiki): update 4 file(s)\n\n- add: a.md\n- add: a2.md\n- delete: c.md\n- change: d.md"
+        );
+    }
+
+    #[test]
+    fn test_parse_stash_list_empty() {
+        assert_eq!(parse_stash_list_for_marker(""), None);
+    }
+
+    #[test]
+    fn test_git_changes_includes_untracked() {
+        let root = temp_test_dir("preflight-untracked");
+        git_output(&root, &["init"]).unwrap();
+        git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
+        git_output(&root, &["config", "user.name", "Test User"]).unwrap();
+
+        fs::write(root.join("newnote.md"), "# New\n").unwrap();
+
+        let preflight = git_pull_preflight_in_root(&root).unwrap();
+        assert!(!preflight.is_clean);
+        assert!(!preflight.has_conflicts);
+        assert!(preflight
+            .dirty_files
+            .iter()
+            .any(|c| c.path == "newnote.md" && c.status == "untracked"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_stash_push_pop_drop_roundtrip() {
+        let root = temp_test_dir("stash-roundtrip");
+        git_output(&root, &["init"]).unwrap();
+        git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
+        git_output(&root, &["config", "user.name", "Test User"]).unwrap();
+
+        fs::write(root.join("Note.md"), "Initial\n").unwrap();
+        git_output(&root, &["add", "Note.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Initial commit"]).unwrap();
+
+        // Create a dirty change plus an untracked file
+        fs::write(root.join("Note.md"), "Modified\n").unwrap();
+        fs::write(root.join("untracked.md"), "Untracked\n").unwrap();
+
+        // No autostash exists yet -> pop/drop must error
+        assert!(git_stash_pop_in_root(&root, false).is_err());
+        assert!(git_stash_drop_in_root(&root).is_err());
+
+        // Push the autostash
+        git_stash_push_in_root(&root).unwrap();
+        let preflight = git_pull_preflight_in_root(&root).unwrap();
+        assert!(preflight.is_clean);
+        assert!(resolve_stash_ref_by_marker(&root).unwrap().is_some());
+
+        // Pop cleanly restores both files
+        let pop = git_stash_pop_in_root(&root, false).unwrap();
+        assert_eq!(pop.status, "clean");
+        assert!(pop.stash_ref.is_none());
+        assert!(root.join("untracked.md").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("Note.md")).unwrap().replace("\r\n", "\n"),
+            "Modified\n"
+        );
+        assert!(resolve_stash_ref_by_marker(&root).unwrap().is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_stash_pop_conflict_keeps_entry() {
+        let root = temp_test_dir("stash-conflict");
+        git_output(&root, &["init"]).unwrap();
+        git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
+        git_output(&root, &["config", "user.name", "Test User"]).unwrap();
+
+        fs::write(root.join("Note.md"), "Base\n").unwrap();
+        git_output(&root, &["add", "Note.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Initial commit"]).unwrap();
+
+        // Working tree change that we stash
+        fs::write(root.join("Note.md"), "Stashed change\n").unwrap();
+        git_stash_push_in_root(&root).unwrap();
+
+        // Commit a different change to the same file so pop conflicts
+        fs::write(root.join("Note.md"), "Conflicting commit\n").unwrap();
+        git_output(&root, &["add", "Note.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Conflicting commit"]).unwrap();
+
+        let pop = git_stash_pop_in_root(&root, false).unwrap();
+        assert_eq!(pop.status, "conflict");
+        assert!(pop.stash_ref.is_some());
+        // entry survives a conflicting pop
+        assert!(resolve_stash_ref_by_marker(&root).unwrap().is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_merge_head_exists() {
+        let root = temp_test_dir("merge-head");
+        git_output(&root, &["init"]).unwrap();
+        git_output(&root, &["config", "user.email", "test@example.com"]).unwrap();
+        git_output(&root, &["config", "user.name", "Test User"]).unwrap();
+
+        fs::write(root.join("Note.md"), "Base\n").unwrap();
+        git_output(&root, &["add", "Note.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Initial commit"]).unwrap();
+
+        // No merge in progress
+        assert!(!git_merge_head_exists_in_root(&root));
+
+        // Create divergent branches that conflict
+        git_output(&root, &["checkout", "-b", "other"]).unwrap();
+        fs::write(root.join("Note.md"), "Other\n").unwrap();
+        git_output(&root, &["add", "Note.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Other commit"]).unwrap();
+
+        git_output(&root, &["checkout", "master"]).unwrap();
+        fs::write(root.join("Note.md"), "Master\n").unwrap();
+        git_output(&root, &["add", "Note.md"]).unwrap();
+        git_output(&root, &["commit", "-m", "Master commit"]).unwrap();
+
+        // Conflicting merge leaves MERGE_HEAD in place
+        let _ = git_output(&root, &["merge", "other"]);
+        assert!(git_merge_head_exists_in_root(&root));
 
         let _ = fs::remove_dir_all(root);
     }
