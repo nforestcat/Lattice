@@ -23,6 +23,10 @@ function normalizeRef(value: string): string {
   return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function useGit(callbacks: UseGitCallbacks) {
   const {
     refreshVault,
@@ -86,8 +90,8 @@ export function useGit(callbacks: UseGitCallbacks) {
         setSelectedGitFileStaged(false);
         setActiveDiff(null);
       }
-    } catch (err: any) {
-      setGitOutputLog(`Error checking Git status: ${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Error checking Git status: ${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -102,8 +106,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       }
       await refreshGitWorkspace({ path, staged: true });
       await refreshVault(activePath);
-    } catch (err: any) {
-      setGitOutputLog(`Error staging file ${path}: ${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Error staging file ${path}: ${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -118,8 +122,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       }
       await refreshGitWorkspace({ path, staged: false });
       await refreshVault(activePath);
-    } catch (err: any) {
-      setGitOutputLog(`Error unstaging file ${path}: ${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Error unstaging file ${path}: ${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -130,8 +134,8 @@ export function useGit(callbacks: UseGitCallbacks) {
     try {
       const diff = await vaultApi.getGitDiff(path, staged);
       setActiveDiff(diff);
-    } catch (err: any) {
-      setActiveDiff(`Error loading diff: ${err?.message || err}`);
+    } catch (err) {
+      setActiveDiff(`Error loading diff: ${errorMessage(err)}`);
     }
   }
 
@@ -142,8 +146,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       setGitOutputLog("All changes staged.");
       await refreshGitWorkspace();
       await refreshVault(activePath);
-    } catch (err: any) {
-      setGitOutputLog(`Error staging changes: ${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Error staging changes: ${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -163,8 +167,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       setActiveDiff(null);
       await refreshGitWorkspace();
       await refreshVault(activePath);
-    } catch (err: any) {
-      setGitOutputLog(`Commit failed:\n${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Commit failed:\n${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -175,8 +179,8 @@ export function useGit(callbacks: UseGitCallbacks) {
     try {
       const msg = await vaultApi.gitSuggestCommitMessage();
       setCommitMessage(msg);
-    } catch (err: any) {
-      setGitOutputLog(`Could not suggest commit message: ${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Could not suggest commit message: ${errorMessage(err)}`);
     }
   }
 
@@ -199,8 +203,8 @@ export function useGit(callbacks: UseGitCallbacks) {
         return;
       }
       await handlePullAnyway();
-    } catch (err: any) {
-      setGitOutputLog(`Pull preflight failed:\n${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Pull preflight failed:\n${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -215,8 +219,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       setGitOutputLog(output);
       await refreshGitWorkspace();
       await refreshVault(activePath);
-    } catch (err: any) {
-      setGitOutputLog(`Pull failed:\n${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Pull failed:\n${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -232,8 +236,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       setPendingPullWarning(null);
       setGitOutputLog("Stashing local changes...");
       await vaultApi.gitStashPush();
-    } catch (err: any) {
-      setGitOutputLog(`Stash failed, pull aborted:\n${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Stash failed, pull aborted:\n${errorMessage(err)}`);
       setIsGitLoading(false);
       return;
     }
@@ -253,14 +257,21 @@ export function useGit(callbacks: UseGitCallbacks) {
       }
       await refreshGitWorkspace();
       await refreshVault(activePath);
-    } catch (pullErr: any) {
+    } catch (pullErr) {
       try {
-        await vaultApi.gitStashPop(true);
-        setGitOutputLog(`Pull failed:\n${pullErr?.message || pullErr}\nStashed changes restored.`);
-      } catch (popErr: any) {
-        setGitOutputLog(`Pull failed:\n${pullErr?.message || pullErr}\nAlso failed to restore stash:\n${popErr?.message || popErr}`);
+        const restoreResult = await vaultApi.gitStashPop(true);
+        if (restoreResult.status === "clean") {
+          setStashRetainedRef(null);
+          setGitOutputLog(`Pull failed:\n${errorMessage(pullErr)}\nStashed changes restored.`);
+        } else {
+          const retainedRef = restoreResult.stashRef ?? "autostash entry";
+          setStashRetainedRef(retainedRef);
+          setForceFreshConflictResolver(true);
+          setGitOutputLog(`Pull failed:\n${errorMessage(pullErr)}\nStash restore conflicted — stash retained as ${retainedRef}.`);
+        }
+      } catch (popErr) {
+        setGitOutputLog(`Pull failed:\n${errorMessage(pullErr)}\nAlso failed to restore stash:\n${errorMessage(popErr)}`);
       }
-      setStashRetainedRef(null);
       await refreshGitWorkspace();
     } finally {
       setIsGitLoading(false);
@@ -274,8 +285,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       await vaultApi.gitStashDrop();
       setStashRetainedRef(null);
       setGitOutputLog("Stash dropped.");
-    } catch (err: any) {
-      setGitOutputLog(`Failed to drop stash:\n${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Failed to drop stash:\n${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }
@@ -289,8 +300,8 @@ export function useGit(callbacks: UseGitCallbacks) {
       setGitOutputLog(output);
       await refreshGitWorkspace();
       await refreshVault(activePath);
-    } catch (err: any) {
-      setGitOutputLog(`Push failed:\n${err?.message || err}`);
+    } catch (err) {
+      setGitOutputLog(`Push failed:\n${errorMessage(err)}`);
     } finally {
       setIsGitLoading(false);
     }

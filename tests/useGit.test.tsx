@@ -1,0 +1,58 @@
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { vaultApi } from "../src/api";
+import type { GitStatus, NoteDocument, UnresolvedLinkGroup, UnresolvedLinkSource } from "../src/api/types";
+import { useGit, type UseGitCallbacks } from "../src/ui/hooks/useGit";
+
+function gitStatus(): GitStatus {
+  return {
+    isRepo: true,
+    autoGitEnabled: false,
+    branch: "main",
+    hasChanges: false,
+    hasConflicts: false,
+  };
+}
+
+function callbacks(): UseGitCallbacks {
+  return {
+    refreshVault: vi.fn().mockResolvedValue(undefined),
+    setActivePath: vi.fn(),
+    setDocument: vi.fn<(doc: NoteDocument | null) => void>(),
+    setDraft: vi.fn<(draft: string) => void>(),
+    setViewMode: vi.fn(),
+    setDistillTab: vi.fn(),
+    setActiveUnresolvedTarget: vi.fn(),
+    setSelectedUnresolvedTargets: vi.fn<(targets: Set<string>) => void>(),
+    activePath: "Home.md",
+    runUnresolvedLinksScan: vi.fn<() => Promise<UnresolvedLinkGroup[]>>().mockResolvedValue([]),
+    draftStubNote: vi.fn<(target: string, sources: UnresolvedLinkSource[]) => Promise<void>>().mockResolvedValue(undefined),
+  };
+}
+
+describe("useGit stash pull flow", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("retains the stash state when pull failure rollback conflicts", async () => {
+    vi.spyOn(vaultApi, "gitStashPush").mockResolvedValue("Saved working directory");
+    vi.spyOn(vaultApi, "gitPull").mockRejectedValue(new Error("remote rejected pull"));
+    vi.spyOn(vaultApi, "gitStashPop").mockResolvedValue({ status: "conflict", stashRef: "stash@{0}" });
+    vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue(gitStatus());
+    vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([]);
+    vi.spyOn(vaultApi, "gitMergeHeadExists").mockResolvedValue(true);
+
+    const { result } = renderHook(() => useGit(callbacks()));
+
+    await act(async () => {
+      await result.current.handleStashAndPull();
+    });
+
+    await waitFor(() => {
+      expect(result.current.stashRetainedRef).toBe("stash@{0}");
+      expect(result.current.forceFreshConflictResolver).toBe(true);
+      expect(result.current.gitOutputLog).toContain("Stash restore conflicted");
+    });
+  });
+});
