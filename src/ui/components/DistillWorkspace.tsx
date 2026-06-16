@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { ReviewQueuePanel } from "./ReviewQueuePanel";
+import { useMaintenancePlanner } from "../hooks/useMaintenancePlanner";
 import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview, GitStatus, GitFileChange } from "../../api/types";
 import type { ChatMessage } from "../../api/llm";
 import { vaultApi } from "../../api";
@@ -169,6 +170,44 @@ export function DistillWorkspace({
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
 
+  const maintenancePlanner = useMaintenancePlanner();
+
+  // Hydrate suggestions from persisted vault config on mount
+  useEffect(() => {
+    if (vaultConfig.maintenanceSuggestions) {
+      maintenancePlanner.hydrate(vaultConfig.maintenanceSuggestions);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Purge stale maintenance suggestions when health report refreshes
+  useEffect(() => {
+    if (!vaultConfig.maintenanceSuggestions) return;
+    const existing = vaultConfig.maintenanceSuggestions;
+    const validPathFlags = new Set<string>();
+    for (const report of healthReports) {
+      if (report.missingSummary) validPathFlags.add(`${report.path}::summary`);
+      if (report.isTooBroad) validPathFlags.add(`${report.path}::split`);
+      if (report.isOrphan) validPathFlags.add(`${report.path}::link_candidates`);
+      if (report.isStale) validPathFlags.add(`${report.path}::review_prompt`);
+      if (report.isDuplicated) validPathFlags.add(`${report.path}::merge_or_delete`);
+      if (report.weakBacklinks) validPathFlags.add(`${report.path}::backlinks_in`);
+    }
+    const purged: typeof existing = {};
+    let changed = false;
+    for (const [key, entry] of Object.entries(existing)) {
+      if (key.includes("::") && !validPathFlags.has(key)) {
+        changed = true;
+      } else {
+        purged[key] = entry;
+      }
+    }
+    if (changed) {
+      void updateVaultConfig({ maintenanceSuggestions: purged });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [healthReports]);
+
   const approvedCount = Array.from(selectedUnresolvedTargets).filter(t => {
     const draft = bulkDrafts[t];
     return draft?.status === "done" && draft?.approved;
@@ -267,6 +306,17 @@ export function DistillWorkspace({
           onApply={reviewQueue.applyItem}
           onApprove={reviewQueue.approveItem}
           onReject={reviewQueue.rejectItem}
+          generating={maintenancePlanner.generating}
+          suggestions={maintenancePlanner.suggestions}
+          provenances={maintenancePlanner.provenances}
+          onGenerate={(id) => {
+            const item = reviewQueue.items.find((i) => i.id === id);
+            if (item) void maintenancePlanner.generate(item, llmConfig);
+          }}
+          onApplyMaintenance={(id) => {
+            const item = reviewQueue.items.find((i) => i.id === id);
+            if (item) void maintenancePlanner.apply(item);
+          }}
         />
       ) : distillTab === "git" ? (
         <GitWorkspace

@@ -8,6 +8,11 @@ interface ReviewItemCardProps {
   readonly onApply: QueueActionHandler;
   readonly onApprove: QueueActionHandler;
   readonly onReject: QueueActionHandler;
+  readonly generating?: Set<string>;
+  readonly suggestions?: Record<string, string>;
+  readonly provenances?: Record<string, AiProvenance>;
+  readonly onGenerate?: (id: string) => void | Promise<void>;
+  readonly onApplyMaintenance?: (id: string) => void | Promise<void>;
 }
 
 const KIND_COLORS: Record<string, string> = {
@@ -20,6 +25,8 @@ const KIND_COLORS: Record<string, string> = {
   duplicate_warning: "#f97316",
   orphan_note: "#64748b",
   stale_note: "#a16207",
+  too_broad: "#f59e0b",
+  weak_backlinks: "#0d9488",
 };
 
 const STATUS_COLORS: Record<ReviewItemStatus, { readonly bg: string; readonly color: string }> = {
@@ -31,11 +38,45 @@ const STATUS_COLORS: Record<ReviewItemStatus, { readonly bg: string; readonly co
   rejected: { bg: "#fee2e2", color: "#991b1b" },
 };
 
-export function ReviewQueueItemCard({ item, onApply, onApprove, onReject }: ReviewItemCardProps) {
+const GENERATE_LABELS: Record<string, string> = {
+  summary: "Generate Summary",
+  split: "Suggest Split",
+  link_candidates: "Find Link Candidates",
+  review_prompt: "Suggest Review",
+  merge_or_delete: "Suggest Merge/Delete",
+  backlinks_in: "Find Inbound Links",
+};
+
+export function ReviewQueueItemCard({
+  item,
+  onApply,
+  onApprove,
+  onReject,
+  generating = new Set(),
+  suggestions = {},
+  provenances = {},
+  onGenerate,
+  onApplyMaintenance,
+}: ReviewItemCardProps) {
   const kindColor = KIND_COLORS[item.kind] ?? "#64748b";
   const statusStyle = STATUS_COLORS[item.status];
   const canApply = item.kind === "inbox_capture" || item.kind === "proposed_edit" || item.kind === "backlink_suggestion";
   const canApprove = item.kind === "ingest_draft" || item.kind === "proposed_edit";
+
+  const isGenerating = generating.has(item.id);
+  const suggestion = suggestions[item.id];
+  const suggestionProvenance = provenances[item.id];
+  const hasSuggestionKind = item.suggestionKind != null;
+  const generateLabel = item.suggestionKind ? (GENERATE_LABELS[item.suggestionKind] ?? "Generate Suggestion") : null;
+
+  // Effective proposed: either from the item itself or from the generated suggestion
+  const effectiveProposed = item.proposed ?? suggestion;
+
+  function handleCopy() {
+    if (suggestion) {
+      void navigator.clipboard.writeText(suggestion);
+    }
+  }
 
   return (
     <div
@@ -98,9 +139,9 @@ export function ReviewQueueItemCard({ item, onApply, onApprove, onReject }: Revi
       {item.original != null ? (
         <div style={{ display: "flex", gap: 8 }}>
           <DiffBlock label="이전" value={item.original} tone="remove" />
-          <DiffBlock label="이후" value={item.proposed ?? ""} tone="add" />
+          <DiffBlock label="이후" value={effectiveProposed ?? ""} tone="add" />
         </div>
-      ) : item.proposed != null ? (
+      ) : effectiveProposed != null ? (
         <div>
           <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>제안</div>
           <pre
@@ -117,7 +158,7 @@ export function ReviewQueueItemCard({ item, onApply, onApprove, onReject }: Revi
               color: "#1e293b",
             }}
           >
-            {item.proposed}
+            {effectiveProposed}
           </pre>
         </div>
       ) : null}
@@ -125,8 +166,36 @@ export function ReviewQueueItemCard({ item, onApply, onApprove, onReject }: Revi
       {item.reason && <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>{item.reason}</div>}
 
       {item.kind === "proposed_edit" && <ProvenanceBlock provenance={item.provenance} />}
+      {suggestion && suggestionProvenance && <ProvenanceBlock provenance={suggestionProvenance} />}
 
-      <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+      <div style={{ display: "flex", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+        {/* Generate suggestion button for health items */}
+        {hasSuggestionKind && !suggestion && (
+          <ActionButton
+            variant={isGenerating ? "disabled" : "approve"}
+            onClick={!isGenerating && onGenerate ? () => void onGenerate(item.id) : undefined}
+            disabled={isGenerating}
+          >
+            {isGenerating ? "⏳ 생성 중…" : generateLabel}
+          </ActionButton>
+        )}
+
+        {/* Post-generation actions for health items */}
+        {suggestion && hasSuggestionKind && (
+          <>
+            {item.kind === "missing_summary" && onApplyMaintenance ? (
+              <ActionButton variant="apply" onClick={() => void onApplyMaintenance(item.id)}>
+                Apply to Note
+              </ActionButton>
+            ) : (
+              <ActionButton variant="approve" onClick={handleCopy}>
+                Copy
+              </ActionButton>
+            )}
+          </>
+        )}
+
+        {/* Standard queue actions */}
         {(item.status === "new" || item.status === "drafted") && (
           <>
             {canApprove && (
