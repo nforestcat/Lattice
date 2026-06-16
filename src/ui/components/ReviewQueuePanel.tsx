@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ReviewQueueItem, ReviewItemStatus } from "../../api/types";
+import type { AiProvenance, ReviewQueueItem, ReviewItemStatus } from "../../api/types";
 import { ReviewQueueItemCard } from "./ReviewQueueItemCard";
 
 interface ReviewQueuePanelProps {
@@ -7,13 +7,28 @@ interface ReviewQueuePanelProps {
   readonly onApply: (id: string) => void | Promise<void>;
   readonly onApprove: (id: string) => void | Promise<void>;
   readonly onReject: (id: string) => void | Promise<void>;
+  readonly generating?: Set<string>;
+  readonly suggestions?: Record<string, string>;
+  readonly provenances?: Record<string, AiProvenance>;
+  readonly onGenerate?: (id: string) => void | Promise<void>;
+  readonly onApplyMaintenance?: (id: string) => void | Promise<void>;
 }
 
 const FILTER_TABS: Array<ReviewItemStatus | "all"> = [
   "all", "new", "drafted", "approved", "applied", "rejected",
 ];
 
-export function ReviewQueuePanel({ items, onApply, onApprove, onReject }: ReviewQueuePanelProps) {
+export function ReviewQueuePanel({
+  items,
+  onApply,
+  onApprove,
+  onReject,
+  generating,
+  suggestions,
+  provenances,
+  onGenerate,
+  onApplyMaintenance,
+}: ReviewQueuePanelProps) {
   const [filter, setFilter] = useState<ReviewItemStatus | "all">("all");
 
   const pendingCount = items.filter(
@@ -91,6 +106,11 @@ export function ReviewQueuePanel({ items, onApply, onApprove, onReject }: Review
               onApply={onApply}
               onApprove={onApprove}
               onReject={onReject}
+              generating={generating}
+              suggestions={suggestions}
+              provenances={provenances}
+              onGenerate={onGenerate}
+              onApplyMaintenance={onApplyMaintenance}
             />
           ))
         )}

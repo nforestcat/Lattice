@@ -281,6 +281,7 @@ export type VaultConfig = {
   llmConfig?: LlmConfig;
   archiveRetentionPolicy?: string;
   noteTemplates?: NoteTemplate[];
+  maintenanceSuggestions?: Record<string, { proposed: string; provenance: AiProvenance; generatedAt: string }>;
 };
 
 export type AiProvenance = {
@@ -328,7 +329,17 @@ export type ReviewItemKind =
   | "backlink_suggestion"
   | "duplicate_warning"
   | "orphan_note"
-  | "stale_note";
+  | "stale_note"
+  | "too_broad"
+  | "weak_backlinks";
+
+export type MaintenanceSuggestionKind =
+  | "split"
+  | "summary"
+  | "link_candidates"
+  | "review_prompt"
+  | "merge_or_delete"
+  | "backlinks_in";
 
 export type ReviewItemStatus =
   | "new"
@@ -352,6 +363,7 @@ export interface ReviewQueueItem {
   createdAt: number;
   sourceRef?: unknown;
   provenance?: AiProvenance;
+  suggestionKind?: MaintenanceSuggestionKind;
 }
 
 

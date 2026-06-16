@@ -6,6 +6,7 @@ import type {
   BacklinkSuggestion,
   ReviewQueueItem,
   ReviewItemKind,
+  MaintenanceSuggestionKind,
 } from "../../api/types";
 
 function captureCreatedAt(title: string): number {
@@ -74,17 +75,30 @@ export function adaptHealthIssue(
   issue: string
 ): ReviewQueueItem {
   let kind: ReviewItemKind;
+  let suggestionKind: MaintenanceSuggestionKind | undefined;
+
   if (issue === "missingSummary") {
     kind = "missing_summary";
+    suggestionKind = "summary";
   } else if (issue === "isDuplicated") {
     kind = "duplicate_warning";
+    suggestionKind = "merge_or_delete";
   } else if (issue === "isOrphan") {
     kind = "orphan_note";
-  } else if (issue === "isStale" || issue === "isTooBroad" || issue === "weakBacklinks") {
+    suggestionKind = "link_candidates";
+  } else if (issue === "isTooBroad") {
+    kind = "too_broad";
+    suggestionKind = "split";
+  } else if (issue === "isStale") {
     kind = "stale_note";
+    suggestionKind = "review_prompt";
+  } else if (issue === "weakBacklinks") {
+    kind = "weak_backlinks";
+    suggestionKind = "backlinks_in";
   } else {
     kind = "dead_link";
   }
+
   return {
     id: `health-${report.path}-${issue}`,
     sourceId: report.path,
@@ -95,6 +109,7 @@ export function adaptHealthIssue(
     gitStaged: false,
     createdAt: 0,
     sourceRef: report,
+    suggestionKind,
   };
 }
 
