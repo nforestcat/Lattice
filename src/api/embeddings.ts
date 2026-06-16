@@ -7,6 +7,14 @@ export type VectorCacheEntry = {
 
 export type VectorCache = Record<string, VectorCacheEntry>;
 
+export type EmbeddingsStatusEntry = {
+  lastError?: string;
+  failedAt?: string;
+  lastIndexedAt?: string;
+};
+
+export type EmbeddingsStatus = Record<string, EmbeddingsStatusEntry>;
+
 import { invoke } from "@tauri-apps/api/core";
 
 function configForRemoteEmbedding(config: LlmConfig): LlmConfig {

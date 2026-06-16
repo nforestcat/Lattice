@@ -78,6 +78,8 @@ export function createTauriVaultApi(): VaultApi {
     getArchiveStatus: () => invoke<{ fileCount: number; totalBytes: number }>("get_archive_status"),
     loadEmbeddingsCache: () => invoke<string>("load_embeddings_cache"),
     saveEmbeddingsCache: (content: string) => invoke<void>("save_embeddings_cache", { content }),
+    loadEmbeddingsStatus: () => invoke<string>("load_embeddings_status"),
+    saveEmbeddingsStatus: (content: string) => invoke<void>("save_embeddings_status", { content }),
     getUnresolvedLinks: () => invoke<UnresolvedLinkGroup[]>("get_unresolved_links"),
     parseProposedEdits: (rawText: string) => invoke<ProposedEdit[]>("parse_proposed_edits", { rawText }),
     getBacklinkSuggestions: (activePath: string) =>
