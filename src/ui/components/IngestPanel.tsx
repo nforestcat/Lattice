@@ -1,12 +1,12 @@
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { ingestPdf, ingestUrl } from "../../api/tauriVault";
 import { ingestToNote } from "../../core/ingest";
-import type { IngestRaw, IngestResult, LlmConfig, VaultConfig } from "../../api/types";
+import type { IngestDuplicateCheck, IngestRaw, IngestResult, LlmConfig, VaultConfig } from "../../api/types";
 import { DuplicateWarning } from "./ingest/DuplicateWarning";
 import { ReviewEditor } from "./ingest/ReviewEditor";
 import { UrlPdfInputs } from "./ingest/UrlPdfInputs";
+import { checkIngestDuplicate } from "./ingest/checkIngestDuplicate";
 import { mapErrorMessage } from "./ingest/errorMessages";
 
 interface IngestPanelProps {
@@ -17,7 +17,7 @@ interface IngestPanelProps {
   enqueueIngest: (
     result: IngestResult,
     raw: IngestRaw,
-    dup: { exactMatch: string | null; similarNotes: { path: string; title: string }[] } | null
+    dup: IngestDuplicateCheck | null
   ) => string;
   onOpenReviewQueue?: () => void;
 }
@@ -47,10 +47,7 @@ export function IngestPanel({
   const [draftTitle, setDraftTitle] = useState("");
   const [draftTags, setDraftTags] = useState("");
   const [draftMarkdown, setDraftMarkdown] = useState("");
-  const [duplicateCheck, setDuplicateCheck] = useState<{
-    exactMatch: string | null;
-    similarNotes: { path: string; title: string }[];
-  } | null>(null);
+  const [duplicateCheck, setDuplicateCheck] = useState<IngestDuplicateCheck | null>(null);
   const [duplicateDismissed, setDuplicateDismissed] = useState(false);
   const [showRawExcerpt, setShowRawExcerpt] = useState(false);
 
@@ -66,16 +63,8 @@ export function IngestPanel({
       const raw = await getRaw();
       setRawPreview(raw);
 
-      let dup: { exactMatch: string | null; similarNotes: { path: string; title: string }[] } | null = null;
-      try {
-        dup = await invoke<{ exactMatch: string | null; similarNotes: { path: string; title: string }[] }>(
-          "check_ingest_duplicate",
-          { sourceRef: raw.sourceRef }
-        );
-        setDuplicateCheck(dup);
-      } catch {
-        // 중복 감지 실패는 무시
-      }
+      const dup = await checkIngestDuplicate(raw.sourceRef);
+      setDuplicateCheck(dup);
 
       if (dup?.exactMatch) {
         setStatus("preview");
@@ -108,6 +97,11 @@ export function IngestPanel({
       setTitleError("제목을 입력해 주세요.");
       return;
     }
+    if (!rawPreview) {
+      setError("원본 인제스트 내용을 찾지 못했습니다.");
+      setStatus("error");
+      return;
+    }
     setTitleError(null);
 
     const tags = draftTags
@@ -116,7 +110,7 @@ export function IngestPanel({
       .filter(Boolean);
     enqueueIngest(
       { title, markdown: draftMarkdown, tags },
-      rawPreview!,
+      rawPreview,
       duplicateCheck
     );
     setStatus("queued");

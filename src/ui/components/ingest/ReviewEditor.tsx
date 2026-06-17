@@ -14,7 +14,7 @@ interface ReviewEditorProps {
   onTagsChange: (v: string) => void;
   draftMarkdown: string;
   onMarkdownChange: (v: string) => void;
-  similarNotes: { path: string; title: string }[];
+  similarNotes: readonly { readonly path: string; readonly title: string }[];
   rawPreview: IngestRaw | null;
   showRawExcerpt: boolean;
   onToggleRawExcerpt: () => void;

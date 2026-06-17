@@ -1,8 +1,8 @@
-export function formatYamlTags(tags: string[]): string {
+export function formatYamlTags(tags: readonly string[]): string {
   return `[${tags.join(", ")}]`;
 }
 
-export function applyTagsToMarkdown(markdown: string, tags: string[]): string {
+export function applyTagsToMarkdown(markdown: string, tags: readonly string[]): string {
   const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---/;
   const match = markdown.match(frontmatterPattern);
   const tagLine = `tags: ${formatYamlTags(tags)}`;

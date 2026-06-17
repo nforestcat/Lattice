@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AiProvenance, ReviewQueueItem, ReviewItemStatus } from "../../api/types";
+import type { AiProvenance, IngestQueueUpdate, ReviewQueueItem, ReviewItemStatus } from "../../api/types";
 import { ReviewQueueItemCard } from "./ReviewQueueItemCard";
 
 interface ReviewQueuePanelProps {
@@ -12,6 +12,7 @@ interface ReviewQueuePanelProps {
   readonly provenances?: Record<string, AiProvenance>;
   readonly onGenerate?: (id: string) => void | Promise<void>;
   readonly onApplyMaintenance?: (id: string) => void | Promise<void>;
+  readonly onUpdateIngestCapture?: (id: string, patch: IngestQueueUpdate) => void;
 }
 
 const FILTER_TABS: Array<ReviewItemStatus | "all"> = [
@@ -28,6 +29,7 @@ export function ReviewQueuePanel({
   provenances,
   onGenerate,
   onApplyMaintenance,
+  onUpdateIngestCapture,
 }: ReviewQueuePanelProps) {
   const [filter, setFilter] = useState<ReviewItemStatus | "all">("all");
 
@@ -111,6 +113,7 @@ export function ReviewQueuePanel({
               provenances={provenances}
               onGenerate={onGenerate}
               onApplyMaintenance={onApplyMaintenance}
+              onUpdateIngestCapture={onUpdateIngestCapture}
             />
           ))
         )}

@@ -6,6 +6,7 @@ import type {
   NoteHealthReport,
   BacklinkSuggestion,
   IngestQueueItem,
+  IngestQueueUpdate,
   ReviewQueueItem,
   ReviewItemKind,
   ReviewItemStatus,
@@ -37,6 +38,7 @@ export interface ReviewQueueSources {
   onRejectStubDraft?: (target: string) => TransitionResult;
   onApproveIngestCapture?: (id: string) => TransitionResult;
   onRejectIngestCapture?: (id: string) => TransitionResult;
+  onUpdateIngestCapture?: (id: string, patch: IngestQueueUpdate) => void;
 }
 
 export interface ReviewQueueHook {
@@ -45,6 +47,7 @@ export interface ReviewQueueHook {
   applyItem: (id: string) => Promise<void>;
   approveItem: (id: string) => Promise<void>;
   rejectItem: (id: string) => Promise<void>;
+  updateIngestCapture: (id: string, patch: IngestQueueUpdate) => void;
 }
 
 const ACTIVE_STATUSES: ReviewItemStatus[] = ["new", "drafted"];
@@ -73,6 +76,7 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     onRejectStubDraft,
     onApproveIngestCapture,
     onRejectIngestCapture,
+    onUpdateIngestCapture,
   } = sources;
 
   const [overrides, setOverrides] = useState<Record<string, ReviewItemStatus>>({});
@@ -182,5 +186,9 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     });
   }
 
-  return { items, filterItems, applyItem, approveItem, rejectItem };
+  function updateIngestCapture(id: string, patch: IngestQueueUpdate) {
+    onUpdateIngestCapture?.(id, patch);
+  }
+
+  return { items, filterItems, applyItem, approveItem, rejectItem, updateIngestCapture };
 }

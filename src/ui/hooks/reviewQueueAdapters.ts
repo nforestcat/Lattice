@@ -136,14 +136,19 @@ export function adaptIngestCapture(item: IngestQueueItem): ReviewQueueItem {
   const parts: string[] = [];
   if (item.duplicateExact) parts.push(`중복: ${item.duplicateExact}`);
   if (item.similarNotes.length > 0) parts.push(`유사 노트 ${item.similarNotes.length}건`);
+  if (item.suggestedLinks.length > 0) parts.push(`추천 링크 ${item.suggestedLinks.length}건`);
   const reason = parts.length > 0 ? parts.join(" · ") : undefined;
+  const path =
+    item.appendTargetPath !== null
+      ? `${item.appendTargetPath}에 append`
+      : `${item.targetFolder}/${item.title}.md`;
 
   return {
     id: item.id,
     sourceId: item.id,
     kind: "ingest_capture",
     status: item.status === "drafted" ? "new" : item.status,
-    path: `${item.targetFolder}/${item.title}.md`,
+    path,
     title: item.title,
     proposed: item.markdown,
     reason,
@@ -151,7 +156,7 @@ export function adaptIngestCapture(item: IngestQueueItem): ReviewQueueItem {
     createdAt: item.createdAt,
     sourceRef: item,
     provenance: {
-      source: "ingest",
+      source: item.raw.sourceRef,
       originalExcerpt: item.raw.text.slice(0, 200),
     },
   };

@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
 import type {
+  IngestDuplicateCheck,
   IngestQueueItem,
+  IngestQueueUpdate,
   IngestRaw,
   IngestResult,
   EntryMutationResult,
@@ -18,12 +20,17 @@ export interface IngestQueueHook {
   enqueueIngest: (
     result: IngestResult,
     raw: IngestRaw,
-    dup: { exactMatch: string | null; similarNotes: { path: string; title: string }[] } | null
+    dup: IngestDuplicateCheck | null
   ) => string;
-  updateIngestItem: (id: string, patch: Partial<Pick<IngestQueueItem, "title" | "tags" | "markdown" | "targetFolder">>) => void;
+  updateIngestItem: (id: string, patch: IngestQueueUpdate) => void;
   approveIngestItem: (id: string) => void;
   rejectIngestItem: (id: string) => void;
   applyIngestItem: (id: string) => Promise<void>;
+}
+
+function appendIngestMarkdown(existing: string, title: string, markdown: string): string {
+  const separator = existing.endsWith("\n") ? "\n" : "\n\n";
+  return `${existing}${separator}### Ingested Source (${title})\n\n${markdown.trim()}\n`;
 }
 
 export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions): IngestQueueHook {
@@ -33,9 +40,10 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
     (
       result: IngestResult,
       raw: IngestRaw,
-      dup: { exactMatch: string | null; similarNotes: { path: string; title: string }[] } | null
+      dup: IngestDuplicateCheck | null
     ): string => {
       const id = crypto.randomUUID();
+      const similarNotes = dup?.similarNotes ?? [];
       const item: IngestQueueItem = {
         id,
         title: result.title,
@@ -43,8 +51,10 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
         markdown: result.markdown,
         raw,
         targetFolder: "Ingested",
+        appendTargetPath: null,
         duplicateExact: dup?.exactMatch ?? null,
-        similarNotes: dup?.similarNotes ?? [],
+        similarNotes,
+        suggestedLinks: similarNotes,
         status: "drafted",
         createdAt: Date.now(),
       };
@@ -55,7 +65,7 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
   );
 
   const updateIngestItem = useCallback(
-    (id: string, patch: Partial<Pick<IngestQueueItem, "title" | "tags" | "markdown" | "targetFolder">>) => {
+    (id: string, patch: IngestQueueUpdate) => {
       setItems((prev) =>
         prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
       );
@@ -92,6 +102,26 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
       let createdPath: string | null = null;
 
       try {
+        if (item.appendTargetPath !== null) {
+          const appendTargetPath = item.appendTargetPath.trim();
+          if (!appendTargetPath) {
+            throw new Error("append 대상 노트 경로를 입력해 주세요.");
+          }
+          const target = await vaultApi.readNote(appendTargetPath);
+          await vaultApi.saveNote(
+            target.path,
+            appendIngestMarkdown(target.content, item.title, markdown),
+            target.revision
+          );
+          setItems((prev) =>
+            prev.map((i) =>
+              i.id === id ? { ...i, status: "applied" as const } : i
+            )
+          );
+          await onIngested(target.path);
+          return;
+        }
+
         const createResult = await vaultApi.createNote(item.targetFolder, item.title);
         if (!createResult.selectedPath) {
           throw new Error("생성된 노트 경로를 찾지 못했습니다.");
@@ -107,7 +137,15 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
         await onIngested(createdPath);
       } catch (err) {
         if (createdPath) {
-          try { await vaultApi.deleteEntry(createdPath); } catch { /* best effort rollback */ }
+          try {
+            await vaultApi.deleteEntry(createdPath);
+          } catch (rollbackErr) {
+            if (rollbackErr instanceof Error) {
+              console.warn("Failed to rollback ingest note", rollbackErr.message);
+            } else {
+              console.warn("Failed to rollback ingest note", String(rollbackErr));
+            }
+          }
         }
         throw err;
       }

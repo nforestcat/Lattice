@@ -1,5 +1,7 @@
-import type { CSSProperties, ReactNode } from "react";
-import type { AiProvenance, ReviewItemStatus, ReviewQueueItem } from "../../api/types";
+import type { AiProvenance, IngestQueueUpdate, ReviewItemStatus, ReviewQueueItem } from "../../api/types";
+import { IngestQueueReviewControls } from "./reviewQueue/IngestQueueReviewControls";
+import { ActionButton } from "./reviewQueue/ReviewQueueActionButton";
+import { DiffBlock, ProvenanceBlock } from "./reviewQueue/ReviewQueueBlocks";
 
 type QueueActionHandler = (id: string) => void | Promise<void>;
 
@@ -13,6 +15,7 @@ interface ReviewItemCardProps {
   readonly provenances?: Record<string, AiProvenance>;
   readonly onGenerate?: (id: string) => void | Promise<void>;
   readonly onApplyMaintenance?: (id: string) => void | Promise<void>;
+  readonly onUpdateIngestCapture?: (id: string, patch: IngestQueueUpdate) => void;
 }
 
 const KIND_COLORS: Record<string, string> = {
@@ -58,6 +61,7 @@ export function ReviewQueueItemCard({
   provenances = {},
   onGenerate,
   onApplyMaintenance,
+  onUpdateIngestCapture,
 }: ReviewItemCardProps) {
   const kindColor = KIND_COLORS[item.kind] ?? "#64748b";
   const statusStyle = STATUS_COLORS[item.status];
@@ -167,6 +171,9 @@ export function ReviewQueueItemCard({
       {item.reason && <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>{item.reason}</div>}
 
       {item.kind === "proposed_edit" && <ProvenanceBlock provenance={item.provenance} />}
+      {item.kind === "ingest_capture" && (
+        <IngestQueueReviewControls item={item} onUpdate={onUpdateIngestCapture} />
+      )}
       {suggestion && suggestionProvenance && <ProvenanceBlock provenance={suggestionProvenance} />}
 
       <div style={{ display: "flex", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
@@ -238,100 +245,5 @@ export function ReviewQueueItemCard({
         )}
       </div>
     </div>
-  );
-}
-
-function ProvenanceBlock({ provenance }: { readonly provenance?: AiProvenance }) {
-  if (provenance === undefined) {
-    return (
-      <div style={{ fontSize: 11, color: "#94a3b8", padding: "4px 8px", background: "#f8fafc", borderRadius: 4, border: "1px solid #e2e8f0" }}>
-        출처 없음 (no provenance recorded)
-      </div>
-    );
-  }
-
-  const isUnlinked = provenance.promptRunId === null;
-
-  return (
-    <div style={{ fontSize: 11, color: "#475569", padding: "6px 10px", background: "#f8fafc", borderRadius: 4, border: "1px solid #e2e8f0", display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
-      {isUnlinked && (
-        <span style={{ background: "#fef3c7", color: "#92400e", borderRadius: 3, padding: "1px 6px", fontWeight: 600 }}>
-          unlinked prompt
-        </span>
-      )}
-      <span><b>출처:</b> {provenance.source}</span>
-      {provenance.model && <span><b>모델:</b> {provenance.model}</span>}
-      {provenance.confidence !== undefined && <span><b>신뢰도:</b> {(provenance.confidence * 100).toFixed(0)}%</span>}
-      {provenance.appliedAt && <span><b>적용:</b> {new Date(provenance.appliedAt).toLocaleString()}</span>}
-      {provenance.originalExcerpt && (
-        <span style={{ width: "100%", fontStyle: "italic", color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          원문: {provenance.originalExcerpt.slice(0, 80)}{provenance.originalExcerpt.length > 80 ? "…" : ""}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function DiffBlock({ label, value, tone }: { readonly label: string; readonly value: string; readonly tone: "add" | "remove" }) {
-  const styles =
-    tone === "add"
-      ? { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#14532d" }
-      : { background: "#fef2f2", border: "1px solid #fecaca", color: "#7f1d1d" };
-
-  return (
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{label}</div>
-      <pre
-        style={{
-          margin: 0,
-          padding: "8px 10px",
-          borderRadius: 4,
-          fontSize: 12,
-          overflowX: "auto",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          ...styles,
-        }}
-      >
-        {value}
-      </pre>
-    </div>
-  );
-}
-
-type ActionVariant = "approve" | "apply" | "reject" | "disabled";
-
-const ACTION_VARIANT_STYLES: Record<ActionVariant, CSSProperties> = {
-  approve: { background: "#d1fae5", color: "#065f46", border: "1px solid #6ee7b7", cursor: "pointer" },
-  apply: { background: "#dbeafe", color: "#1d4ed8", border: "1px solid #93c5fd", cursor: "pointer" },
-  reject: { background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5", cursor: "pointer" },
-  disabled: { background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0", cursor: "not-allowed" },
-};
-
-function ActionButton({
-  variant,
-  onClick,
-  disabled,
-  children,
-}: {
-  readonly variant: ActionVariant;
-  readonly onClick?: () => void;
-  readonly disabled?: boolean;
-  readonly children: ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: "3px 12px",
-        fontSize: 12,
-        borderRadius: 4,
-        fontWeight: 600,
-        ...ACTION_VARIANT_STYLES[variant],
-      }}
-    >
-      {children}
-    </button>
   );
 }

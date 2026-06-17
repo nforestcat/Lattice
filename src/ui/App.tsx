@@ -476,6 +476,7 @@ export function App() {
     onRejectStubDraft: (target) => rejectDraft(target),
     onApproveIngestCapture: (id) => { ingestQueue.approveIngestItem(id); },
     onRejectIngestCapture: (id) => { ingestQueue.rejectIngestItem(id); },
+    onUpdateIngestCapture: (id, patch) => { ingestQueue.updateIngestItem(id, patch); },
   });
 
   const modelDownload = useModelDownload();
