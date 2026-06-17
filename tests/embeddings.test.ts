@@ -113,6 +113,25 @@ describe("Vector Embeddings & Cosine Similarity", () => {
       expect(result).toEqual([0.99, -0.01]);
     });
 
+    it("should reject embedding responses that contain non-numeric vector values", async () => {
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ embedding: [0.99, "bad"] }],
+        }),
+      });
+
+      const config: LlmConfig = {
+        provider: "openai",
+        apiKey: "sk-openai-key",
+        model: "gpt-4",
+      };
+
+      await expect(getEmbedding(config, "test plain text")).rejects.toThrow(
+        "Invalid response from OpenAI embedding API"
+      );
+    });
+
     it("should use the configured remote embedding provider instead of the chat provider", async () => {
       const mockResponse = {
         data: [

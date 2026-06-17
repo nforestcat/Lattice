@@ -1,4 +1,6 @@
 import type { LlmConfig } from "./types";
+import { invoke } from "@tauri-apps/api/core";
+import { isDesktopRuntime } from "./runtime";
 
 export type VectorCacheEntry = {
   contentHash: string;
@@ -15,7 +17,22 @@ export type EmbeddingsStatusEntry = {
 
 export type EmbeddingsStatus = Record<string, EmbeddingsStatusEntry>;
 
-import { invoke } from "@tauri-apps/api/core";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseNumberVector(value: unknown): number[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === "number") ? value : null;
+}
+
+function parseOllamaEmbedding(data: unknown): number[] | null {
+  return parseNumberVector(isRecord(data) ? data.embedding : undefined);
+}
+
+function parseOpenAiEmbedding(data: unknown): number[] | null {
+  const first = isRecord(data) && Array.isArray(data.data) ? data.data[0] : undefined;
+  return parseNumberVector(isRecord(first) ? first.embedding : undefined);
+}
 
 function configForRemoteEmbedding(config: LlmConfig): LlmConfig {
   const provider = config.embeddingProvider;
@@ -43,7 +60,7 @@ export async function getEmbedding(config: LlmConfig, text: string): Promise<num
 
   const embeddingConfig = configForRemoteEmbedding(config);
 
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (isDesktopRuntime()) {
     const redactedConfig = { ...embeddingConfig, apiKey: "" };
     return invoke<number[]>("get_llm_embedding", { config: redactedConfig, text: sanitizedText });
   }
@@ -67,11 +84,12 @@ export async function getEmbedding(config: LlmConfig, text: string): Promise<num
         throw new Error(`Ollama embedding error: ${response.statusText}`);
       }
 
-      const data = await response.json();
-      if (!data.embedding || !Array.isArray(data.embedding)) {
+      const data: unknown = await response.json();
+      const embedding = parseOllamaEmbedding(data);
+      if (embedding === null) {
         throw new Error("Invalid response from Ollama embedding API");
       }
-      return data.embedding;
+      return embedding;
     }
 
     case "lm-studio":
@@ -104,9 +122,9 @@ export async function getEmbedding(config: LlmConfig, text: string): Promise<num
         throw new Error(`OpenAI embedding error: ${response.statusText} ${errText}`);
       }
 
-      const data = await response.json();
-      const embedding = data.data?.[0]?.embedding;
-      if (!embedding || !Array.isArray(embedding)) {
+      const data: unknown = await response.json();
+      const embedding = parseOpenAiEmbedding(data);
+      if (embedding === null) {
         throw new Error("Invalid response from OpenAI embedding API");
       }
       return embedding;

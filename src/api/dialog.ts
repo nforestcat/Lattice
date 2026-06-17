@@ -1,14 +1,7 @@
 import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { isDesktopRuntime } from "./runtime";
 
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-  }
-}
-
-export function isDesktopRuntime(): boolean {
-  return Boolean(window.__TAURI_INTERNALS__);
-}
+export { isDesktopRuntime };
 
 export async function pickVaultFolder(): Promise<string | null> {
   if (!isDesktopRuntime()) {
