@@ -98,7 +98,7 @@ interface DistillWorkspaceProps {
   auditorSubTab: "health" | "links";
   setAuditorSubTab: (tab: "health" | "links") => void;
   generateRepairForIssue: (report: NoteHealthReport, issue: import("../repairPrompts").RepairIssueType | "duplicate" | "missing_summary") => Promise<number>;
-  generateAllRepairsForNote: (report: NoteHealthReport) => Promise<void>;
+  generateAllRepairsForNote: (report: NoteHealthReport) => Promise<number>;
   generatingRepairFor: Set<string>;
 }
 
@@ -747,8 +747,8 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                               disabled={["too_broad","duplicate","missing_summary","orphan"].some(i => generatingRepairFor.has(`${report.path}:${i}`))}
                                               onClick={async () => {
                                                 setLastRepairHint(null);
-                                                await generateAllRepairsForNote(report);
-                                                setLastRepairHint({ path: report.path, count: 1 });
+                                                const count = await generateAllRepairsForNote(report);
+                                                setLastRepairHint({ path: report.path, count });
                                               }}
                                             >
                                               Generate All Repairs

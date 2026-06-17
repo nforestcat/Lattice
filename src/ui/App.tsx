@@ -36,6 +36,7 @@ import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
 import { useIngestQueue } from "./hooks/useIngestQueue";
 import { applyProposedEditToVault } from "./proposedEditApply";
+import { findAmbiguousUpdateAnchor } from "./proposedEditGuards";
 import {
   PRESETS as SHARED_PRESETS,
   type PresetType as SharedPresetType,
@@ -876,26 +877,14 @@ export function App() {
       return false;
     }
 
-    // Pre-apply: warn when a type=update anchor appears more than once (first-match-only risk).
-    for (const edit of checkedEdits) {
-      if (edit.type === "update" && edit.targetContent) {
-        try {
-          const doc = await vaultApi.readNote(edit.path);
-          const target = edit.targetContent;
-          let occurrences = 0;
-          let pos = 0;
-          while ((pos = doc.content.indexOf(target, pos)) !== -1) {
-            occurrences++;
-            pos += target.length;
-            if (occurrences > 1) break;
-          }
-          if (occurrences > 1) {
-            setStatus(`Warning: anchor for "${edit.path}" appears multiple times — only the first match will be replaced. Review before applying.`);
-          }
-        } catch {
-          // Ignore pre-check errors; apply will surface them.
-        }
+    try {
+      const ambiguousAnchor = await findAmbiguousUpdateAnchor(checkedEdits, (path) => vaultApi.readNote(path));
+      if (ambiguousAnchor) {
+        setStatus(`Warning: anchor for "${ambiguousAnchor.path}" appears multiple times. Refine the proposed edit before applying.`);
+        return false;
       }
+    } catch {
+      // Ignore pre-check errors; apply will surface them.
     }
 
     let appliedCount = 0;

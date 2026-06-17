@@ -106,4 +106,49 @@ describe("Review Queue", () => {
     createNoteSpy.mockRestore();
     saveNoteSpy.mockRestore();
   });
+
+  it("blocks checked update edits when the target anchor is ambiguous", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockResolvedValue({
+      vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+      selectedPath: "Research/Compounding Memory.md",
+    });
+    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
+      saved: true,
+      revision: "rev-new",
+      conflict: false,
+      snapshotId: null,
+      gitCommit: null,
+    });
+    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Home.md",
+      content: "Welcome to the local wiki workspace!\n\nWelcome to the local wiki workspace!",
+      revision: "rev-home",
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByText("Load Mock Proposal"));
+    fireEvent.click(screen.getByText("Propose Wiki Edits"));
+
+    await waitFor(() => expect(screen.getByText("Research/Compounding Memory.md")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Apply Checked Edits"));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("Apply 4 proposed wiki edit(s), including 2 destructive edit(s)?");
+      expect(readNoteSpy).toHaveBeenCalledWith("Home.md");
+      expect(screen.getByText(/appears multiple times/)).toBeTruthy();
+    });
+    expect(createNoteSpy).not.toHaveBeenCalled();
+    expect(saveNoteSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+    createNoteSpy.mockRestore();
+    saveNoteSpy.mockRestore();
+    readNoteSpy.mockRestore();
+  });
 });
