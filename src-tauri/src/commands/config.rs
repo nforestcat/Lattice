@@ -570,11 +570,15 @@ pub(crate) fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Ve
         }
         
         // 6. Duplicate check
+        let mut duplicate_peer_path: Option<String> = None;
+        let mut duplicate_peer_modified_at: Option<String> = None;
         for other in notes {
             if other.meta.path != note.meta.path {
                 if other.content.trim() == note.content.trim() && !note.content.trim().is_empty() {
                     is_duplicated = true;
                     issues.push(format!("Duplicate content: Identical to note [[{}]].", other.meta.title));
+                    duplicate_peer_path = Some(other.meta.path.clone());
+                    duplicate_peer_modified_at = other.meta.modified_at.clone();
                     break;
                 }
             }
@@ -589,6 +593,11 @@ pub(crate) fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Ve
         if missing_summary { score = score.saturating_sub(15); }
         if weak_backlinks { score = score.saturating_sub(10); }
         
+        let duplicate_peer = duplicate_peer_path.map(|p| crate::models::DuplicatePeerInfo {
+            path: p,
+            score: 0, // filled in post-pass below
+            modified_at: duplicate_peer_modified_at,
+        });
         reports.push(NoteHealthReport {
             path: note.meta.path.clone(),
             title: note.meta.title.clone(),
@@ -600,7 +609,19 @@ pub(crate) fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Ve
             is_duplicated,
             missing_summary,
             weak_backlinks,
+            duplicate_peer,
         });
+    }
+
+    // Fill in peer scores for duplicate pairs (requires all reports to be built first)
+    let path_to_score: std::collections::HashMap<String, usize> =
+        reports.iter().map(|r| (r.path.clone(), r.score)).collect();
+    for report in &mut reports {
+        if let Some(ref mut peer) = report.duplicate_peer {
+            if let Some(&peer_score) = path_to_score.get(&peer.path) {
+                peer.score = peer_score;
+            }
+        }
     }
 
     Ok(reports)

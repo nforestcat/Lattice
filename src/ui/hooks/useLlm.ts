@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { vaultApi } from "../../api";
 import { sendChatMessage, type ChatMessage } from "../../api/llm";
-import type { AiProvenance, ContextBundle, LlmConfig, NoteDocument, NoteTemplate, ProposedEdit, VaultConfig, VaultSnapshot } from "../../api/types";
+import type { AiAuditRecord, AiProvenance, ContextBundle, LlmConfig, NoteDocument, NoteHealthReport, NoteTemplate, ProposedEdit, VaultConfig, VaultSnapshot } from "../../api/types";
 import { DEFAULT_LLM_CONFIG } from "./contextShared";
+import { buildDeterministicMergeEdit, buildRepairPrompt, PROPOSE_EDIT_CONTRACT, selectSurvivorPath, type DuplicatePeer, type RepairIssueType } from "../repairPrompts";
 
 export interface MetadataSuggestions {
   tags: string[];
@@ -58,6 +59,7 @@ export function useLlm(callbacks: UseLlmCallbacks) {
   const [selectedSuggestedTags, setSelectedSuggestedTags] = useState<Set<string>>(new Set());
   const [selectedSuggestedProperties, setSelectedSuggestedProperties] = useState<Set<string>>(new Set());
   const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
+  const [generatingRepairFor, setGeneratingRepairFor] = useState<Set<string>>(new Set());
   const [isAutofillingTemplate, setIsAutofillingTemplate] = useState(false);
 
   async function handleSendChatMessage() {
@@ -84,14 +86,7 @@ export function useLlm(callbacks: UseLlmCallbacks) {
         systemContent += `\n\nCustom Instructions:\n${promptInstruction.trim()}`;
       }
 
-      systemContent += `\n\nIf you want to suggest modifications to notes, format your edits inside the response using this tag pattern:
-<propose_edit type="create|update|merge|delete" path="relative/path/to/note.md" new_path="optional/new/path.md">
-<reason>Explain why this edit is suggested.</reason>
-<content><![CDATA[New content for create, or target replacement content details]]></content>
-<target_content><![CDATA[Exact text to replace in update/merge]]></target_content>
-<replacement_content><![CDATA[New replacement text in update/merge]]></replacement_content>
-</propose_edit>
-You can suggest multiple edits. Do not include markdown wraps around the tags.`;
+      systemContent += `\n\n${PROPOSE_EDIT_CONTRACT}`;
 
       payload.push({ role: "system", content: systemContent });
       payload.push(...newMessages);
@@ -294,5 +289,107 @@ Return the complete note content including any YAML frontmatter block at the ver
     handleToggleSuggestedProperty,
     applyMetadataSuggestions,
     autofillActiveNoteWithTemplate,
+    generateRepairForIssue,
+    generateAllRepairsForNote,
+    generatingRepairFor,
   };
+
+  async function generateRepairForIssue(
+    report: NoteHealthReport,
+    issue: RepairIssueType | "duplicate" | "missing_summary"
+  ): Promise<number> {
+    const key = `${report.path}:${issue}`;
+    setGeneratingRepairFor((prev) => new Set(prev).add(key));
+    try {
+      if (issue === "missing_summary") {
+        // Direct-apply path: no ProposedEdit, write metadata immediately
+        const doc = await vaultApi.readNote(report.path);
+        const prompt = `Below is the content of a wiki note. Please write a concise, one-sentence summary of this note to be stored in its frontmatter. Return ONLY the summary text, with no preamble, no markdown formatting, and no quotes.\n\nNote Content:\n${doc.content}`;
+        const raw = await sendChatMessage(llmConfig, [{ role: "user", content: prompt }]);
+        const cleanSummary = raw.replace(/^["'\s]+|["'\s]+$/g, "").trim();
+        await vaultApi.applyNoteMetadata(report.path, { summary: cleanSummary }, []);
+        const auditRecord: AiAuditRecord = {
+          editId: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+          editType: "update",
+          path: report.path,
+          model: llmConfig.model,
+          source: "auditor",
+          appliedAt: new Date().toISOString(),
+        };
+        await vaultApi.appendAiAudit(auditRecord);
+        setStatus(`Summary applied to ${report.path}`);
+        void runHealthAudit();
+        return 1;
+      }
+
+      if (issue === "duplicate") {
+        const peer = report.duplicatePeer as DuplicatePeer | undefined;
+        if (!peer) {
+          setStatus(`No duplicate peer found for ${report.path}`);
+          return 0;
+        }
+        const survivorPath = selectSurvivorPath(report, peer);
+        const survivorDoc = await vaultApi.readNote(survivorPath);
+        const edit = buildDeterministicMergeEdit(report, peer, survivorDoc.content);
+        const provenance: AiProvenance = { source: "auditor", model: llmConfig.model };
+        setProposedEdits((prev) => {
+          const filtered = prev.filter((p) => !(p.path === edit.path && p.type === edit.type));
+          return [...filtered, { ...edit, checked: true, provenance }];
+        });
+        setStatus(`Duplicate merge proposal added for ${report.path}`);
+        return 1;
+      }
+
+      // LLM-repairable: too_broad, orphan
+      const doc = await vaultApi.readNote(report.path);
+      const cappedContent = doc.content.length > 6000
+        ? doc.content.substring(0, 6000) + "\n[…truncated]"
+        : doc.content;
+      const vaultTitles = vault?.notes.map((n) => n.title) ?? [];
+      const { system, user } = buildRepairPrompt(issue, {
+        notePath: report.path,
+        noteContent: cappedContent,
+        noteTitle: report.title,
+        vaultTitles,
+      });
+      const response = await sendChatMessage(llmConfig, [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ]);
+      const edits = await vaultApi.parseProposedEdits(response);
+      if (edits.length === 0) {
+        setStatus(`No repair proposals generated for ${report.path}`);
+        return 0;
+      }
+      const provenance: AiProvenance = { source: "auditor", model: llmConfig.model };
+      setProposedEdits((prev) => {
+        const filtered = prev.filter((p) => !edits.some((e) => e.path === p.path && e.type === p.type));
+        const stamped = edits.map((e) => ({ ...e, checked: true, provenance }));
+        return [...filtered, ...stamped];
+      });
+      setStatus(`${edits.length} repair proposal(s) added for ${report.path}`);
+      return edits.length;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatus(`Repair failed for ${report.path} (${issue}): ${msg}`);
+      return 0;
+    } finally {
+      setGeneratingRepairFor((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }
+
+  async function generateAllRepairsForNote(report: NoteHealthReport): Promise<void> {
+    const activeIssues: Array<RepairIssueType | "duplicate" | "missing_summary"> = [];
+    if (report.isTooBroad) activeIssues.push("too_broad");
+    if (report.isDuplicated) activeIssues.push("duplicate");
+    if (report.missingSummary) activeIssues.push("missing_summary");
+    if (report.isOrphan) activeIssues.push("orphan");
+    for (const issue of activeIssues) {
+      await generateRepairForIssue(report, issue);
+    }
+  }
 }

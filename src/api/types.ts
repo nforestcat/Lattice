@@ -223,6 +223,12 @@ export type AiAuditRecord = {
   confidence?: number;
 };
 
+export type DuplicatePeerInfo = {
+  path: string;
+  score: number;
+  modifiedAt?: string;
+};
+
 export type NoteHealthReport = {
   path: string;
   title: string;
@@ -234,6 +240,7 @@ export type NoteHealthReport = {
   isDuplicated: boolean;
   missingSummary: boolean;
   weakBacklinks: boolean;
+  duplicatePeer?: DuplicatePeerInfo;
 };
 
 export type BacklinkSuggestion = {

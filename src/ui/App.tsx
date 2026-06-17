@@ -297,6 +297,9 @@ export function App() {
     handleToggleSuggestedProperty,
     applyMetadataSuggestions,
     autofillActiveNoteWithTemplate,
+    generateRepairForIssue,
+    generateAllRepairsForNote,
+    generatingRepairFor,
   } = llm;
 
   const embeddings = useEmbeddings(llmConfig, vault);
@@ -842,6 +845,28 @@ export function App() {
       return false;
     }
 
+    // Pre-apply: warn when a type=update anchor appears more than once (first-match-only risk).
+    for (const edit of checkedEdits) {
+      if (edit.type === "update" && edit.targetContent) {
+        try {
+          const doc = await vaultApi.readNote(edit.path);
+          const target = edit.targetContent;
+          let occurrences = 0;
+          let pos = 0;
+          while ((pos = doc.content.indexOf(target, pos)) !== -1) {
+            occurrences++;
+            pos += target.length;
+            if (occurrences > 1) break;
+          }
+          if (occurrences > 1) {
+            setStatus(`Warning: anchor for "${edit.path}" appears multiple times — only the first match will be replaced. Review before applying.`);
+          }
+        } catch {
+          // Ignore pre-check errors; apply will surface them.
+        }
+      }
+    }
+
     let appliedCount = 0;
     const nextEdits = [...proposedEdits];
 
@@ -1248,6 +1273,9 @@ export function App() {
               healthReports={healthReports}
               isScanningHealth={isScanningHealth}
               onRunHealthAudit={runHealthAudit}
+              generateRepairForIssue={generateRepairForIssue}
+              generateAllRepairsForNote={generateAllRepairsForNote}
+              generatingRepairFor={generatingRepairFor}
               gitStatus={gitStatus}
               gitChanges={gitChanges}
               selectedGitFile={selectedGitFile}
