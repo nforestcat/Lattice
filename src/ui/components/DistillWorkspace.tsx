@@ -332,6 +332,7 @@ export function DistillWorkspace({
           generating={maintenancePlanner.generating}
           suggestions={maintenancePlanner.suggestions}
           provenances={maintenancePlanner.provenances}
+          onUpdateIngestCapture={reviewQueue.updateIngestCapture}
           onGenerate={(id) => {
             const item = reviewQueue.items.find((i) => i.id === id);
             if (item) void maintenancePlanner.generate(item, llmConfig);
