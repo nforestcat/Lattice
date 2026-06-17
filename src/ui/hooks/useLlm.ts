@@ -382,14 +382,16 @@ Return the complete note content including any YAML frontmatter block at the ver
     }
   }
 
-  async function generateAllRepairsForNote(report: NoteHealthReport): Promise<void> {
+  async function generateAllRepairsForNote(report: NoteHealthReport): Promise<number> {
     const activeIssues: Array<RepairIssueType | "duplicate" | "missing_summary"> = [];
     if (report.isTooBroad) activeIssues.push("too_broad");
     if (report.isDuplicated) activeIssues.push("duplicate");
     if (report.missingSummary) activeIssues.push("missing_summary");
     if (report.isOrphan) activeIssues.push("orphan");
+    let generatedCount = 0;
     for (const issue of activeIssues) {
-      await generateRepairForIssue(report, issue);
+      generatedCount += await generateRepairForIssue(report, issue);
     }
+    return generatedCount;
   }
 }
