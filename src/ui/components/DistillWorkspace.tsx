@@ -97,6 +97,9 @@ interface DistillWorkspaceProps {
   onRunHealthAudit: () => Promise<void>;
   auditorSubTab: "health" | "links";
   setAuditorSubTab: (tab: "health" | "links") => void;
+  generateRepairForIssue: (report: NoteHealthReport, issue: import("../repairPrompts").RepairIssueType | "duplicate" | "missing_summary") => Promise<number>;
+  generateAllRepairsForNote: (report: NoteHealthReport) => Promise<void>;
+  generatingRepairFor: Set<string>;
 }
 
 export function DistillWorkspace({
@@ -149,6 +152,9 @@ export function DistillWorkspace({
   onRunHealthAudit,
   auditorSubTab,
   setAuditorSubTab,
+  generateRepairForIssue,
+  generateAllRepairsForNote,
+  generatingRepairFor,
   approveDraft,
   rejectDraft,
   approveAllDrafts,
@@ -185,6 +191,7 @@ export function DistillWorkspace({
 }: DistillWorkspaceProps) {
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [generatingSummaryPath, setGeneratingSummaryPath] = useState<string | null>(null);
+  const [lastRepairHint, setLastRepairHint] = useState<{ path: string; count: number } | null>(null);
 
   const maintenancePlanner = useMaintenancePlanner();
 
@@ -671,24 +678,81 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                               ✓ No quality issues detected for this note.
                                             </div>
                                           ) : (
-                                            <ul style={{ margin: "0 0 14px 0", paddingLeft: "18px", fontSize: "12px", color: "#475569", lineHeight: "1.5" }}>
-                                              {report.issues.map((issue, idx) => (
-                                                <li key={idx} style={{ marginBottom: "6px" }}>{issue}</li>
-                                              ))}
-                                            </ul>
+                                            <div style={{ margin: "0 0 14px 0", fontSize: "12px", color: "#475569" }}>
+                                              {report.isTooBroad && (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                                  <span>Too broad: Note content exceeds 5000 characters. Consider splitting.</span>
+                                                  <button type="button" className="smallButton" style={{ marginLeft: "8px", flexShrink: 0 }}
+                                                    disabled={generatingRepairFor.has(`${report.path}:too_broad`)}
+                                                    onClick={async () => { const n = await generateRepairForIssue(report, "too_broad"); setLastRepairHint({ path: report.path, count: n }); }}>
+                                                    {generatingRepairFor.has(`${report.path}:too_broad`) ? "Working..." : "Repair"}
+                                                  </button>
+                                                </div>
+                                              )}
+                                              {report.isDuplicated && (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                                  <span>Duplicate: Identical content found in another note.</span>
+                                                  <button type="button" className="smallButton" style={{ marginLeft: "8px", flexShrink: 0 }}
+                                                    disabled={generatingRepairFor.has(`${report.path}:duplicate`)}
+                                                    onClick={async () => { const n = await generateRepairForIssue(report, "duplicate"); setLastRepairHint({ path: report.path, count: n }); }}>
+                                                    {generatingRepairFor.has(`${report.path}:duplicate`) ? "Working..." : "Repair"}
+                                                  </button>
+                                                </div>
+                                              )}
+                                              {report.missingSummary && (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                                  <span>Missing summary: No summary in frontmatter.</span>
+                                                  <button type="button" className="smallButton primary" style={{ marginLeft: "8px", flexShrink: 0 }}
+                                                    disabled={generatingRepairFor.has(`${report.path}:missing_summary`)}
+                                                    onClick={async () => { const n = await generateRepairForIssue(report, "missing_summary"); setLastRepairHint({ path: report.path, count: n }); }}>
+                                                    {generatingRepairFor.has(`${report.path}:missing_summary`) ? "Generating..." : "Generate Summary"}
+                                                  </button>
+                                                </div>
+                                              )}
+                                              {report.isOrphan && (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                                  <span>Orphan: No other notes link to this note.</span>
+                                                  <button type="button" className="smallButton" style={{ marginLeft: "8px", flexShrink: 0 }}
+                                                    disabled={generatingRepairFor.has(`${report.path}:orphan`)}
+                                                    onClick={async () => { const n = await generateRepairForIssue(report, "orphan"); setLastRepairHint({ path: report.path, count: n }); }}>
+                                                    {generatingRepairFor.has(`${report.path}:orphan`) ? "Working..." : "Repair"}
+                                                  </button>
+                                                </div>
+                                              )}
+                                              {report.isStale && (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                                  <span>Stale: Not modified in over 30 days.</span>
+                                                  <span title="Auto-repair not yet available for this issue type" style={{ marginLeft: "8px", fontSize: "11px", color: "#94a3b8", flexShrink: 0 }}>Auto-repair unavailable</span>
+                                                </div>
+                                              )}
+                                              {report.weakBacklinks && (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                                                  <span>Weak backlinks: References many notes but has no inbound links.</span>
+                                                  <span title="Auto-repair not yet available for this issue type" style={{ marginLeft: "8px", fontSize: "11px", color: "#94a3b8", flexShrink: 0 }}>Auto-repair unavailable</span>
+                                                </div>
+                                              )}
+                                            </div>
                                           )}
 
-                                          <div style={{ display: "flex", gap: "8px" }}>
-                                            {report.missingSummary && (
-                                              <button
-                                                type="button"
-                                                className="smallButton primary"
-                                                disabled={generatingSummaryPath === report.path}
-                                                onClick={() => void handleGenerateSummary(report.path)}
-                                              >
-                                                {generatingSummaryPath === report.path ? "Generating..." : "Generate Summary"}
-                                              </button>
-                                            )}
+                                          {lastRepairHint?.path === report.path && lastRepairHint.count > 0 && (
+                                            <div style={{ fontSize: "11px", color: "#6366f1", marginBottom: "8px" }}>
+                                              {lastRepairHint.count} repair proposal(s) added → Proposed Edits panel
+                                            </div>
+                                          )}
+
+                                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                            <button
+                                              type="button"
+                                              className="smallButton primary"
+                                              disabled={["too_broad","duplicate","missing_summary","orphan"].some(i => generatingRepairFor.has(`${report.path}:${i}`))}
+                                              onClick={async () => {
+                                                setLastRepairHint(null);
+                                                await generateAllRepairsForNote(report);
+                                                setLastRepairHint({ path: report.path, count: 1 });
+                                              }}
+                                            >
+                                              Generate All Repairs
+                                            </button>
                                             <button
                                               type="button"
                                               className="smallButton"

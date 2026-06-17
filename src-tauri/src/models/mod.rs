@@ -395,6 +395,14 @@ pub struct ProposedEdit {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DuplicatePeerInfo {
+    pub path: String,
+    pub score: usize,
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NoteHealthReport {
     pub path: String,
     pub title: String,
@@ -406,6 +414,7 @@ pub struct NoteHealthReport {
     pub is_duplicated: bool,
     pub missing_summary: bool,
     pub weak_backlinks: bool,
+    pub duplicate_peer: Option<DuplicatePeerInfo>,
 }
 
 #[derive(Debug, Serialize)]
