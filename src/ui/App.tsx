@@ -34,6 +34,7 @@ import { useStubDrafting } from "./hooks/useStubDrafting";
 import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
+import { useIngestQueue } from "./hooks/useIngestQueue";
 import { applyProposedEditToVault } from "./proposedEditApply";
 import {
   PRESETS as SHARED_PRESETS,
@@ -445,12 +446,18 @@ export function App() {
     selectNote: (path) => selectNote(path),
   });
 
+  const ingestQueue = useIngestQueue({
+    onIngested: (path) => refreshVault(path),
+    setVault: (v) => setVault((prev) => prev ? { ...prev, ...v } : prev),
+  });
+
   const reviewQueue = useReviewQueue({
     inboxCaptures,
     bulkDrafts,
     proposedEdits,
     healthReports,
     backlinkSuggestions,
+    ingestItems: ingestQueue.ingestItems,
     gitStagedPaths: new Set(gitChanges.filter(c => c.staged).map(c => c.path)),
     onApplyInboxCapture: (id) => {
       void markInboxCaptureProcessed(id);
@@ -464,8 +471,11 @@ export function App() {
       await applyBacklinkSuggestion(suggestion);
       return true;
     },
+    onApplyIngestCapture: (id) => ingestQueue.applyIngestItem(id),
     onApproveStubDraft: (target) => approveDraft(target),
     onRejectStubDraft: (target) => rejectDraft(target),
+    onApproveIngestCapture: (id) => { ingestQueue.approveIngestItem(id); },
+    onRejectIngestCapture: (id) => { ingestQueue.rejectIngestItem(id); },
   });
 
   const modelDownload = useModelDownload();
@@ -1126,8 +1136,8 @@ export function App() {
         onClose={() => setShowIngestPanel(false)}
         llmConfig={llmConfig}
         vaultConfig={vaultConfig}
-        setVault={(v) => setVault((prev) => prev ? { ...prev, ...v } : prev)}
-        onIngested={(path) => refreshVault(path)}
+        enqueueIngest={ingestQueue.enqueueIngest}
+        onOpenReviewQueue={() => { setShowIngestPanel(false); setViewMode("distill"); setDistillTab("review"); }}
       />
 
       <ConflictResolver

@@ -346,6 +346,7 @@ export type GitFileChange = {
 
 export type ReviewItemKind =
   | "inbox_capture"
+  | "ingest_capture"
   | "ingest_draft"
   | "proposed_edit"
   | "missing_summary"
@@ -389,5 +390,18 @@ export interface ReviewQueueItem {
   provenance?: AiProvenance;
   suggestionKind?: MaintenanceSuggestionKind;
 }
+
+export type IngestQueueItem = {
+  id: string;
+  title: string;
+  tags: string[];
+  markdown: string;
+  raw: IngestRaw;
+  targetFolder: string;
+  duplicateExact: string | null;
+  similarNotes: { path: string; title: string }[];
+  status: "drafted" | "approved" | "applied" | "rejected";
+  createdAt: number;
+};
 
 

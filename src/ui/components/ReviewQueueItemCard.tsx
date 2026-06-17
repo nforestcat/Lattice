@@ -17,6 +17,7 @@ interface ReviewItemCardProps {
 
 const KIND_COLORS: Record<string, string> = {
   inbox_capture: "#6366f1",
+  ingest_capture: "#0284c7",
   ingest_draft: "#0ea5e9",
   proposed_edit: "#f59e0b",
   missing_summary: "#8b5cf6",
@@ -60,8 +61,8 @@ export function ReviewQueueItemCard({
 }: ReviewItemCardProps) {
   const kindColor = KIND_COLORS[item.kind] ?? "#64748b";
   const statusStyle = STATUS_COLORS[item.status];
-  const canApply = item.kind === "inbox_capture" || item.kind === "proposed_edit" || item.kind === "backlink_suggestion";
-  const canApprove = item.kind === "ingest_draft" || item.kind === "proposed_edit";
+  const canApply = item.kind === "inbox_capture" || item.kind === "proposed_edit" || item.kind === "backlink_suggestion" || item.kind === "ingest_capture";
+  const canApprove = item.kind === "ingest_draft" || item.kind === "proposed_edit" || item.kind === "ingest_capture";
 
   const isGenerating = generating.has(item.id);
   const suggestion = suggestions[item.id];
