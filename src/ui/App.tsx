@@ -21,6 +21,8 @@ import { LinkSuggestionsSidebar } from "./components/LinkSuggestionsSidebar";
 import { EmbeddingsIndexPanel } from "./components/EmbeddingsIndexPanel";
 import { IngestPanel } from "./components/IngestPanel";
 import { ConflictResolver } from "./components/ConflictResolver";
+import { useModelDownload } from "./hooks/useModelDownload";
+import { ModelDownloadContext } from "./contexts/ModelDownloadContext";
 import { useGit } from "./hooks/useGit";
 import { useEmbeddings } from "./hooks/useEmbeddings";
 import { useSearch } from "./hooks/useSearch";
@@ -223,6 +225,18 @@ export function App() {
   const [showConflictResolver, setShowConflictResolver] = useState(false);
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git" | "review">("paste");
   const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions" | "index">("context");
+  const [embeddingBannerDismissed, setEmbeddingBannerDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("lattice.onboarding.embeddingBannerDismissed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  function dismissEmbeddingBanner() {
+    setEmbeddingBannerDismissed(true);
+    try { localStorage.setItem("lattice.onboarding.embeddingBannerDismissed", "true"); } catch { /* ignore */ }
+  }
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const previewScrollRef = useRef<HTMLElement | null>(null);
   const isSyncingScroll = useRef(false);
@@ -453,6 +467,13 @@ export function App() {
     onApproveStubDraft: (target) => approveDraft(target),
     onRejectStubDraft: (target) => rejectDraft(target),
   });
+
+  const modelDownload = useModelDownload();
+
+  // Show banner when: provider unset AND model not downloaded AND not dismissed
+  const showEmbeddingBanner = !embeddingBannerDismissed
+    && !llmConfig?.embeddingProvider
+    && !modelDownload.downloaded;
 
   const promptHistory = usePromptHistory({
     vaultConfig,
@@ -1120,7 +1141,37 @@ export function App() {
         }}
       />
 
+      <ModelDownloadContext.Provider value={modelDownload}>
       <section className="editorPane">
+        {showEmbeddingBanner && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 14px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe",
+            fontSize: "12px", gap: 12,
+          }}>
+            <span style={{ color: "#1d4ed8" }}>
+              ✦ Enable offline semantic search — no API key needed, runs on your device.
+            </span>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <button
+                type="button"
+                className="smallButton primary"
+                onClick={() => setRightSidebarTab("index")}
+                style={{ fontSize: "11px" }}
+              >
+                Set up
+              </button>
+              <button
+                type="button"
+                className="smallButton"
+                onClick={dismissEmbeddingBanner}
+                style={{ fontSize: "11px" }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         <EditorToolbar
           viewMode={viewMode}
           setViewMode={setViewMode}
@@ -1336,7 +1387,11 @@ export function App() {
         </div>
 
         {rightSidebarTab === "index" ? (
-          <EmbeddingsIndexPanel llmConfig={llmConfig} vault={vault} />
+          <EmbeddingsIndexPanel
+            llmConfig={llmConfig}
+            vault={vault}
+            onUpdateLlmConfig={(patch) => void updateVaultConfig({ llmConfig: { ...llmConfig, ...patch } })}
+          />
         ) : rightSidebarTab === "suggestions" ? (
           <LinkSuggestionsSidebar
             activePath={activePath}
@@ -1578,6 +1633,7 @@ export function App() {
         )}
         <p className="status">{status}</p>
       </aside>
+      </ModelDownloadContext.Provider>
 
       {triageCaptureToAppend && (
         <div className="modalOverlay" onClick={() => setTriageCaptureToAppend(null)}>

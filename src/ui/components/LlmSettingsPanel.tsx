@@ -1,39 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { LlmConfig, LlmProvider, VaultConfig } from "../../api/types";
 import { vaultApi } from "../../api";
-import { invoke } from "@tauri-apps/api/core";
-
-type ModelStatus = {
-  downloaded: boolean;
-  downloading: boolean;
-  progressPct: number | null;
-  modelSizeMb: number;
-};
+import { useModelDownloadContext } from "../contexts/ModelDownloadContext";
 
 function LocalOnnxModelStatus() {
-  const [status, setStatus] = useState<ModelStatus | null>(null);
+  const { downloaded, modelSizeMb, downloading, progress, error, startDownload } = useModelDownloadContext();
 
-  useEffect(() => {
-    void invoke<ModelStatus>("get_local_embedding_model_status").then(setStatus).catch(() => {
-      setStatus({ downloaded: false, downloading: false, progressPct: null, modelSizeMb: 90 });
-    });
-  }, []);
-
-  function handleDownload() {
-    setStatus(prev => prev ? { ...prev, downloading: true } : null);
-    void invoke("download_local_embedding_model")
-      .then(() => invoke<ModelStatus>("get_local_embedding_model_status"))
-      .then(setStatus)
-      .catch(() => {
-        setStatus(prev => prev ? { ...prev, downloading: false } : null);
-      });
-  }
-
-  if (!status) {
-    return <span style={{ fontSize: "11px", color: "#6b7280" }}>상태 확인 중...</span>;
-  }
-
-  if (status.downloaded) {
+  if (downloaded) {
     return (
       <span style={{ fontSize: "11px", color: "#16a34a", fontWeight: 600 }}>
         ✓ 사용 가능
@@ -41,11 +14,20 @@ function LocalOnnxModelStatus() {
     );
   }
 
-  if (status.downloading) {
+  if (downloading) {
     return (
       <span style={{ fontSize: "11px", color: "#6b7280" }}>
         <span style={{ display: "inline-block", marginRight: "6px" }}>⏳</span>
-        다운로드 중{status.progressPct != null ? ` (${status.progressPct}%)` : "..."}
+        다운로드 중{progress?.pct != null ? ` (${progress.pct}%)` : "..."}
+      </span>
+    );
+  }
+
+  if (error) {
+    return (
+      <span style={{ fontSize: "11px", color: "#dc2626" }}>
+        오류: {error}{" "}
+        <button type="button" onClick={() => void startDownload()} style={{ fontSize: "11px", cursor: "pointer" }}>재시도</button>
       </span>
     );
   }
@@ -53,7 +35,7 @@ function LocalOnnxModelStatus() {
   return (
     <button
       type="button"
-      onClick={handleDownload}
+      onClick={() => void startDownload()}
       style={{
         background: "none",
         border: "1px solid #3b82f6",
@@ -65,7 +47,7 @@ function LocalOnnxModelStatus() {
         borderRadius: "4px",
       }}
     >
-      다운로드 (약 {status.modelSizeMb}MB)
+      다운로드 (약 {modelSizeMb.toFixed(0)}MB)
     </button>
   );
 }
