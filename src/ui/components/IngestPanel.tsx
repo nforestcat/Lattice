@@ -3,9 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { ingestPdf, ingestUrl } from "../../api/tauriVault";
 import { ingestToNote } from "../../core/ingest";
-import { applyTagsToMarkdown } from "../../core/ingestMarkdown";
-import type { EntryMutationResult, IngestRaw, LlmConfig, VaultConfig } from "../../api/types";
-import { vaultApi } from "../../api";
+import type { IngestRaw, IngestResult, LlmConfig, VaultConfig } from "../../api/types";
 import { DuplicateWarning } from "./ingest/DuplicateWarning";
 import { ReviewEditor } from "./ingest/ReviewEditor";
 import { UrlPdfInputs } from "./ingest/UrlPdfInputs";
@@ -16,8 +14,12 @@ interface IngestPanelProps {
   onClose: () => void;
   llmConfig: LlmConfig;
   vaultConfig: VaultConfig;
-  onIngested: (path: string) => void | Promise<void>;
-  setVault: (vault: EntryMutationResult["vault"]) => void;
+  enqueueIngest: (
+    result: IngestResult,
+    raw: IngestRaw,
+    dup: { exactMatch: string | null; similarNotes: { path: string; title: string }[] } | null
+  ) => string;
+  onOpenReviewQueue?: () => void;
 }
 
 type IngestStatus =
@@ -26,8 +28,7 @@ type IngestStatus =
   | "preview"
   | "processing"
   | "review"
-  | "saving"
-  | "done"
+  | "queued"
   | "error";
 
 export function IngestPanel({
@@ -35,14 +36,13 @@ export function IngestPanel({
   onClose,
   llmConfig,
   vaultConfig,
-  onIngested,
-  setVault,
+  enqueueIngest,
+  onOpenReviewQueue,
 }: IngestPanelProps) {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<IngestStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [titleError, setTitleError] = useState<string | null>(null);
-  const [lastCreatedPath, setLastCreatedPath] = useState<string | null>(null);
   const [rawPreview, setRawPreview] = useState<IngestRaw | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftTags, setDraftTags] = useState("");
@@ -102,7 +102,7 @@ export function IngestPanel({
     }
   }
 
-  async function saveNote() {
+  function handleEnqueue() {
     const title = draftTitle.trim();
     if (!title) {
       setTitleError("제목을 입력해 주세요.");
@@ -110,31 +110,16 @@ export function IngestPanel({
     }
     setTitleError(null);
 
-    setStatus("saving");
-    let createdPath: string | null = null;
-    try {
-      const tags = draftTags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      const markdown = applyTagsToMarkdown(draftMarkdown, tags);
-      const createResult = await vaultApi.createNote("Ingested", title);
-      if (!createResult.selectedPath) {
-        throw new Error("생성된 노트 경로를 찾지 못했습니다.");
-      }
-      createdPath = createResult.selectedPath;
-      await vaultApi.saveNote(createdPath, markdown, "");
-      setVault(createResult.vault);
-      setLastCreatedPath(createdPath);
-      setStatus("done");
-      await onIngested(createdPath);
-    } catch (err) {
-      if (createdPath) {
-        try { await vaultApi.deleteEntry(createdPath); } catch { /* best effort cleanup */ }
-      }
-      setError(err instanceof Error ? err.message : String(err));
-      setStatus("error");
-    }
+    const tags = draftTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    enqueueIngest(
+      { title, markdown: draftMarkdown, tags },
+      rawPreview!,
+      duplicateCheck
+    );
+    setStatus("queued");
   }
 
   function handleUrlIngest() {
@@ -167,7 +152,6 @@ export function IngestPanel({
     setStatus("idle");
     setError(null);
     setTitleError(null);
-    setLastCreatedPath(null);
     setRawPreview(null);
     setDraftTitle("");
     setDraftTags("");
@@ -177,13 +161,12 @@ export function IngestPanel({
     setShowRawExcerpt(false);
   }
 
-  const busy = status === "fetching" || status === "processing" || status === "saving";
+  const busy = status === "fetching" || status === "processing";
   const canSave = draftTitle.trim().length > 0 && !busy;
 
   const statusLabel: Partial<Record<IngestStatus, string>> = {
     fetching: "콘텐츠를 가져오는 중…",
     processing: "Ollama로 처리 중…",
-    saving: "노트 저장 중…",
   };
 
   const reviewSimilarNotes =
@@ -212,21 +195,18 @@ export function IngestPanel({
           </button>
         </div>
 
-        {status === "done" && (
+        {status === "queued" && (
           <div className="ingestSuccess">
-            <p>✓ 노트 저장됨{lastCreatedPath ? `: ${lastCreatedPath}` : ""}</p>
+            <p>리뷰 큐에 추가됨 — 검토 후 승인하세요</p>
             <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                className="primary"
-                onClick={() => {
-                  if (!lastCreatedPath) return;
-                  void onIngested(lastCreatedPath);
-                  onClose();
-                }}
-                disabled={!lastCreatedPath}
-              >
-                노트 열기
-              </button>
+              {onOpenReviewQueue && (
+                <button
+                  className="primary"
+                  onClick={() => { onOpenReviewQueue(); onClose(); }}
+                >
+                  리뷰 큐 열기
+                </button>
+              )}
               <button className="primary" onClick={reset}>
                 다시 인제스트
               </button>
@@ -238,7 +218,7 @@ export function IngestPanel({
         {status === "preview" && duplicateCheck?.exactMatch && !duplicateDismissed && (
           <DuplicateWarning
             exactMatch={duplicateCheck.exactMatch}
-            onOpenExisting={() => onIngested(duplicateCheck.exactMatch!)}
+            onOpenExisting={() => onClose()}
             onContinue={() => {
               setDuplicateDismissed(true);
               if (rawPreview) void processRaw(rawPreview);
@@ -261,7 +241,7 @@ export function IngestPanel({
             showRawExcerpt={showRawExcerpt}
             onToggleRawExcerpt={() => setShowRawExcerpt((v) => !v)}
             canSave={canSave}
-            onSave={() => void saveNote()}
+            onSave={handleEnqueue}
             onRegenerate={() => rawPreview && void processRaw(rawPreview)}
           />
         )}
@@ -275,7 +255,7 @@ export function IngestPanel({
           </div>
         )}
 
-        {(status === "idle" || status === "fetching" || status === "processing" || status === "saving") && (
+        {(status === "idle" || status === "fetching" || status === "processing") && (
           <UrlPdfInputs
             url={url}
             onUrlChange={setUrl}

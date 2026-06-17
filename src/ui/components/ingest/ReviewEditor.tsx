@@ -161,7 +161,7 @@ export function ReviewEditor({
 
       <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
         <button className="primary" onClick={onSave} disabled={!canSave}>
-          저장하기
+          리뷰 큐에 추가
         </button>
         <button onClick={onRegenerate} disabled={!rawPreview}>
           다시 생성
