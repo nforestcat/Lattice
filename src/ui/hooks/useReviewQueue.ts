@@ -121,6 +121,7 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
       result.push(adaptIngestCapture(ingest));
     }
 
+
     return result
       .map((item) =>
         gitStagedPaths ? { ...item, gitStaged: gitStagedPaths.has(item.path) } : item

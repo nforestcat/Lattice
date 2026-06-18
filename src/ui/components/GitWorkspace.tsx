@@ -30,6 +30,7 @@ interface GitWorkspaceProps {
   onCancelPendingPull: () => void;
   onStashAndPull: () => Promise<void>;
   onDropStash: () => Promise<void>;
+  extraStagedWarning?: string | null;
 }
 
 type ParsedDiffLine = {
@@ -244,7 +245,8 @@ export function GitWorkspace({
   onPullAnyway,
   onCancelPendingPull,
   onStashAndPull,
-  onDropStash
+  onDropStash,
+  extraStagedWarning
 }: GitWorkspaceProps) {
   const [isConsoleOpen, setIsConsoleOpen] = useState(true);
   const [collapsedHunks, setCollapsedHunks] = useState<Set<string>>(new Set());
@@ -314,6 +316,12 @@ export function GitWorkspace({
                 ? "Repository has unresolved merge conflicts. You cannot commit, pull, or push until you resolve them."
                 : "The currently viewed file contains unresolved conflict markers. Please clean them up before committing."}
             </p>
+          </div>
+        )}
+
+        {extraStagedWarning && (
+          <div className="gitConflictWarningCard" style={{ background: "#fef3c7", borderColor: "#fde68a" }}>
+            <p>⚠️ {extraStagedWarning}</p>
           </div>
         )}
 

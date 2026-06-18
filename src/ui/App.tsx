@@ -447,6 +447,11 @@ export function App() {
     selectNote: (path) => selectNote(path),
   });
 
+  const gitStagedPaths = useMemo(
+    () => new Set(gitChanges.filter(c => c.staged).map(c => c.path)),
+    [gitChanges]
+  );
+
   const ingestQueue = useIngestQueue({
     onIngested: (path) => refreshVault(path),
     setVault: (v) => setVault((prev) => prev ? { ...prev, ...v } : prev),
@@ -459,7 +464,7 @@ export function App() {
     healthReports,
     backlinkSuggestions,
     ingestItems: ingestQueue.ingestItems,
-    gitStagedPaths: new Set(gitChanges.filter(c => c.staged).map(c => c.path)),
+    gitStagedPaths,
     onApplyInboxCapture: (id) => {
       void markInboxCaptureProcessed(id);
     },

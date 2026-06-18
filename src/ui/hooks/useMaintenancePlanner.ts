@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { vaultApi } from "../../api";
 import { sendChatMessage } from "../../api/llm";
 import { buildMaintenancePrompt } from "../../core/maintenancePrompts";
+import { addManagedLink } from "../../core/markdown";
 import type {
   AiProvenance,
   LlmConfig,
@@ -20,7 +21,7 @@ export interface UseMaintenancePlannerResult {
   suggestions: Record<string, string>;
   provenances: Record<string, AiProvenance>;
   generate: (item: ReviewQueueItem, llmConfig: LlmConfig) => Promise<void>;
-  apply: (item: ReviewQueueItem) => Promise<void>;
+  apply: (item: ReviewQueueItem) => Promise<string[]>;
   hydrate: (rawSuggestions: Record<string, MaintenanceSuggestionEntry>) => void;
   clearSuggestion: (itemId: string) => void;
 }
@@ -150,32 +151,77 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
   );
 
   const apply = useCallback(
-    async (item: ReviewQueueItem) => {
-      if (item.kind !== "missing_summary") {
-        throw new Error(`apply() is only supported for missing_summary items, got: ${item.kind}`);
-      }
-
+    async (item: ReviewQueueItem): Promise<string[]> => {
       const proposed = suggestions[item.id];
       if (!proposed) {
         throw new Error("No suggestion generated yet for this item");
       }
 
       const provenance = provenances[item.id];
+      const appliedAt = new Date().toISOString();
 
-      await vaultApi.applyNoteMetadata(item.path, { summary: proposed }, []);
+      const auditPath = async (path: string) => {
+        try {
+          await vaultApi.appendAiAudit({
+            editId: item.id,
+            editType: "update",
+            path,
+            source: "maintenance_planner",
+            model: provenance?.model,
+            appliedAt,
+          });
+        } catch {
+          // audit failure is non-fatal
+        }
+      };
 
-      try {
-        await vaultApi.appendAiAudit({
-          editId: item.id,
-          editType: "update",
-          path: item.path,
-          source: "maintenance_planner",
-          model: provenance?.model,
-          appliedAt: new Date().toISOString(),
-        });
-      } catch {
-        // audit failure is non-fatal
+      if (item.suggestionKind === "summary" || item.kind === "missing_summary") {
+        await vaultApi.applyNoteMetadata(item.path, { summary: proposed }, []);
+        await auditPath(item.path);
+        item.status = "applied";
+        return [item.path];
       }
+
+      if (item.suggestionKind === "link_candidates") {
+        const doc = await vaultApi.readNote(item.path);
+        const updatedContent = addManagedLink(doc.content, item.title);
+        await vaultApi.saveNote(item.path, updatedContent, doc.revision);
+        await auditPath(item.path);
+        item.status = "applied";
+        return [item.path];
+      }
+
+      if (item.suggestionKind === "backlinks_in") {
+        const candidates = await vaultApi.getContextBundleCandidates(item.path);
+        const succeeded: string[] = [];
+        for (const candidate of candidates) {
+          try {
+            const doc = await vaultApi.readNote(candidate.path);
+            const updatedContent = addManagedLink(doc.content, item.title);
+            await vaultApi.saveNote(candidate.path, updatedContent, doc.revision);
+            await auditPath(candidate.path);
+            succeeded.push(candidate.path);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setErrors((prev) => ({ ...prev, [item.id]: msg }));
+            if (succeeded.length > 0) {
+              item.status = "applied";
+            }
+            return succeeded;
+          }
+        }
+        item.status = "applied";
+        return succeeded;
+      }
+
+      if (item.suggestionKind === "review_prompt") {
+        await vaultApi.applyNoteMetadata(item.path, { reviewRequestedAt: appliedAt }, []);
+        await auditPath(item.path);
+        item.status = "applied";
+        return [item.path];
+      }
+
+      throw new Error(`apply() is not supported for suggestionKind: ${item.suggestionKind}`);
     },
     [suggestions, provenances]
   );
