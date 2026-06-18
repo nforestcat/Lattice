@@ -11,7 +11,7 @@ interface SemanticRecommendation {
   rawSuggestion?: BacklinkSuggestion;
 }
 
-interface LinkSuggestionsSidebarProps {
+export interface LinkSuggestionsSidebarProps {
   activePath: string | null;
   context: NoteContext | null;
   linkSuggestions: Array<{ text: string; path: string }>;

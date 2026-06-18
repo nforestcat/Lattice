@@ -12,13 +12,10 @@ import { estimateTokens } from "../core/contextBundle";
 import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
 import { GraphView } from "./components/GraphView";
-import { PromptHistoryPanel } from "./components/PromptHistoryPanel";
 import { DistillWorkspace } from "./components/DistillWorkspace";
 import { Sidebar } from "./components/Sidebar";
-import { InspectorPanel } from "./components/InspectorPanel";
 import { EditorToolbar } from "./components/EditorToolbar";
-import { LinkSuggestionsSidebar } from "./components/LinkSuggestionsSidebar";
-import { EmbeddingsIndexPanel } from "./components/EmbeddingsIndexPanel";
+import { RightSidebar } from "./components/RightSidebar";
 import { IngestPanel } from "./components/IngestPanel";
 import { ConflictResolver } from "./components/ConflictResolver";
 import { useModelDownload } from "./hooks/useModelDownload";
@@ -1366,282 +1363,144 @@ export function App() {
         </div>
       </section>
 
-      <aside className="contextPane">
-        <div className="rightSidebarTabs">
-          <button
-            type="button"
-            className={rightSidebarTab === "context" ? "active" : ""}
-            onClick={() => setRightSidebarTab("context")}
-          >
-            LLM Context
-          </button>
-          <button
-            type="button"
-            className={rightSidebarTab === "suggestions" ? "active" : ""}
-            onClick={() => setRightSidebarTab("suggestions")}
-          >
-            Link Suggestions
-          </button>
-          <button
-            type="button"
-            className={rightSidebarTab === "index" ? "active" : ""}
-            onClick={() => setRightSidebarTab("index")}
-          >
-            Index
-          </button>
-        </div>
-
-        {rightSidebarTab === "index" ? (
-          <EmbeddingsIndexPanel
-            llmConfig={llmConfig}
-            vault={vault}
-            onUpdateLlmConfig={(patch) => {
-              const next = { ...llmConfig, ...patch };
-              setLlmConfig(next);
-              void updateVaultConfig({ llmConfig: next });
-            }}
-          />
-        ) : rightSidebarTab === "suggestions" ? (
-          <LinkSuggestionsSidebar
-            activePath={activePath}
-            context={context}
-            linkSuggestions={linkSuggestions}
-            backlinkSuggestions={backlinkSuggestions}
-            contextCandidates={contextCandidates}
-            isLoadingBacklinks={isLoadingBacklinkSuggestions}
-            onNavigateNote={selectNote}
-            onInsertLinkAtCursor={insertWikiLinkAtCursor}
-            onApplyWikiLinkSuggestion={applyWikiLinkSuggestion}
-            onApplyBacklinkSuggestion={applyBacklinkSuggestion}
-          />
-        ) : (
-          <>
-            <InspectorPanel
-              vault={vault}
-              activePath={activePath}
-              draft={draft}
-              selectedContextCount={selectedContextCount}
-              selectedContextCharacters={selectedContextCharacters}
-              selectedContextTokens={selectedContextTokens}
-              contextLimit={contextLimit}
-              isCustomLimit={isCustomLimit}
-              setIsCustomLimit={setIsCustomLimit}
-              handleLimitChange={handleLimitChange}
-              bundlePreset={bundlePreset}
-              handlePresetChange={handlePresetChange}
-              setBundlePreset={setBundlePreset}
-              PRESETS={PRESETS}
-              bundlePurpose={bundlePurpose}
-              setBundlePurpose={setBundlePurpose}
-              bundleMode={bundleMode}
-              setBundleMode={setBundleMode}
-              updateVaultConfig={updateVaultConfig}
-              setContextBundle={setContextBundle}
-              displayedCandidates={displayedCandidates}
-              embeddingStatus={embeddingStatus}
-              sortBy={sortBy}
-              setSortBy={setSortBy}
-              filterBy={filterBy}
-              setFilterBy={setFilterBy}
-              selectedContextPaths={selectedContextPaths}
-              toggleContextCandidate={toggleContextCandidate}
-              autoPruneCandidates={autoPruneCandidates}
-              switchToShortMode={switchToShortMode}
-              generateContextBundle={generateContextBundle}
-              contextBundle={contextBundle}
-              prevContextBundle={prevContextBundle}
-              contextCandidates={contextCandidates}
-              showTemplates={showTemplates}
-              setShowTemplates={setShowTemplates}
-              promptInstruction={promptInstruction}
-              handlePromptInstructionChange={handlePromptInstructionChange}
-              BUILTIN_TEMPLATES={BUILTIN_TEMPLATES}
-              vaultConfig={vaultConfig}
-              compileTemplate={compileTemplate}
-              deleteTemplate={deleteTemplate}
-              saveAsTemplate={saveAsTemplate}
-              copyCombinedPrompt={copyCombinedPrompt}
-              copyContextBundle={copyContextBundle}
-              presetForSettings={presetForSettings}
-              normalizeBundleMode={normalizeBundleMode}
-            />
-            <PromptHistoryPanel
-              vaultConfig={vaultConfig}
-              activePath={activePath}
-              archiveStatus={archiveStatus}
-              historySearchQuery={historySearchQuery}
-              setHistorySearchQuery={setHistorySearchQuery}
-              historyActiveNoteOnly={historyActiveNoteOnly}
-              setHistoryActiveNoteOnly={setHistoryActiveNoteOnly}
-              historyPresetFilter={historyPresetFilter}
-              setHistoryPresetFilter={setHistoryPresetFilter}
-              expandedRunId={expandedRunId}
-              setExpandedRunId={setExpandedRunId}
-              diffRunId={diffRunId}
-              setDiffRunId={setDiffRunId}
-              diffResult={diffResult}
-              currentPromptHash={currentPromptHash}
-              contextBundle={contextBundle}
-              promptInstruction={promptInstruction}
-              selectNote={selectNote}
-              applyPromptRun={applyPromptRun}
-              copyPromptRunQuestion={copyPromptRunQuestion}
-              copyFullPromptFromHistory={copyFullPromptFromHistory}
-              deletePromptRun={deletePromptRun}
-              loadPromptDiff={loadPromptDiff}
-              pruneArchivedPrompts={pruneArchivedPrompts}
-              exportPromptRuns={exportPromptRuns}
-              handleImportArchiveFile={handleImportArchiveFile}
-              buildCombinedPrompt={buildCombinedPrompt}
-            />
-            <section>
-              <h2>Capture</h2>
-              <textarea
-                className="captureInput"
-                placeholder="Paste an LLM answer, idea, or loose note..."
-                value={captureDraft}
-                onChange={(event) => setCaptureDraft(event.target.value)}
-              />
-              <p className="muted">{context ? `Related to [[${context.note.title}]]` : "No related note selected"}</p>
-              <button onClick={() => void captureToInbox()} disabled={!vault || !captureDraft.trim()}>Capture to Inbox</button>
-            </section>
-            {vault?.obsidianSettings?.detected && (
-              <section>
-                <h2>Obsidian</h2>
-                <p className="property">Readable line length: {vault.obsidianSettings.readableLineLength ? "On" : "Off"}</p>
-                {vault.obsidianSettings.theme && <p className="property">Theme: {vault.obsidianSettings.theme}</p>}
-                {vault.obsidianSettings.accentColor && <p className="property">Accent: {vault.obsidianSettings.accentColor}</p>}
-                {vault.obsidianSettings.attachmentFolderPath && (
-                  <p className="property">Attachments: <code>{vault.obsidianSettings.attachmentFolderPath}</code></p>
-                )}
-                {!!vault.obsidianSettings.cssSnippets?.length && (
-                  <p className="property">Snippets: {vault.obsidianSettings.cssSnippets.join(", ")}</p>
-                )}
-                {vault.obsidianSettings.hotkeys && (
-                  <p className="property">Hotkeys: {Object.keys(vault.obsidianSettings.hotkeys).length} custom hotkeys</p>
-                )}
-                {!!vault.obsidianSettings.enabledCorePlugins?.length && (
-                  <p className="muted">{vault.obsidianSettings.enabledCorePlugins.length} core plugins detected</p>
-                )}
-              </section>
-            )}
-            {activePath && isInboxPath(activePath) && (
-              <section>
-                <h2>Inbox Triage</h2>
-                {inboxCaptures.length ? inboxCaptures.map((capture) => (
-                  <div key={capture.id} className="triageCard">
-                    <strong>{capture.title}</strong>
-                    {capture.relatedTitle && <small>Related: [[{capture.relatedTitle}]]</small>}
-                    <p>{capture.body}</p>
-                    <div className="inlineActions">
-                      <button onClick={() => void promoteInboxCapture(capture.id)}>Create Note</button>
-                      <button onClick={() => setTriageCaptureToAppend({ id: capture.id, title: capture.title })}>Append to Note</button>
-                      <button onClick={() => void markInboxCaptureProcessed(capture.id)}>Mark Processed</button>
-                    </div>
-                  </div>
-                )) : <p className="muted">No unprocessed captures</p>}
-              </section>
-            )}
-            <section>
-              <h2>Tags</h2>
-              <div className="chips">
-                {context?.note.tags.map((tag) => <span key={tag}>#{tag}</span>)}
-              </div>
-            </section>
-            <section>
-              <h2>Properties</h2>
-              {Object.entries(context?.note.frontmatter ?? {}).map(([key, value]) => (
-                <p key={key} className="property"><strong>{key}</strong><span>{value}</span></p>
-              ))}
-            </section>
-            <section className="metadataSuggestionsSection">
-              <h2>AI Metadata Suggestions</h2>
-              {isGeneratingMetadata && (
-                <p className="metadataSuggestionsLoading">Generating suggestions...</p>
-              )}
-              {!metadataSuggestions && !isGeneratingMetadata && (
-                <button
-                  className="suggest-btn"
-                  disabled={!activePath}
-                  onClick={() => void generateMetadataSuggestions()}
-                >
-                  Suggest
-                </button>
-              )}
-              {metadataSuggestions && !isGeneratingMetadata && (
-                <div className="metadataSuggestionsCard">
-                  {metadataSuggestions.tags.length > 0 && (
-                    <div className="suggestedTagsGroup">
-                      <h3>Suggested Tags</h3>
-                      {metadataSuggestions.tags.map((tag) => (
-                        <label key={tag} className="suggestedTagLabel">
-                          <input
-                            type="checkbox"
-                            checked={selectedSuggestedTags.has(tag)}
-                            onChange={() => handleToggleSuggestedTag(tag)}
-                          />
-                          <span>#{tag}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {Object.keys(metadataSuggestions.frontmatter).length > 0 && (
-                    <div className="suggestedPropertiesGroup">
-                      <h3>Suggested Properties</h3>
-                      {Object.entries(metadataSuggestions.frontmatter).map(([key, value]) => (
-                        <label key={key} className="suggestedPropertyLabel">
-                          <input
-                            type="checkbox"
-                            checked={selectedSuggestedProperties.has(key)}
-                            onChange={() => handleToggleSuggestedProperty(key)}
-                          />
-                          <strong>{key}:</strong> <span>{value}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  <div className="metadataSuggestionsActions">
-                    <button
-                      className="apply-btn"
-                      onClick={() => void applyMetadataSuggestions()}
-                    >
-                      Apply Selected
-                    </button>
-                    <button
-                      className="clear-btn"
-                      onClick={() => setMetadataSuggestions(null)}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-            <section>
-              <h2>Snapshots</h2>
-              {snapshots.map((snapshot) => (
-                <button key={snapshot.id} onClick={() => void restoreSnapshot(snapshot.id)}>
-                  {new Date(snapshot.createdAt).toLocaleTimeString()} · {snapshot.reason}
-                </button>
-              ))}
-            </section>
-            <section>
-              <h2>Git</h2>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={gitStatus?.autoGitEnabled ?? false}
-                  disabled={!gitStatus?.isRepo}
-                  onChange={(event) => void toggleAutoGit(event.target.checked)}
-                />
-                <span>Auto commit</span>
-              </label>
-              <p className="muted">{gitStatus?.isRepo ? `Branch ${gitStatus.branch}` : "Not a Git vault"}</p>
-            </section>
-          </>
-        )}
-        <p className="status">{status}</p>
-      </aside>
+      <RightSidebar
+        rightSidebarTab={rightSidebarTab}
+        setRightSidebarTab={setRightSidebarTab}
+        inspectorProps={{
+          vault,
+          activePath,
+          draft,
+          selectedContextCount,
+          selectedContextCharacters,
+          selectedContextTokens,
+          contextLimit,
+          isCustomLimit,
+          setIsCustomLimit,
+          handleLimitChange,
+          bundlePreset,
+          handlePresetChange,
+          setBundlePreset,
+          PRESETS,
+          bundlePurpose,
+          setBundlePurpose,
+          bundleMode,
+          setBundleMode,
+          updateVaultConfig,
+          setContextBundle,
+          displayedCandidates,
+          embeddingStatus,
+          sortBy,
+          setSortBy,
+          filterBy,
+          setFilterBy,
+          selectedContextPaths,
+          toggleContextCandidate,
+          autoPruneCandidates,
+          switchToShortMode,
+          generateContextBundle,
+          contextBundle,
+          prevContextBundle,
+          contextCandidates,
+          showTemplates,
+          setShowTemplates,
+          promptInstruction,
+          handlePromptInstructionChange,
+          BUILTIN_TEMPLATES,
+          vaultConfig,
+          compileTemplate,
+          deleteTemplate,
+          saveAsTemplate,
+          copyCombinedPrompt,
+          copyContextBundle,
+          presetForSettings,
+          normalizeBundleMode,
+        }}
+        promptHistoryProps={{
+          vaultConfig,
+          activePath,
+          archiveStatus,
+          historySearchQuery,
+          setHistorySearchQuery,
+          historyActiveNoteOnly,
+          setHistoryActiveNoteOnly,
+          historyPresetFilter,
+          setHistoryPresetFilter,
+          expandedRunId,
+          setExpandedRunId,
+          diffRunId,
+          setDiffRunId,
+          diffResult,
+          currentPromptHash,
+          contextBundle,
+          promptInstruction,
+          selectNote,
+          applyPromptRun,
+          copyPromptRunQuestion,
+          copyFullPromptFromHistory,
+          deletePromptRun,
+          loadPromptDiff,
+          pruneArchivedPrompts,
+          exportPromptRuns,
+          handleImportArchiveFile,
+          buildCombinedPrompt,
+        }}
+        embeddingsIndexProps={{
+          llmConfig,
+          vault,
+          onUpdateLlmConfig: (patch) => {
+            const next = { ...llmConfig, ...patch };
+            setLlmConfig(next);
+            void updateVaultConfig({ llmConfig: next });
+          },
+        }}
+        linkSuggestionsProps={{
+          activePath,
+          context,
+          linkSuggestions,
+          backlinkSuggestions,
+          contextCandidates,
+          isLoadingBacklinks: isLoadingBacklinkSuggestions,
+          onNavigateNote: selectNote,
+          onInsertLinkAtCursor: insertWikiLinkAtCursor,
+          onApplyWikiLinkSuggestion: applyWikiLinkSuggestion,
+          onApplyBacklinkSuggestion: applyBacklinkSuggestion,
+        }}
+        vault={vault}
+        context={context}
+        activePath={activePath}
+        showInboxTriage={activePath != null && isInboxPath(activePath)}
+        status={status}
+        capture={{
+          draft: captureDraft,
+          setDraft: setCaptureDraft,
+          onCaptureToInbox: captureToInbox,
+        }}
+        inboxTriage={{
+          captures: inboxCaptures,
+          onPromote: promoteInboxCapture,
+          onMarkProcessed: markInboxCaptureProcessed,
+          setTriageCaptureToAppend,
+        }}
+        metadata={{
+          suggestions: metadataSuggestions,
+          isGenerating: isGeneratingMetadata,
+          selectedTags: selectedSuggestedTags,
+          selectedProperties: selectedSuggestedProperties,
+          onGenerate: generateMetadataSuggestions,
+          onToggleTag: handleToggleSuggestedTag,
+          onToggleProperty: handleToggleSuggestedProperty,
+          onApply: applyMetadataSuggestions,
+          onClear: () => setMetadataSuggestions(null),
+        }}
+        snapshots={{
+          items: snapshots,
+          onRestore: restoreSnapshot,
+        }}
+        git={{
+          status: gitStatus,
+          onToggleAutoGit: toggleAutoGit,
+        }}
+      />
       </ModelDownloadContext.Provider>
 
       {triageCaptureToAppend && (
