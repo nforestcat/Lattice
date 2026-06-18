@@ -1,17 +1,78 @@
 import type { LlmConfig } from "./types";
+import { invoke } from "@tauri-apps/api/core";
+import { isDesktopRuntime } from "./runtime";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-import { invoke } from "@tauri-apps/api/core";
+type GeminiContent = {
+  readonly role: "model" | "user";
+  readonly parts: readonly { readonly text: string }[];
+};
+
+type GeminiRequest = {
+  readonly contents: readonly GeminiContent[];
+  readonly systemInstruction?: { readonly parts: readonly { readonly text: string }[] };
+};
+
+type AnthropicMessage = {
+  readonly role: "assistant" | "user";
+  readonly content: string;
+};
+
+type AnthropicRequest = {
+  readonly model: string;
+  readonly max_tokens: number;
+  readonly messages: readonly AnthropicMessage[];
+  readonly system?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function firstItem(value: unknown): unknown {
+  return Array.isArray(value) ? value[0] : undefined;
+}
+
+function stringProperty(value: unknown, key: string): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const property = value[key];
+  return typeof property === "string" ? property : null;
+}
+
+function parseOpenAiChatContent(data: unknown): string | null {
+  const choice = firstItem(isRecord(data) ? data.choices : undefined);
+  const message = isRecord(choice) ? choice.message : undefined;
+  return stringProperty(message, "content");
+}
+
+function parseOllamaChatContent(data: unknown): string | null {
+  const message = isRecord(data) ? data.message : undefined;
+  return stringProperty(message, "content");
+}
+
+function parseGeminiChatContent(data: unknown): string | null {
+  const candidate = firstItem(isRecord(data) ? data.candidates : undefined);
+  const content = isRecord(candidate) ? candidate.content : undefined;
+  const part = firstItem(isRecord(content) ? content.parts : undefined);
+  return stringProperty(part, "text");
+}
+
+function parseAnthropicChatContent(data: unknown): string | null {
+  const content = firstItem(isRecord(data) ? data.content : undefined);
+  return stringProperty(content, "text");
+}
 
 export async function sendChatMessage(
   config: LlmConfig,
   messages: ChatMessage[]
 ): Promise<string> {
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (isDesktopRuntime()) {
     const redactedConfig = { ...config, apiKey: "" };
     return invoke<string>("send_llm_chat_message", { config: redactedConfig, messages });
   }
@@ -35,8 +96,12 @@ export async function sendChatMessage(
         throw new Error(`Ollama API error: ${response.statusText}`);
       }
 
-      const data = await response.json();
-      return data.message?.content || "";
+      const data: unknown = await response.json();
+      const content = parseOllamaChatContent(data);
+      if (content === null) {
+        throw new Error("Invalid response from Ollama chat API");
+      }
+      return content;
     }
 
     case "lm-studio":
@@ -70,8 +135,12 @@ export async function sendChatMessage(
         throw new Error(`OpenAI API error: ${response.statusText} ${errText}`);
       }
 
-      const data = await response.json();
-      return data.choices?.[0]?.message?.content || "";
+      const data: unknown = await response.json();
+      const content = parseOpenAiChatContent(data);
+      if (content === null) {
+        throw new Error("Invalid response from OpenAI-compatible chat API");
+      }
+      return content;
     }
 
     case "gemini": {
@@ -79,17 +148,14 @@ export async function sendChatMessage(
       const systemMsg = messages.find((m) => m.role === "system")?.content;
       const conversationMsgs = messages.filter((m) => m.role !== "system");
 
-      const contents = conversationMsgs.map((m) => ({
+      const contents: GeminiContent[] = conversationMsgs.map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
       }));
 
-      const body: any = { contents };
-      if (systemMsg) {
-        body.systemInstruction = {
-          parts: [{ text: systemMsg }],
-        };
-      }
+      const body: GeminiRequest = systemMsg
+        ? { contents, systemInstruction: { parts: [{ text: systemMsg }] } }
+        : { contents };
 
       const response = await fetch(url, {
         method: "POST",
@@ -102,8 +168,12 @@ export async function sendChatMessage(
         throw new Error(`Gemini API error: ${response.statusText} ${errText}`);
       }
 
-      const data = await response.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const data: unknown = await response.json();
+      const content = parseGeminiChatContent(data);
+      if (content === null) {
+        throw new Error("Invalid response from Gemini chat API");
+      }
+      return content;
     }
 
     case "anthropic": {
@@ -111,18 +181,13 @@ export async function sendChatMessage(
       const systemMsg = messages.find((m) => m.role === "system")?.content;
       const conversationMsgs = messages.filter((m) => m.role !== "system");
 
-      const body: any = {
-        model,
-        max_tokens: 4000,
-        messages: conversationMsgs.map((m) => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: m.content,
-        })),
-      };
-
-      if (systemMsg) {
-        body.system = systemMsg;
-      }
+      const anthropicMessages: AnthropicMessage[] = conversationMsgs.map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      }));
+      const body: AnthropicRequest = systemMsg
+        ? { model, max_tokens: 4000, messages: anthropicMessages, system: systemMsg }
+        : { model, max_tokens: 4000, messages: anthropicMessages };
 
       const response = await fetch(url, {
         method: "POST",
@@ -140,8 +205,12 @@ export async function sendChatMessage(
         throw new Error(`Anthropic API error: ${response.statusText} ${errText}`);
       }
 
-      const data = await response.json();
-      return data.content?.[0]?.text || "";
+      const data: unknown = await response.json();
+      const content = parseAnthropicChatContent(data);
+      if (content === null) {
+        throw new Error("Invalid response from Anthropic chat API");
+      }
+      return content;
     }
 
     default:

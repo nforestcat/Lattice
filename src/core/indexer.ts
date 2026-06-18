@@ -1,5 +1,5 @@
 import { parseMarkdownNote } from "./markdown";
-import type { GraphData, GraphNode, NoteContext, NoteLink, ParsedNote, SearchFilters, SearchResult, VaultFile, VaultIndex } from "./types";
+import type { GraphData, GraphEdge, GraphNode, NoteContext, NoteLink, ParsedNote, SearchFilters, SearchResult, VaultFile, VaultIndex } from "./types";
 
 export function buildVaultIndex(files: VaultFile[]): VaultIndex {
   const notes = files.map((file) => ({
@@ -80,7 +80,7 @@ function buildGraph(notes: ParsedNote[]): GraphData {
     kind: "note" as const
   }));
 
-  const edges: any[] = [];
+  const edges: GraphEdge[] = [];
   const unresolvedTargets = new Map<string, string>(); // normalized -> original
   const seenUnresolvedEdges = new Set<string>(); // "source->target"
 

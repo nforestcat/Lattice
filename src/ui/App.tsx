@@ -21,6 +21,8 @@ import { LinkSuggestionsSidebar } from "./components/LinkSuggestionsSidebar";
 import { EmbeddingsIndexPanel } from "./components/EmbeddingsIndexPanel";
 import { IngestPanel } from "./components/IngestPanel";
 import { ConflictResolver } from "./components/ConflictResolver";
+import { useModelDownload } from "./hooks/useModelDownload";
+import { ModelDownloadContext } from "./contexts/ModelDownloadContext";
 import { useGit } from "./hooks/useGit";
 import { useEmbeddings } from "./hooks/useEmbeddings";
 import { useSearch } from "./hooks/useSearch";
@@ -32,7 +34,9 @@ import { useStubDrafting } from "./hooks/useStubDrafting";
 import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
+import { useIngestQueue } from "./hooks/useIngestQueue";
 import { applyProposedEditToVault } from "./proposedEditApply";
+import { findAmbiguousUpdateAnchor } from "./proposedEditGuards";
 import {
   PRESETS as SHARED_PRESETS,
   type PresetType as SharedPresetType,
@@ -223,6 +227,18 @@ export function App() {
   const [showConflictResolver, setShowConflictResolver] = useState(false);
   const [distillTab, setDistillTab] = useState<"paste" | "chat" | "auditor" | "git" | "review">("paste");
   const [rightSidebarTab, setRightSidebarTab] = useState<"context" | "suggestions" | "index">("context");
+  const [embeddingBannerDismissed, setEmbeddingBannerDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("lattice.onboarding.embeddingBannerDismissed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  function dismissEmbeddingBanner() {
+    setEmbeddingBannerDismissed(true);
+    try { localStorage.setItem("lattice.onboarding.embeddingBannerDismissed", "true"); } catch { /* ignore */ }
+  }
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const previewScrollRef = useRef<HTMLElement | null>(null);
   const isSyncingScroll = useRef(false);
@@ -297,6 +313,9 @@ export function App() {
     handleToggleSuggestedProperty,
     applyMetadataSuggestions,
     autofillActiveNoteWithTemplate,
+    generateRepairForIssue,
+    generateAllRepairsForNote,
+    generatingRepairFor,
   } = llm;
 
   const embeddings = useEmbeddings(llmConfig, vault);
@@ -433,12 +452,18 @@ export function App() {
     [gitChanges]
   );
 
+  const ingestQueue = useIngestQueue({
+    onIngested: (path) => refreshVault(path),
+    setVault: (v) => setVault((prev) => prev ? { ...prev, ...v } : prev),
+  });
+
   const reviewQueue = useReviewQueue({
     inboxCaptures,
     bulkDrafts,
     proposedEdits,
     healthReports,
     backlinkSuggestions,
+    ingestItems: ingestQueue.ingestItems,
     gitStagedPaths,
     onApplyInboxCapture: (id) => {
       void markInboxCaptureProcessed(id);
@@ -452,9 +477,20 @@ export function App() {
       await applyBacklinkSuggestion(suggestion);
       return true;
     },
+    onApplyIngestCapture: (id) => ingestQueue.applyIngestItem(id),
     onApproveStubDraft: (target) => approveDraft(target),
     onRejectStubDraft: (target) => rejectDraft(target),
+    onApproveIngestCapture: (id) => { ingestQueue.approveIngestItem(id); },
+    onRejectIngestCapture: (id) => { ingestQueue.rejectIngestItem(id); },
+    onUpdateIngestCapture: (id, patch) => { ingestQueue.updateIngestItem(id, patch); },
   });
+
+  const modelDownload = useModelDownload();
+
+  // Show banner when: provider unset AND model not downloaded AND not dismissed
+  const showEmbeddingBanner = !embeddingBannerDismissed
+    && !llmConfig?.embeddingProvider
+    && !modelDownload.downloaded;
 
   const promptHistory = usePromptHistory({
     vaultConfig,
@@ -847,6 +883,16 @@ export function App() {
       return false;
     }
 
+    try {
+      const ambiguousAnchor = await findAmbiguousUpdateAnchor(checkedEdits, (path) => vaultApi.readNote(path));
+      if (ambiguousAnchor) {
+        setStatus(`Warning: anchor for "${ambiguousAnchor.path}" appears multiple times. Refine the proposed edit before applying.`);
+        return false;
+      }
+    } catch {
+      // Ignore pre-check errors; apply will surface them.
+    }
+
     let appliedCount = 0;
     const nextEdits = [...proposedEdits];
 
@@ -1085,8 +1131,8 @@ export function App() {
         onClose={() => setShowIngestPanel(false)}
         llmConfig={llmConfig}
         vaultConfig={vaultConfig}
-        setVault={(v) => setVault((prev) => prev ? { ...prev, ...v } : prev)}
-        onIngested={(path) => refreshVault(path)}
+        enqueueIngest={ingestQueue.enqueueIngest}
+        onOpenReviewQueue={() => { setShowIngestPanel(false); setViewMode("distill"); setDistillTab("review"); }}
       />
 
       <ConflictResolver
@@ -1100,7 +1146,37 @@ export function App() {
         }}
       />
 
+      <ModelDownloadContext.Provider value={modelDownload}>
       <section className="editorPane">
+        {showEmbeddingBanner && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 14px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe",
+            fontSize: "12px", gap: 12,
+          }}>
+            <span style={{ color: "#1d4ed8" }}>
+              ✦ Enable offline semantic search — no API key needed, runs on your device.
+            </span>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <button
+                type="button"
+                className="smallButton primary"
+                onClick={() => setRightSidebarTab("index")}
+                style={{ fontSize: "11px" }}
+              >
+                Set up
+              </button>
+              <button
+                type="button"
+                className="smallButton"
+                onClick={dismissEmbeddingBanner}
+                style={{ fontSize: "11px" }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         <EditorToolbar
           viewMode={viewMode}
           setViewMode={setViewMode}
@@ -1253,6 +1329,9 @@ export function App() {
               healthReports={healthReports}
               isScanningHealth={isScanningHealth}
               onRunHealthAudit={runHealthAudit}
+              generateRepairForIssue={generateRepairForIssue}
+              generateAllRepairsForNote={generateAllRepairsForNote}
+              generatingRepairFor={generatingRepairFor}
               gitStatus={gitStatus}
               gitChanges={gitChanges}
               selectedGitFile={selectedGitFile}
@@ -1313,7 +1392,11 @@ export function App() {
         </div>
 
         {rightSidebarTab === "index" ? (
-          <EmbeddingsIndexPanel llmConfig={llmConfig} vault={vault} />
+          <EmbeddingsIndexPanel
+            llmConfig={llmConfig}
+            vault={vault}
+            onUpdateLlmConfig={(patch) => void updateVaultConfig({ llmConfig: { ...llmConfig, ...patch } })}
+          />
         ) : rightSidebarTab === "suggestions" ? (
           <LinkSuggestionsSidebar
             activePath={activePath}
@@ -1555,6 +1638,7 @@ export function App() {
         )}
         <p className="status">{status}</p>
       </aside>
+      </ModelDownloadContext.Provider>
 
       {triageCaptureToAppend && (
         <div className="modalOverlay" onClick={() => setTriageCaptureToAppend(null)}>

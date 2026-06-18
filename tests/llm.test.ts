@@ -60,6 +60,23 @@ describe("LLM API Client (sendChatMessage)", () => {
     expect(result).toBe("OpenAI mock response");
   });
 
+  it("should reject malformed OpenAI responses", async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ choices: [{ message: {} }] }),
+    });
+
+    const config: LlmConfig = {
+      provider: "openai",
+      apiKey: "test-key",
+      model: "gpt-4o",
+    };
+
+    await expect(sendChatMessage(config, [{ role: "user", content: "hello" }])).rejects.toThrow(
+      "Invalid response from OpenAI-compatible chat API"
+    );
+  });
+
   it("should format request and parse response correctly for Ollama", async () => {
     const mockResponse = {
       message: {

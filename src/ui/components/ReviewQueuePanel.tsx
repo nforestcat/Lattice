@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AiProvenance, ReviewQueueItem, ReviewItemStatus } from "../../api/types";
+import type { AiProvenance, IngestQueueUpdate, ReviewQueueItem, ReviewItemStatus } from "../../api/types";
 import { ReviewQueueItemCard } from "./ReviewQueueItemCard";
 
 interface ReviewQueuePanelProps {
@@ -15,6 +15,7 @@ interface ReviewQueuePanelProps {
   readonly onStage?: (id: string) => void | Promise<void>;
   readonly canStageItem?: (id: string) => boolean;
   readonly stagedByQueue?: Set<string>;
+  readonly onUpdateIngestCapture?: (id: string, patch: IngestQueueUpdate) => void;
 }
 
 const FILTER_TABS: Array<ReviewItemStatus | "all"> = [
@@ -34,6 +35,7 @@ export function ReviewQueuePanel({
   onStage,
   canStageItem,
   stagedByQueue,
+  onUpdateIngestCapture,
 }: ReviewQueuePanelProps) {
   const [filter, setFilter] = useState<ReviewItemStatus | "all">("all");
 
@@ -120,6 +122,7 @@ export function ReviewQueuePanel({
               onStage={onStage}
               canStage={canStageItem ? canStageItem(item.id) : false}
               isStagedByQueue={stagedByQueue?.has(item.id) ?? false}
+              onUpdateIngestCapture={onUpdateIngestCapture}
             />
           ))
         )}

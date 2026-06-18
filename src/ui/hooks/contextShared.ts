@@ -105,6 +105,10 @@ function isStringKeyedRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
 function normalizeLlmConfigInternal(value: unknown): LlmConfig | undefined {
   if (!isStringKeyedRecord(value)) {
     return undefined;
@@ -126,7 +130,7 @@ function normalizeSelectedPaths(value: unknown): Record<string, string[]> {
   return Object.fromEntries(
     Object.entries(value)
       .filter(([key, paths]) => typeof key === "string" && Array.isArray(paths))
-      .map(([key, paths]) => [key, (paths as unknown[]).filter((path): path is string => typeof path === "string")])
+      .map(([key, paths]) => [key, normalizeStringArray(paths)])
   );
 }
 
@@ -153,7 +157,7 @@ function normalizePromptRuns(value: unknown, fallbackPurpose: string): PromptRun
       return {
         id: typeof run.id === "string" && run.id ? run.id : `legacy-run-${index + 1}`,
         question: typeof run.question === "string" ? run.question : "",
-        selectedNotes: Array.isArray(run.selectedNotes) ? run.selectedNotes.filter((path): path is string => typeof path === "string") : [],
+        selectedNotes: normalizeStringArray(run.selectedNotes),
         preset,
         purpose: typeof run.purpose === "string" ? run.purpose : PRESETS[presetForFallbacks].purpose || fallbackPurpose,
         mode: normalizeBundleMode(run.mode, PRESETS[presetForFallbacks].mode),
@@ -181,22 +185,23 @@ function normalizePromptTemplates(value: unknown): PromptTemplate[] {
     }));
 }
 
-export function normalizeVaultConfig(config: any): VaultConfig {
-  const preset = normalizePreset(config?.bundlePreset);
-  const bundlePurpose = typeof config?.bundlePurpose === "string" ? config.bundlePurpose : PRESETS[preset].purpose;
-  const bundleMode = normalizeBundleMode(config?.bundleMode, PRESETS[preset].mode);
+export function normalizeVaultConfig(config: unknown): VaultConfig {
+  const input = isStringKeyedRecord(config) ? config : {};
+  const preset = normalizePreset(input.bundlePreset);
+  const bundlePurpose = typeof input.bundlePurpose === "string" ? input.bundlePurpose : PRESETS[preset].purpose;
+  const bundleMode = normalizeBundleMode(input.bundleMode, PRESETS[preset].mode);
   const normalized: VaultConfig = {
-    version: Math.max(VAULT_CONFIG_VERSION, typeof config?.version === "number" ? config.version : VAULT_CONFIG_VERSION),
-    contextLimit: Number.isFinite(config?.contextLimit) && config.contextLimit > 0 ? config.contextLimit : 8000,
+    version: Math.max(VAULT_CONFIG_VERSION, typeof input.version === "number" ? input.version : VAULT_CONFIG_VERSION),
+    contextLimit: typeof input.contextLimit === "number" && Number.isFinite(input.contextLimit) && input.contextLimit > 0 ? input.contextLimit : 8000,
     bundlePreset: preset,
     bundlePurpose,
     bundleMode,
-    selectedPaths: normalizeSelectedPaths(config?.selectedPaths),
-    promptInstructions: normalizePromptInstructions(config?.promptInstructions),
-    promptRuns: normalizePromptRuns(config?.promptRuns, bundlePurpose),
-    promptTemplates: normalizePromptTemplates(config?.promptTemplates),
-    llmConfig: normalizeLlmConfigInternal(config?.llmConfig),
-    archiveRetentionPolicy: typeof config?.archiveRetentionPolicy === "string" ? config.archiveRetentionPolicy : "none"
+    selectedPaths: normalizeSelectedPaths(input.selectedPaths),
+    promptInstructions: normalizePromptInstructions(input.promptInstructions),
+    promptRuns: normalizePromptRuns(input.promptRuns, bundlePurpose),
+    promptTemplates: normalizePromptTemplates(input.promptTemplates),
+    llmConfig: normalizeLlmConfigInternal(input.llmConfig),
+    archiveRetentionPolicy: typeof input.archiveRetentionPolicy === "string" ? input.archiveRetentionPolicy : "none"
   };
   return normalized;
 }

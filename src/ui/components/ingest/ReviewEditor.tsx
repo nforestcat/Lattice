@@ -14,7 +14,7 @@ interface ReviewEditorProps {
   onTagsChange: (v: string) => void;
   draftMarkdown: string;
   onMarkdownChange: (v: string) => void;
-  similarNotes: { path: string; title: string }[];
+  similarNotes: readonly { readonly path: string; readonly title: string }[];
   rawPreview: IngestRaw | null;
   showRawExcerpt: boolean;
   onToggleRawExcerpt: () => void;
@@ -161,7 +161,7 @@ export function ReviewEditor({
 
       <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
         <button className="primary" onClick={onSave} disabled={!canSave}>
-          저장하기
+          리뷰 큐에 추가
         </button>
         <button onClick={onRegenerate} disabled={!rawPreview}>
           다시 생성

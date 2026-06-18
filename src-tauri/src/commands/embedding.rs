@@ -5,12 +5,42 @@ const MODEL_URL: &str =
 const TOKENIZER_URL: &str =
     "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    pub file_index: u8,
+    pub file_count: u8,
+    pub received_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub pct: Option<u8>,
+}
+
+pub fn compute_progress(
+    received: u64,
+    total: Option<u64>,
+    file_index: u8,
+    file_count: u8,
+) -> DownloadProgress {
+    let pct = total.map(|t| {
+        if t == 0 {
+            0u8
+        } else {
+            ((received.min(t) as f64 / t as f64) * 100.0) as u8
+        }
+    });
+    DownloadProgress {
+        file_index,
+        file_count,
+        received_bytes: received,
+        total_bytes: total,
+        pct,
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
     pub downloaded: bool,
-    pub downloading: bool,
-    pub progress_pct: Option<f32>,
     pub model_size_mb: f32,
 }
 
@@ -40,8 +70,6 @@ pub(crate) async fn get_local_embedding_model_status(
 
     Ok(ModelStatus {
         downloaded,
-        downloading: false,
-        progress_pct: None,
         model_size_mb,
     })
 }
@@ -50,6 +78,7 @@ pub(crate) async fn get_local_embedding_model_status(
 #[tauri::command]
 pub(crate) async fn download_local_embedding_model(
     app_handle: tauri::AppHandle,
+    on_progress: tauri::ipc::Channel<DownloadProgress>,
 ) -> Result<(), String> {
     let dir = model_dir(&app_handle)?;
     std::fs::create_dir_all(&dir)
@@ -60,9 +89,15 @@ pub(crate) async fn download_local_embedding_model(
         .build()
         .map_err(|e| e.to_string())?;
 
-    for (url, file_name) in [(MODEL_URL, "model.onnx"), (TOKENIZER_URL, "tokenizer.json")] {
+    let files = [(MODEL_URL, "model.onnx"), (TOKENIZER_URL, "tokenizer.json")];
+    let file_count = files.len() as u8;
+    let mut cumulative_received: u64 = 0;
+    let mut cumulative_total: Option<u64> = Some(0);
+
+    for (file_index, (url, file_name)) in files.iter().enumerate() {
+        let file_index = file_index as u8;
         let response = client
-            .get(url)
+            .get(*url)
             .send()
             .await
             .map_err(|e| format!("Download failed for {}: {}", file_name, e))?;
@@ -73,12 +108,46 @@ pub(crate) async fn download_local_embedding_model(
                 response.status().as_u16()
             ));
         }
-        let bytes = response
-            .bytes()
+
+        let file_total: Option<u64> = response.content_length();
+        cumulative_total = match (cumulative_total, file_total) {
+            (Some(acc), Some(len)) => Some(acc + len),
+            _ => None,
+        };
+
+        let tmp_path = dir.join(format!("{}.tmp", file_name));
+        let final_path = dir.join(file_name);
+        let mut file = std::fs::File::create(&tmp_path)
+            .map_err(|e| format!("Could not create {}: {}", file_name, e))?;
+
+        let mut response = response;
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|e| format!("Could not read {}: {}", file_name, e))?;
-        std::fs::write(dir.join(file_name), &bytes)
-            .map_err(|e| format!("Could not write {}: {}", file_name, e))?;
+            .map_err(|e| format!("Read error for {}: {}", file_name, e))?
+        {
+            use std::io::Write;
+            file.write_all(&chunk)
+                .map_err(|e| format!("Write error for {}: {}", file_name, e))
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    e
+                })?;
+            cumulative_received += chunk.len() as u64;
+
+            let progress = compute_progress(
+                cumulative_received,
+                cumulative_total,
+                file_index,
+                file_count,
+            );
+            let _ = on_progress.send(progress);
+        }
+
+        std::fs::rename(&tmp_path, &final_path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Could not finalize {}: {}", file_name, e)
+        })?;
     }
 
     Ok(())
@@ -206,4 +275,32 @@ pub(crate) async fn get_local_embedding(
     }
 
     Ok(pooled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_progress_monotonic() {
+        let p1 = compute_progress(100, Some(1000), 0, 2);
+        let p2 = compute_progress(500, Some(1000), 0, 2);
+        let p3 = compute_progress(1000, Some(1000), 0, 2);
+        assert!(p1.pct.unwrap() <= p2.pct.unwrap());
+        assert!(p2.pct.unwrap() <= p3.pct.unwrap());
+        assert_eq!(p3.pct.unwrap(), 100);
+    }
+
+    #[test]
+    fn compute_progress_indeterminate() {
+        let p = compute_progress(500, None, 0, 2);
+        assert!(p.pct.is_none());
+        assert!(p.total_bytes.is_none());
+    }
+
+    #[test]
+    fn compute_progress_zero_total() {
+        let p = compute_progress(0, Some(0), 0, 2);
+        assert_eq!(p.pct.unwrap(), 0);
+    }
 }

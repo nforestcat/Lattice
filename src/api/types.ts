@@ -1,6 +1,38 @@
 import type { GraphData, NoteContext, NoteMeta, SearchFilters } from "../core/types";
 export type { GraphData, NoteContext, NoteMeta, SearchFilters };
 import type { InboxCaptureBlock } from "../core/capture";
+import type { AiAuditRecord, AiProvenance } from "./ingestReviewTypes";
+import type { GitFileChange, GitSettings, GitStatus, PullPreflight, StashPopResult } from "./gitTypes";
+import type { LlmConfig, VaultConfig } from "./configTypes";
+export type {
+  LlmConfig,
+  LlmProvider,
+  NoteTemplate,
+  PromptRun,
+  PromptTemplate,
+  VaultConfig,
+} from "./configTypes";
+export type {
+  GitFileChange,
+  GitSettings,
+  GitStatus,
+  PullPreflight,
+  StashPopResult,
+} from "./gitTypes";
+export type {
+  AiAuditRecord,
+  AiProvenance,
+  IngestDuplicateCheck,
+  IngestQueueItem,
+  IngestQueueUpdate,
+  IngestRaw,
+  IngestResult,
+  IngestSimilarNote,
+  MaintenanceSuggestionKind,
+  ReviewItemKind,
+  ReviewItemStatus,
+  ReviewQueueItem,
+} from "./ingestReviewTypes";
 
 export type VaultSnapshot = {
   rootPath: string;
@@ -46,29 +78,6 @@ export type Snapshot = {
   path: string;
   createdAt: string;
   reason: "save" | "conflict" | "restore";
-};
-
-export type GitStatus = {
-  isRepo: boolean;
-  autoGitEnabled: boolean;
-  branch: string | null;
-  hasChanges: boolean;
-  hasConflicts: boolean;
-};
-
-export type GitSettings = {
-  autoGitEnabled: boolean;
-};
-
-export type PullPreflight = {
-  isClean: boolean;
-  dirtyFiles: GitFileChange[];
-  hasConflicts: boolean;
-};
-
-export type StashPopResult = {
-  status: "clean" | "conflict";
-  stashRef: string | null;
 };
 
 export type LinkMutationResult = {
@@ -137,20 +146,6 @@ export type UnresolvedLinkGroup = {
   sources: UnresolvedLinkSource[];
 };
 
-export type IngestRaw = {
-  title?: string;
-  text: string;
-  sourceRef: string;
-  sourceType?: "url" | "pdf" | "text";
-  ingestDate?: string;
-};
-
-export type IngestResult = {
-  title: string;
-  markdown: string;
-  tags: string[];
-};
-
 export type VaultApi = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;
@@ -212,15 +207,10 @@ export type VaultApi = {
   appendAiAudit(record: AiAuditRecord): Promise<void>;
 };
 
-export type AiAuditRecord = {
-  editId: string;
-  editType: "create" | "update" | "merge" | "delete";
+export type DuplicatePeerInfo = {
   path: string;
-  promptRunId?: string | null;
-  model?: string;
-  source: string;
-  appliedAt: string;
-  confidence?: number;
+  score: number;
+  modifiedAt?: string;
 };
 
 export type NoteHealthReport = {
@@ -234,6 +224,7 @@ export type NoteHealthReport = {
   isDuplicated: boolean;
   missingSummary: boolean;
   weakBacklinks: boolean;
+  duplicatePeer?: DuplicatePeerInfo;
 };
 
 export type BacklinkSuggestion = {
@@ -245,70 +236,6 @@ export type BacklinkSuggestion = {
   suggestionType: "unlinked_mention" | "semantic";
   excerpt: string;
   score: number;
-};
-
-export type PromptRun = {
-  id: string;
-  question: string;
-  selectedNotes: string[];
-  preset: string;
-  purpose: string;
-  mode: "short" | "standard" | "full";
-  tokenCount: number;
-  createdAt: string;
-  activePath: string;
-  promptHash?: string;
-  preview?: string;
-};
-
-export type PromptTemplate = {
-  id: string;
-  name: string;
-  template: string;
-  isSystem?: boolean;
-};
-
-export type LlmProvider = "openai" | "anthropic" | "gemini" | "ollama" | "custom" | "lm-studio";
-
-export type LlmConfig = {
-  provider: LlmProvider;
-  apiKey: string;
-  model: string;
-  baseUrl?: string;
-  embeddingModel?: string;
-  embeddingProvider?: "openai" | "ollama" | "custom" | "local-onnx";
-};
-
-export type NoteTemplate = {
-  name: string;
-  description: string;
-  prompt: string;
-};
-
-export type VaultConfig = {
-  version?: number;
-  contextLimit?: number;
-  bundlePreset?: string;
-  bundlePurpose?: string;
-  bundleMode?: "short" | "standard" | "full";
-  selectedPaths?: Record<string, string[]>;
-  promptInstructions?: Record<string, string>;
-  promptRuns?: PromptRun[];
-  promptTemplates?: PromptTemplate[];
-  llmConfig?: LlmConfig;
-  archiveRetentionPolicy?: string;
-  noteTemplates?: NoteTemplate[];
-  maintenanceSuggestions?: Record<string, { proposed: string; provenance: AiProvenance; generatedAt: string }>;
-};
-
-export type AiProvenance = {
-  source: string;
-  promptRunId?: string | null;
-  contextBundlePaths?: string[];
-  originalExcerpt?: string;
-  confidence?: number;
-  model?: string;
-  appliedAt?: string;
 };
 
 export type ProposedEdit = {
@@ -330,57 +257,4 @@ export type StubDraftReview = {
   status: "done" | "drafting" | "error";
   approved: boolean;
 };
-
-export type GitFileChange = {
-  path: string;
-  status: "modified" | "added" | "deleted" | "untracked" | "renamed" | "conflict";
-  staged: boolean;
-};
-
-export type ReviewItemKind =
-  | "inbox_capture"
-  | "ingest_draft"
-  | "proposed_edit"
-  | "missing_summary"
-  | "dead_link"
-  | "backlink_suggestion"
-  | "duplicate_warning"
-  | "orphan_note"
-  | "stale_note"
-  | "too_broad"
-  | "weak_backlinks";
-
-export type MaintenanceSuggestionKind =
-  | "split"
-  | "summary"
-  | "link_candidates"
-  | "review_prompt"
-  | "merge_or_delete"
-  | "backlinks_in";
-
-export type ReviewItemStatus =
-  | "new"
-  | "drafted"
-  | "approved"
-  | "applied"
-  | "rejected"
-  | "committed";
-
-export interface ReviewQueueItem {
-  id: string;
-  sourceId: string;
-  kind: ReviewItemKind;
-  status: ReviewItemStatus;
-  path: string;
-  title: string;
-  original?: string;
-  proposed?: string;
-  reason?: string;
-  gitStaged: boolean;
-  createdAt: number;
-  sourceRef?: unknown;
-  provenance?: AiProvenance;
-  suggestionKind?: MaintenanceSuggestionKind;
-}
-
 
