@@ -20,7 +20,8 @@ import {
   adaptIngestCapture,
 } from "./reviewQueueAdapters";
 
-type TransitionResult = boolean | void | Promise<boolean | void>;
+type ApprovalResult = boolean | void | Promise<boolean | void>;
+type ApplyResult = readonly string[] | false | Promise<readonly string[] | false>;
 
 export interface ReviewQueueSources {
   inboxCaptures: InboxCaptureBlock[];
@@ -30,21 +31,21 @@ export interface ReviewQueueSources {
   backlinkSuggestions: BacklinkSuggestion[];
   ingestItems: IngestQueueItem[];
   gitStagedPaths?: Set<string>;
-  onApplyInboxCapture?: (id: string) => TransitionResult;
-  onApplyProposedEdit?: (id: string) => TransitionResult;
-  onApplyBacklinkSuggestion?: (id: string) => TransitionResult;
-  onApplyIngestCapture?: (id: string) => TransitionResult;
-  onApproveStubDraft?: (target: string) => TransitionResult;
-  onRejectStubDraft?: (target: string) => TransitionResult;
-  onApproveIngestCapture?: (id: string) => TransitionResult;
-  onRejectIngestCapture?: (id: string) => TransitionResult;
+  onApplyInboxCapture?: (id: string) => ApplyResult;
+  onApplyProposedEdit?: (id: string) => ApplyResult;
+  onApplyBacklinkSuggestion?: (id: string) => ApplyResult;
+  onApplyIngestCapture?: (id: string) => ApplyResult;
+  onApproveStubDraft?: (target: string) => ApprovalResult;
+  onRejectStubDraft?: (target: string) => ApprovalResult;
+  onApproveIngestCapture?: (id: string) => ApprovalResult;
+  onRejectIngestCapture?: (id: string) => ApprovalResult;
   onUpdateIngestCapture?: (id: string, patch: IngestQueueUpdate) => void;
 }
 
 export interface ReviewQueueHook {
   items: ReviewQueueItem[];
   filterItems: (kind?: ReviewItemKind, status?: ReviewItemStatus) => ReviewQueueItem[];
-  applyItem: (id: string) => Promise<void>;
+  applyItem: (id: string) => Promise<readonly string[]>;
   approveItem: (id: string) => Promise<void>;
   rejectItem: (id: string) => Promise<void>;
   updateIngestCapture: (id: string, patch: IngestQueueUpdate) => void;
@@ -148,7 +149,7 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
   function transitionItem(
     id: string,
     status: ReviewItemStatus,
-    onTransition?: (item: ReviewQueueItem) => TransitionResult
+    onTransition?: (item: ReviewQueueItem) => ApprovalResult
   ): Promise<void> {
     const item = items.find((i) => i.id === id);
     if (!item) return Promise.resolve();
@@ -161,14 +162,17 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     });
   }
 
-  async function applyItem(id: string) {
-    await transitionItem(id, "applied", (item) => {
-      if (item.kind === "inbox_capture") return onApplyInboxCapture?.(item.sourceId) ?? false;
-      if (item.kind === "proposed_edit") return onApplyProposedEdit?.(item.sourceId) ?? false;
-      if (item.kind === "backlink_suggestion") return onApplyBacklinkSuggestion?.(item.sourceId) ?? false;
-      if (item.kind === "ingest_capture") return onApplyIngestCapture?.(item.sourceId) ?? false;
-      return false;
-    });
+  async function applyItem(id: string): Promise<readonly string[]> {
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item) return [];
+    let result: readonly string[] | false = false;
+    if (item.kind === "inbox_capture") result = await (onApplyInboxCapture?.(item.sourceId) ?? false);
+    if (item.kind === "proposed_edit") result = await (onApplyProposedEdit?.(item.sourceId) ?? false);
+    if (item.kind === "backlink_suggestion") result = await (onApplyBacklinkSuggestion?.(item.sourceId) ?? false);
+    if (item.kind === "ingest_capture") result = await (onApplyIngestCapture?.(item.sourceId) ?? false);
+    if (result === false || result.length === 0) return [];
+    setOverrides((prev) => ({ ...prev, [id]: "applied" }));
+    return result;
   }
 
   async function approveItem(id: string) {

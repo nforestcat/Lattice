@@ -69,9 +69,9 @@ export function useInbox(callbacks: UseInboxCallbacks) {
     }
   }
 
-  async function markInboxCaptureProcessed(captureId: string) {
+  async function markInboxCaptureProcessed(captureId: string): Promise<readonly string[] | false> {
     if (!activePath) {
-      return;
+      return false;
     }
     try {
       const result = await vaultApi.markInboxCaptureProcessed(activePath, captureId);
@@ -79,8 +79,10 @@ export function useInbox(callbacks: UseInboxCallbacks) {
       setResults(result.vault.notes);
       setStatus("Capture marked processed");
       await selectNote(activePath);
+      return [activePath];
     } catch (error) {
       setStatus(errorMessage(error));
+      return false;
     }
   }
 

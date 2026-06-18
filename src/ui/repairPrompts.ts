@@ -82,7 +82,26 @@ ${noteContent}
 
 Propose a "See also" or "Related" addition using the tag format above.`;
 
-  return { system, user };
+  return {
+    system: system
+      .replace(
+        "Produce exactly one type=\"update\" edit that adds a short \"See also:\" or \"Related:\" section to the note listing 1–3 genuinely related notes from the vault.",
+        "Produce 1–3 type=\"update\" edits on genuinely related notes so those notes link to the orphan. Do not update the orphan itself: outgoing links do not fix missing incoming links."
+      )
+      .replace(
+        "The anchor (target_content) MUST be a verbatim substring that appears EXACTLY ONCE in the note. Prefer the final heading or the last paragraph.",
+        "Each anchor (target_content) MUST be a verbatim substring that appears EXACTLY ONCE in the related note being updated."
+      ),
+    user: user
+      .replace(
+        "Add a backlink section so the note becomes discoverable.",
+        "Add incoming links from related notes so the orphan becomes discoverable."
+      )
+      .replace(
+        "Propose a \"See also\" or \"Related\" addition using the tag format above.",
+        "Propose updates to related notes using the tag format above."
+      ),
+  };
 }
 
 function generateId(): string {

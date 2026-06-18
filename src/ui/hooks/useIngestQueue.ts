@@ -25,7 +25,7 @@ export interface IngestQueueHook {
   updateIngestItem: (id: string, patch: IngestQueueUpdate) => void;
   approveIngestItem: (id: string) => void;
   rejectIngestItem: (id: string) => void;
-  applyIngestItem: (id: string) => Promise<void>;
+  applyIngestItem: (id: string) => Promise<readonly string[] | false>;
 }
 
 function appendIngestMarkdown(existing: string, title: string, markdown: string): string {
@@ -96,7 +96,7 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
   const applyIngestItem = useCallback(
     async (id: string) => {
       const item = items.find((i) => i.id === id);
-      if (!item || item.status === "applied" || item.status === "rejected") return;
+      if (!item || item.status === "applied" || item.status === "rejected") return false;
 
       const markdown = applyTagsToMarkdown(item.markdown, item.tags);
       let createdPath: string | null = null;
@@ -119,7 +119,7 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
             )
           );
           await onIngested(target.path);
-          return;
+          return [target.path];
         }
 
         const createResult = await vaultApi.createNote(item.targetFolder, item.title);
@@ -135,6 +135,7 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
           )
         );
         await onIngested(createdPath);
+        return [createdPath];
       } catch (err) {
         if (createdPath) {
           try {

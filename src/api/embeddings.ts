@@ -47,6 +47,13 @@ function configForRemoteEmbedding(config: LlmConfig): LlmConfig {
   };
 }
 
+export function canUseEmbeddings(config: LlmConfig | null): boolean {
+  if (!config) return false;
+  if (config.embeddingProvider === "local-onnx") return true;
+  const provider = config.embeddingProvider ?? config.provider;
+  return provider === "ollama" || provider === "lm-studio" || config.apiKey.trim().length > 0;
+}
+
 export async function getEmbedding(config: LlmConfig, text: string): Promise<number[]> {
   const sanitizedText = text.trim();
   if (!sanitizedText) {

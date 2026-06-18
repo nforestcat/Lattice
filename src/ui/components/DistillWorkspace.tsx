@@ -310,10 +310,9 @@ export function DistillWorkspace({
   }
 
   async function handleQueueApply(id: string) {
-    const item = reviewQueue?.items.find((i) => i.id === id);
-    await reviewQueue?.applyItem(id);
-    if (item) {
-      setMutatedPathsByItem((prev) => ({ ...prev, [id]: [item.path] }));
+    const paths = await reviewQueue?.applyItem(id);
+    if (paths && paths.length > 0) {
+      setMutatedPathsByItem((prev) => ({ ...prev, [id]: [...paths] }));
     }
   }
 

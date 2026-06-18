@@ -5,7 +5,7 @@ import { vaultApi } from "../api";
 import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
-import { getEmbedding } from "../api/embeddings";
+import { canUseEmbeddings, getEmbedding } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteMeta } from "../core/types";
 import { estimateTokens } from "../core/contextBundle";
@@ -465,17 +465,14 @@ export function App() {
     backlinkSuggestions,
     ingestItems: ingestQueue.ingestItems,
     gitStagedPaths,
-    onApplyInboxCapture: (id) => {
-      void markInboxCaptureProcessed(id);
-    },
+    onApplyInboxCapture: (id) => markInboxCaptureProcessed(id),
     onApplyProposedEdit: (id) => applyProposedEditFromQueue(id),
     onApplyBacklinkSuggestion: async (id) => {
       const suggestion = backlinkSuggestions.find((item) => item.id === id);
       if (!suggestion) {
         return false;
       }
-      await applyBacklinkSuggestion(suggestion);
-      return true;
+      return await applyBacklinkSuggestion(suggestion) ? [suggestion.sourcePath] : false;
     },
     onApplyIngestCapture: (id) => ingestQueue.applyIngestItem(id),
     onApproveStubDraft: (target) => approveDraft(target),
@@ -611,7 +608,7 @@ export function App() {
   // Real-time Background Embedding Synchronization
   useEffect(() => {
     const config = llmConfig;
-    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+    if (!canUseEmbeddings(config)) {
       return;
     }
     if (!activePath || !draft) {
@@ -862,7 +859,7 @@ export function App() {
     void runHealthAudit();
   }
 
-  async function applyProposedEditFromQueue(id: string): Promise<boolean> {
+  async function applyProposedEditFromQueue(id: string): Promise<readonly string[] | false> {
     return applySelectedProposedEdits(new Set([id]));
   }
 
@@ -870,7 +867,7 @@ export function App() {
     await applySelectedProposedEdits(null);
   }
 
-  async function applySelectedProposedEdits(selectedIds: ReadonlySet<string> | null): Promise<boolean> {
+  async function applySelectedProposedEdits(selectedIds: ReadonlySet<string> | null): Promise<readonly string[] | false> {
     const shouldApply = (edit: ProposedEdit) => !edit.applied && (selectedIds ? selectedIds.has(edit.id) : edit.checked);
     const checkedEdits = proposedEdits.filter(shouldApply);
     if (checkedEdits.length === 0) return false;
@@ -894,6 +891,7 @@ export function App() {
     }
 
     let appliedCount = 0;
+    const mutatedPaths = new Set<string>();
     const nextEdits = [...proposedEdits];
 
     for (let i = 0; i < nextEdits.length; i++) {
@@ -904,6 +902,8 @@ export function App() {
 
       try {
         nextEdits[i] = await applyProposedEditToVault(edit);
+        mutatedPaths.add(edit.path);
+        if (edit.type === "merge" && edit.newPath) mutatedPaths.add(edit.newPath);
         appliedCount++;
       } catch (err) {
         console.error("Failed to apply proposed edit", edit, err);
@@ -916,7 +916,7 @@ export function App() {
     setProposedEdits(nextEdits);
     setStatus(`Successfully applied ${appliedCount} wiki edit(s).`);
     await refreshVault(activePath);
-    return true;
+    return [...mutatedPaths];
   }
 
   function compileTemplate(templateText: string): string {
@@ -1395,7 +1395,11 @@ export function App() {
           <EmbeddingsIndexPanel
             llmConfig={llmConfig}
             vault={vault}
-            onUpdateLlmConfig={(patch) => void updateVaultConfig({ llmConfig: { ...llmConfig, ...patch } })}
+            onUpdateLlmConfig={(patch) => {
+              const next = { ...llmConfig, ...patch };
+              setLlmConfig(next);
+              void updateVaultConfig({ llmConfig: next });
+            }}
           />
         ) : rightSidebarTab === "suggestions" ? (
           <LinkSuggestionsSidebar
