@@ -88,7 +88,7 @@ pub(crate) fn archive_prompt_run(run_id: String, content: String, state: tauri::
     let run_path = prompt_run_archive_path(root, &run_id)?;
     let runs_dir = run_path.parent().ok_or("Invalid archive path")?;
     if !runs_dir.exists() {
-        fs::create_dir_all(&runs_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(runs_dir).map_err(|e| e.to_string())?;
     }
     fs::write(&run_path, &content).map_err(|e| e.to_string())?;
 
@@ -309,7 +309,7 @@ pub(crate) fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: t
             } else {
                 "\n\n"
             };
-            format!("{}{}{}", content.trim_end(), separator, format!("## Links\n\n- [[{}]]\n", suggestion.target_title))
+            format!("{}{}## Links\n\n- [[{}]]\n", content.trim_end(), separator, suggestion.target_title)
         }
     };
     
@@ -425,7 +425,7 @@ pub(crate) fn get_unresolved_links(state: tauri::State<AppState>) -> Result<Vec<
         .map(|(target, sources)| UnresolvedLinkGroup { target, sources })
         .collect();
 
-    result.sort_by(|a, b| a.target.to_lowercase().cmp(&b.target.to_lowercase()));
+    result.sort_by_key(|a| a.target.to_lowercase());
     Ok(result)
 }
 
@@ -573,14 +573,12 @@ pub(crate) fn get_wiki_health_report(state: tauri::State<AppState>) -> Result<Ve
         let mut duplicate_peer_path: Option<String> = None;
         let mut duplicate_peer_modified_at: Option<String> = None;
         for other in notes {
-            if other.meta.path != note.meta.path {
-                if other.content.trim() == note.content.trim() && !note.content.trim().is_empty() {
-                    is_duplicated = true;
-                    issues.push(format!("Duplicate content: Identical to note [[{}]].", other.meta.title));
-                    duplicate_peer_path = Some(other.meta.path.clone());
-                    duplicate_peer_modified_at = other.meta.modified_at.clone();
-                    break;
-                }
+            if other.meta.path != note.meta.path && other.content.trim() == note.content.trim() && !note.content.trim().is_empty() {
+                is_duplicated = true;
+                issues.push(format!("Duplicate content: Identical to note [[{}]].", other.meta.title));
+                duplicate_peer_path = Some(other.meta.path.clone());
+                duplicate_peer_modified_at = other.meta.modified_at.clone();
+                break;
             }
         }
         
@@ -667,7 +665,7 @@ pub(crate) async fn check_ingest_duplicate(
     let similar_notes: Vec<SimilarNote> = if search_term.len() > 3 {
         guard.notes.iter()
             .filter(|note| {
-                exact_match.as_ref().map_or(true, |p| p != &note.meta.path) &&
+                exact_match.as_ref().is_none_or(|p| p != &note.meta.path) &&
                 note.meta.title.to_lowercase().contains(&search_term)
             })
             .take(3)

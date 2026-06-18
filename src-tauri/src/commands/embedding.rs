@@ -129,9 +129,8 @@ pub(crate) async fn download_local_embedding_model(
             use std::io::Write;
             file.write_all(&chunk)
                 .map_err(|e| format!("Write error for {}: {}", file_name, e))
-                .map_err(|e| {
+                .inspect_err(|_| {
                     let _ = std::fs::remove_file(&tmp_path);
-                    e
                 })?;
             cumulative_received += chunk.len() as u64;
 

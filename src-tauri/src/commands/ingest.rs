@@ -99,7 +99,7 @@ pub(crate) async fn ingest_pdf(path: String) -> Result<IngestRaw, String> {
     Ok(IngestRaw {
         title: Some(source_ref.trim_end_matches(".pdf").to_string()),
         text: text.trim().to_string(),
-        source_ref: source_ref,
+        source_ref,
         source_type: "pdf".to_string(),
         ingest_date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
     })

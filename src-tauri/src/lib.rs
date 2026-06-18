@@ -44,7 +44,7 @@ fn save_api_key_in_keyring(provider: &str, key: &str) -> Result<(), String> {
             if key_trimmed.is_empty() {
                 let _ = entry.delete_password();
             } else {
-                if let Err(_) = entry.set_password(key_trimmed) {
+                if entry.set_password(key_trimmed).is_err() {
                     let mut guard = FALLBACK_KEYS.lock().unwrap();
                     let map = guard.get_or_insert_with(HashMap::new);
                     map.insert(provider.to_string(), key_trimmed.to_string());
@@ -111,7 +111,7 @@ fn parse_status_conflicts(stdout: &[u8]) -> bool {
         }
         let part_str = String::from_utf8_lossy(part);
         if part_str.len() >= 4 {
-            let x = part_str.chars().nth(0).unwrap_or(' ');
+            let x = part_str.chars().next().unwrap_or(' ');
             let y = part_str.chars().nth(1).unwrap_or(' ');
             if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
                 return true;
@@ -123,7 +123,7 @@ fn parse_status_conflicts(stdout: &[u8]) -> bool {
 
 fn has_conflicts(root: &Path) -> bool {
     if let Ok(cmd_output) = Command::new("git")
-        .args(&["status", "--porcelain", "-z"])
+        .args(["status", "--porcelain", "-z"])
         .current_dir(root)
         .output()
     {
@@ -142,7 +142,7 @@ fn staged_conflict_marker_file(root: &Path, paths: &[&str]) -> Result<Option<Str
     }
 
     let staged_files_output = Command::new("git")
-        .args(&diff_args)
+        .args(diff_args)
         .current_dir(root)
         .output()
         .map_err(|error| error.to_string())?;
@@ -157,7 +157,7 @@ fn staged_conflict_marker_file(root: &Path, paths: &[&str]) -> Result<Option<Str
         }
         let rel_path = String::from_utf8_lossy(part);
         if let Ok(show_output) = Command::new("git")
-            .args(&["show", &format!(":{}", rel_path)])
+            .args(["show", &format!(":{}", rel_path)])
             .current_dir(root)
             .output()
         {
@@ -188,7 +188,7 @@ fn git_changes_for_root(root: &Path) -> Result<Vec<GitFileChange>, String> {
     }
     
     let cmd_output = Command::new("git")
-        .args(&["status", "--porcelain", "-z"])
+        .args(["status", "--porcelain", "-z"])
         .current_dir(root)
         .output()
         .map_err(|e| e.to_string())?;
@@ -212,7 +212,7 @@ fn git_changes_for_root(root: &Path) -> Result<Vec<GitFileChange>, String> {
             i += 1;
             continue;
         }
-        let x = part_str.chars().nth(0).unwrap_or(' ');
+        let x = part_str.chars().next().unwrap_or(' ');
         let y = part_str.chars().nth(1).unwrap_or(' ');
         let path = part_str[3..].to_string();
 
@@ -286,7 +286,7 @@ fn git_unstage_file_in_root(root: &Path, path: &str) -> Result<(), String> {
     if head_exists {
         // Resolve if it's a rename to unstage both old and new paths
         let mut paths_to_reset = vec![path.to_string()];
-        if let Ok(status_output) = Command::new("git").args(&["status", "--porcelain", "-z"]).current_dir(root).output() {
+        if let Ok(status_output) = Command::new("git").args(["status", "--porcelain", "-z"]).current_dir(root).output() {
             if status_output.status.success() {
                 let stdout = status_output.stdout;
                 let parts: Vec<&[u8]> = stdout.split(|&b| b == 0).collect();
@@ -299,7 +299,7 @@ fn git_unstage_file_in_root(root: &Path, path: &str) -> Result<(), String> {
                     }
                     let part_str = String::from_utf8_lossy(part);
                     if part_str.len() >= 4 {
-                        let x = part_str.chars().nth(0).unwrap_or(' ');
+                        let x = part_str.chars().next().unwrap_or(' ');
                         let _y = part_str.chars().nth(1).unwrap_or(' ');
                         let new_path = part_str[3..].to_string();
                         if (x == 'R' || x == 'C') && i + 1 < parts.len() {
@@ -319,7 +319,7 @@ fn git_unstage_file_in_root(root: &Path, path: &str) -> Result<(), String> {
             git_output(root, &["reset", "HEAD", "--", &p])?;
         }
     } else {
-        git_output(root, &["rm", "--cached", "--", &path])?;
+        git_output(root, &["rm", "--cached", "--", path])?;
     }
     Ok(())
 }
@@ -446,7 +446,7 @@ pub(crate) fn git_stash_drop_in_root(root: &Path) -> Result<String, String> {
 
 pub(crate) fn git_merge_head_exists_in_root(root: &Path) -> bool {
     Command::new("git")
-        .args(&["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         .current_dir(root)
         .output()
         .map(|o| o.status.success())
@@ -839,7 +839,8 @@ fn read_core_plugins(value: Option<&serde_json::Value>) -> Vec<String> {
         Some(serde_json::Value::Object(map)) => {
             let mut plugins = map
             .iter()
-            .filter_map(|(key, enabled)| enabled.as_bool().unwrap_or(false).then(|| key.clone()))
+            .filter(|(_, enabled)| enabled.as_bool().unwrap_or(false))
+            .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
             plugins.sort();
             plugins
@@ -920,9 +921,9 @@ fn note_context(notes: &[ParsedNote], path: &str) -> Result<NoteContext, String>
 
 fn extract_excerpt(content: &str, length: usize) -> String {
     let mut body = content;
-    if content.starts_with("---\n") {
-        if let Some(end) = content[4..].find("\n---") {
-            body = &content[4 + end + 4..];
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---") {
+            body = &rest[end + 4..];
         }
     }
     // Remove title heading (# Heading)
@@ -974,9 +975,9 @@ fn create_context_bundle(notes: &[ParsedNote], focus_path: &str, options: Contex
 
 fn count_title_mentions(content: &str, title: &str) -> usize {
     let mut body = content;
-    if content.starts_with("---\n") {
-        if let Some(end) = content[4..].find("\n---") {
-            body = &content[4 + end + 4..];
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---") {
+            body = &rest[end + 4..];
         }
     }
     
@@ -1250,7 +1251,7 @@ fn render_context_bundle(
             let context = note_context(notes, &note.meta.path).unwrap();
             let find_note_title = |path: &str| {
                 notes.iter().find(|n| n.meta.path == path).map(|n| n.meta.title.clone()).unwrap_or_else(|| {
-                    path.split(['/', '\\']).last().unwrap_or(path).trim_end_matches(".md").to_string()
+                    path.split(['/', '\\']).next_back().unwrap_or(path).trim_end_matches(".md").to_string()
                 })
             };
 
