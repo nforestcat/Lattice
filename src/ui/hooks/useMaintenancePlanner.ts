@@ -182,22 +182,14 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
         return [item.path];
       }
 
-      if (item.suggestionKind === "link_candidates") {
-        const doc = await vaultApi.readNote(item.path);
-        const updatedContent = addManagedLink(doc.content, item.title);
-        await vaultApi.saveNote(item.path, updatedContent, doc.revision);
-        await auditPath(item.path);
-        item.status = "applied";
-        return [item.path];
-      }
-
-      if (item.suggestionKind === "backlinks_in") {
+      if (item.suggestionKind === "link_candidates" || item.suggestionKind === "backlinks_in") {
         const candidates = await vaultApi.getContextBundleCandidates(item.path);
         const succeeded: string[] = [];
+        const target = item.path.replace(/\.md$/i, "");
         for (const candidate of candidates) {
           try {
             const doc = await vaultApi.readNote(candidate.path);
-            const updatedContent = addManagedLink(doc.content, item.title);
+            const updatedContent = addManagedLink(doc.content, target);
             await vaultApi.saveNote(candidate.path, updatedContent, doc.revision);
             await auditPath(candidate.path);
             succeeded.push(candidate.path);

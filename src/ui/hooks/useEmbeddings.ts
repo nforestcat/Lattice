@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { vaultApi } from "../../api";
-import { getEmbedding, cosineSimilarity, type VectorCache } from "../../api/embeddings";
+import { canUseEmbeddings, getEmbedding, cosineSimilarity, type VectorCache } from "../../api/embeddings";
 import type { LlmConfig, VaultSnapshot, ContextBundleCandidate } from "../../api/types";
 import type { NoteMeta } from "../../core/types";
 import { estimateTokens } from "../../core/contextBundle";
@@ -30,7 +30,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
     notes: NoteMeta[],
     setContextCandidates: React.Dispatch<React.SetStateAction<ContextBundleCandidate[]>>
   ) {
-    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+    if (!config || !canUseEmbeddings(config)) {
       return;
     }
 
@@ -166,7 +166,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
     }
 
     const config = llmConfig;
-    if (!config || !config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+    if (!config || !canUseEmbeddings(config)) {
       setSemanticSearchError("Please configure LLM API key / Ollama / LM Studio in the Distill Settings first.");
       return;
     }

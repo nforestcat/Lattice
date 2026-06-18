@@ -106,7 +106,7 @@ export function useLinkSuggestions(callbacks: UseLinkSuggestionsCallbacks) {
     }
   }
 
-  async function applyBacklinkSuggestion(suggestion: BacklinkSuggestion, refreshContext: (path: string) => Promise<void>, runHealthAudit: () => Promise<void>) {
+  async function applyBacklinkSuggestion(suggestion: BacklinkSuggestion, refreshContext: (path: string) => Promise<void>, runHealthAudit: () => Promise<void>): Promise<boolean> {
     setStatus(`Applying backlink suggestion from ${suggestion.sourceTitle}...`);
     try {
       await vaultApi.applyBacklinkSuggestion(suggestion);
@@ -120,9 +120,11 @@ export function useLinkSuggestions(callbacks: UseLinkSuggestionsCallbacks) {
         await refreshBacklinkSuggestions(activePath);
       }
       void runHealthAudit();
+      return true;
     } catch (e) {
       console.error("Failed to apply backlink suggestion", e);
       setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
   }
 

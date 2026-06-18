@@ -1,5 +1,52 @@
 use crate::*;
 
+fn parse_chat_response(provider: &str, data: &serde_json::Value) -> Result<String, String> {
+    let value = match provider {
+        "ollama" => data.pointer("/message/content"),
+        "openai" | "lm-studio" | "custom" => data.pointer("/choices/0/message/content"),
+        "gemini" => data.pointer("/candidates/0/content/parts/0/text"),
+        "anthropic" => data.pointer("/content/0/text"),
+        _ => return Err(format!("Unsupported provider: {provider}")),
+    };
+    value
+        .and_then(serde_json::Value::as_str)
+        .filter(|content| !content.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            let label = match provider {
+                "openai" | "lm-studio" | "custom" => "OpenAI-compatible",
+                "ollama" => "Ollama",
+                "gemini" => "Gemini",
+                "anthropic" => "Anthropic",
+                _ => provider,
+            };
+            format!("Invalid response from {label} chat API")
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_chat_response;
+    use serde_json::json;
+
+    #[test]
+    fn rejects_malformed_desktop_chat_responses() {
+        let error = parse_chat_response("openai", &json!({"choices": [{"message": {}}]}))
+            .expect_err("missing content must be rejected");
+        assert!(error.contains("OpenAI-compatible"));
+    }
+
+    #[test]
+    fn parses_valid_desktop_chat_responses() {
+        let content = parse_chat_response(
+            "anthropic",
+            &json!({"content": [{"text": "validated response"}]}),
+        )
+        .expect("valid response");
+        assert_eq!(content, "validated response");
+    }
+}
+
 #[cfg(not(test))]
 #[tauri::command]
 pub(crate) fn save_api_key(provider: String, key: String) -> Result<(), String> {
@@ -42,8 +89,7 @@ pub(crate) async fn send_llm_chat_message(
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-            let content = data["message"]["content"].as_str().unwrap_or("").to_string();
-            Ok(content)
+            parse_chat_response("ollama", &data)
         }
         "openai" | "lm-studio" | "custom" => {
             let default_base = if config.provider == "openai" {
@@ -81,8 +127,7 @@ pub(crate) async fn send_llm_chat_message(
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-            let content = data["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
-            Ok(content)
+            parse_chat_response(&config.provider, &data)
         }
         "gemini" => {
             let url = format!(
@@ -124,8 +169,7 @@ pub(crate) async fn send_llm_chat_message(
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-            let content = data["candidates"][0]["content"]["parts"][0]["text"].as_str().unwrap_or("").to_string();
-            Ok(content)
+            parse_chat_response("gemini", &data)
         }
         "anthropic" => {
             let url = "https://api.anthropic.com/v1/messages";
@@ -166,8 +210,7 @@ pub(crate) async fn send_llm_chat_message(
             }
             
             let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-            let content = data["content"][0]["text"].as_str().unwrap_or("").to_string();
-            Ok(content)
+            parse_chat_response("anthropic", &data)
         }
         _ => Err(format!("Unsupported provider: {}", config.provider))
     }

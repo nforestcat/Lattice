@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getEmbedding, cosineSimilarity } from "../src/api/embeddings";
+import { canUseEmbeddings, getEmbedding, cosineSimilarity } from "../src/api/embeddings";
 import type { LlmConfig } from "../src/api/types";
 
 describe("Vector Embeddings & Cosine Similarity", () => {
@@ -35,6 +35,25 @@ describe("Vector Embeddings & Cosine Similarity", () => {
     it("should return 0 if vector lengths differ or are empty", () => {
       expect(cosineSimilarity([1, 2], [1, 2, 3])).toBe(0);
       expect(cosineSimilarity([], [])).toBe(0);
+    });
+  });
+
+  describe("canUseEmbeddings", () => {
+    it("allows the offline provider without a chat API key", () => {
+      expect(canUseEmbeddings({
+        provider: "openai",
+        apiKey: "",
+        model: "gpt-4o",
+        embeddingProvider: "local-onnx",
+      })).toBe(true);
+    });
+
+    it("still requires credentials for remote embedding providers", () => {
+      expect(canUseEmbeddings({
+        provider: "openai",
+        apiKey: "",
+        model: "gpt-4o",
+      })).toBe(false);
     });
   });
 

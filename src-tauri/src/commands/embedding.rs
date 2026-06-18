@@ -1,9 +1,29 @@
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
+const MODEL_REVISION: &str = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41";
 const MODEL_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/onnx/model.onnx";
 const TOKENIZER_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer.json";
+const MODEL_SHA256: &str = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452";
+const TOKENIZER_SHA256: &str = "0527a6e09e4ddafb203ce57d0b33383aca4727268810f6db490723892d49585d";
+
+fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!("SHA-256 mismatch: expected {expected}, got {actual}"))
+    }
+}
+
+#[cfg(not(test))]
+fn verify_file(path: &std::path::Path, expected: &str) -> bool {
+    std::fs::read(path)
+        .ok()
+        .is_some_and(|bytes| verify_sha256(&bytes, expected).is_ok())
+}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +57,18 @@ pub fn compute_progress(
     }
 }
 
+#[cfg(test)]
+mod integrity_tests {
+    use super::verify_sha256;
+
+    #[test]
+    fn rejects_bytes_with_the_wrong_digest() {
+        let error = verify_sha256(b"tampered", "0000000000000000000000000000000000000000000000000000000000000000")
+            .expect_err("mismatched content must be rejected");
+        assert!(error.contains("SHA-256"));
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
@@ -63,7 +95,8 @@ pub(crate) async fn get_local_embedding_model_status(
     let model_path = dir.join("model.onnx");
     let tokenizer_path = dir.join("tokenizer.json");
 
-    let downloaded = model_path.exists() && tokenizer_path.exists();
+    let downloaded =
+        verify_file(&model_path, MODEL_SHA256) && verify_file(&tokenizer_path, TOKENIZER_SHA256);
     let model_size_mb = std::fs::metadata(&model_path)
         .map(|m| m.len() as f32 / (1024.0 * 1024.0))
         .unwrap_or(0.0);
@@ -89,12 +122,15 @@ pub(crate) async fn download_local_embedding_model(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let files = [(MODEL_URL, "model.onnx"), (TOKENIZER_URL, "tokenizer.json")];
+    let files = [
+        (MODEL_URL, "model.onnx", MODEL_SHA256),
+        (TOKENIZER_URL, "tokenizer.json", TOKENIZER_SHA256),
+    ];
     let file_count = files.len() as u8;
     let mut cumulative_received: u64 = 0;
     let mut cumulative_total: Option<u64> = Some(0);
 
-    for (file_index, (url, file_name)) in files.iter().enumerate() {
+    for (file_index, (url, file_name, expected_sha256)) in files.iter().enumerate() {
         let file_index = file_index as u8;
         let response = client
             .get(*url)
@@ -129,9 +165,8 @@ pub(crate) async fn download_local_embedding_model(
             use std::io::Write;
             file.write_all(&chunk)
                 .map_err(|e| format!("Write error for {}: {}", file_name, e))
-                .map_err(|e| {
+                .inspect_err(|_| {
                     let _ = std::fs::remove_file(&tmp_path);
-                    e
                 })?;
             cumulative_received += chunk.len() as u64;
 
@@ -143,6 +178,13 @@ pub(crate) async fn download_local_embedding_model(
             );
             let _ = on_progress.send(progress);
         }
+        drop(file);
+        let bytes = std::fs::read(&tmp_path)
+            .map_err(|e| format!("Could not verify {}: {}", file_name, e))?;
+        verify_sha256(&bytes, expected_sha256).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Integrity check failed for {file_name} at revision {MODEL_REVISION}: {e}")
+        })?;
 
         std::fs::rename(&tmp_path, &final_path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp_path);

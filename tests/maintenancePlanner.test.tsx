@@ -88,10 +88,23 @@ describe("useMaintenancePlanner", () => {
     await waitFor(() => expect(result.current.suggestions["health-Notes/Long.md-missingSummary"]).toBe("A useful generated summary."));
   });
 
-  it("applies link_candidates suggestions by inserting a backlink into the note body", async () => {
+  it("applies link_candidates suggestions by linking from candidate notes to the orphan", async () => {
+    vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      {
+        path: "Notes/Related.md",
+        title: "Related",
+        reason: "Recommended",
+        reasonDetail: "Related topic",
+        score: 8,
+        excerpt: "Related body",
+        tokenEstimate: 2,
+        selected: false,
+        characterCount: 12,
+      },
+    ]);
     vi.spyOn(vaultApi, "readNote").mockResolvedValue({
-      path: "Notes/Orphan.md",
-      content: "# Orphan Note\nSome body.",
+      path: "Notes/Related.md",
+      content: "# Related\nSome body.",
       revision: "rev-1",
     });
     const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
@@ -131,10 +144,10 @@ describe("useMaintenancePlanner", () => {
       paths = await result.current.apply(item);
     });
 
-    expect(paths).toEqual(["Notes/Orphan.md"]);
+    expect(paths).toEqual(["Notes/Related.md"]);
     expect(saveNoteSpy).toHaveBeenCalledWith(
-      "Notes/Orphan.md",
-      expect.stringContaining("[[Orphan Note]]"),
+      "Notes/Related.md",
+      expect.stringContaining("[[Notes/Orphan]]"),
       "rev-1"
     );
     expect(auditSpy).toHaveBeenCalledTimes(1);

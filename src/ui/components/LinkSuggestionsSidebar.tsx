@@ -21,7 +21,7 @@ interface LinkSuggestionsSidebarProps {
   onNavigateNote: (path: string) => Promise<void>;
   onInsertLinkAtCursor: (title: string) => void;
   onApplyWikiLinkSuggestion: (title: string) => void;
-  onApplyBacklinkSuggestion: (suggestion: BacklinkSuggestion) => Promise<void>;
+  onApplyBacklinkSuggestion: (suggestion: BacklinkSuggestion) => Promise<boolean>;
 }
 
 export function LinkSuggestionsSidebar({
