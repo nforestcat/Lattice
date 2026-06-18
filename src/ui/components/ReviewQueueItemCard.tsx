@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import type { AiProvenance, ReviewItemStatus, ReviewQueueItem } from "../../api/types";
 
 type QueueActionHandler = (id: string) => void | Promise<void>;
@@ -13,6 +13,9 @@ interface ReviewItemCardProps {
   readonly provenances?: Record<string, AiProvenance>;
   readonly onGenerate?: (id: string) => void | Promise<void>;
   readonly onApplyMaintenance?: (id: string) => void | Promise<void>;
+  readonly onStage?: (id: string) => void | Promise<void>;
+  readonly canStage?: boolean;
+  readonly isStagedByQueue?: boolean;
 }
 
 const KIND_COLORS: Record<string, string> = {
@@ -47,6 +50,8 @@ const GENERATE_LABELS: Record<string, string> = {
   backlinks_in: "Find Inbound Links",
 };
 
+const PREVIEWABLE_SUGGESTION_KINDS = new Set(["link_candidates", "backlinks_in", "review_prompt"]);
+
 export function ReviewQueueItemCard({
   item,
   onApply,
@@ -57,6 +62,9 @@ export function ReviewQueueItemCard({
   provenances = {},
   onGenerate,
   onApplyMaintenance,
+  onStage,
+  canStage = false,
+  isStagedByQueue = false,
 }: ReviewItemCardProps) {
   const kindColor = KIND_COLORS[item.kind] ?? "#64748b";
   const statusStyle = STATUS_COLORS[item.status];
@@ -68,6 +76,8 @@ export function ReviewQueueItemCard({
   const suggestionProvenance = provenances[item.id];
   const hasSuggestionKind = item.suggestionKind != null;
   const generateLabel = item.suggestionKind ? (GENERATE_LABELS[item.suggestionKind] ?? "Generate Suggestion") : null;
+  const needsDiffPreview = item.suggestionKind != null && PREVIEWABLE_SUGGESTION_KINDS.has(item.suggestionKind);
+  const [diffPreviewOpen, setDiffPreviewOpen] = useState(false);
 
   // Effective proposed: either from the item itself or from the generated suggestion
   const effectiveProposed = item.proposed ?? suggestion;
@@ -163,6 +173,13 @@ export function ReviewQueueItemCard({
         </div>
       ) : null}
 
+      {needsDiffPreview && suggestion && diffPreviewOpen && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <DiffBlock label="이전" value={item.original ?? ""} tone="remove" />
+          <DiffBlock label="이후" value={suggestion} tone="add" />
+        </div>
+      )}
+
       {item.reason && <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>{item.reason}</div>}
 
       {item.kind === "proposed_edit" && <ProvenanceBlock provenance={item.provenance} />}
@@ -183,15 +200,20 @@ export function ReviewQueueItemCard({
         {/* Post-generation actions for health items */}
         {suggestion && hasSuggestionKind && (
           <>
-            {item.kind === "missing_summary" && onApplyMaintenance ? (
+            {needsDiffPreview && !diffPreviewOpen && (
+              <ActionButton variant="approve" onClick={() => setDiffPreviewOpen(true)}>
+                Preview Diff
+              </ActionButton>
+            )}
+            {(item.kind === "missing_summary" || (needsDiffPreview && diffPreviewOpen)) && onApplyMaintenance ? (
               <ActionButton variant="apply" onClick={() => void onApplyMaintenance(item.id)}>
                 Apply to Note
               </ActionButton>
-            ) : (
+            ) : !needsDiffPreview ? (
               <ActionButton variant="approve" onClick={handleCopy}>
                 Copy
               </ActionButton>
-            )}
+            ) : null}
           </>
         )}
 
@@ -224,6 +246,15 @@ export function ReviewQueueItemCard({
               Reject
             </ActionButton>
           </>
+        )}
+        {canStage && onStage && (
+          <ActionButton
+            variant={isStagedByQueue ? "disabled" : "approve"}
+            disabled={isStagedByQueue}
+            onClick={!isStagedByQueue ? () => void onStage(item.id) : undefined}
+          >
+            {isStagedByQueue ? "Staged" : "Stage"}
+          </ActionButton>
         )}
         {(item.status === "applied" || item.status === "committed") && (
           <ActionButton variant="disabled" disabled>

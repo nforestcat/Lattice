@@ -2871,6 +2871,84 @@ participants: Antigravity, User
     gitUnstageFileSpy.mockRestore();
   });
 
+  it("stages a review-queue item's mutated paths and warns when other files are staged outside the queue before commit", async () => {
+    const getWikiHealthReportSpy = vi.spyOn(vaultApi, "getWikiHealthReport").mockResolvedValue([
+      {
+        path: "Home.md",
+        title: "Home",
+        score: 50,
+        issues: ["missingSummary"],
+        isOrphan: false,
+        isStale: false,
+        isTooBroad: false,
+        isDuplicated: false,
+        missingSummary: true,
+        weakBacklinks: false
+      }
+    ]);
+    const sendChatMessageSpy = vi.spyOn(llmApi, "sendChatMessage").mockResolvedValue("A concise summary.");
+    const applyNoteMetadataSpy = vi.spyOn(vaultApi, "applyNoteMetadata").mockResolvedValue();
+    const appendAiAuditSpy = vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue();
+    const gitStageFileSpy = vi.spyOn(vaultApi, "gitStageFile").mockResolvedValue();
+    const gitSuggestCommitMessageSpy = vi.spyOn(vaultApi, "gitSuggestCommitMessage").mockResolvedValue("Suggested commit message");
+
+    const getGitChangesSpy = vi.spyOn(vaultApi, "getGitChanges").mockResolvedValue([]);
+    const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
+      isRepo: true,
+      autoGitEnabled: false,
+      branch: "main",
+      hasChanges: false,
+      hasConflicts: false
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Distill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Wiki Auditor" }));
+    await waitFor(() => expect(getWikiHealthReportSpy).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "검토 대기열" }));
+    await waitFor(() => expect(screen.getByText(/missingSummary/)).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate Summary" }));
+    await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalled());
+
+    const applyBtn = await screen.findByRole("button", { name: "Apply to Note" });
+    fireEvent.click(applyBtn);
+    await waitFor(() => expect(applyNoteMetadataSpy).toHaveBeenCalledWith("Home.md", { summary: "A concise summary." }, []));
+
+    // No Commit warning yet — nothing staged outside the queue.
+    const stageBtn = await screen.findByRole("button", { name: "Stage" });
+    fireEvent.click(stageBtn);
+    await waitFor(() => expect(gitStageFileSpy).toHaveBeenCalledWith("Home.md"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Staged" })).toBeTruthy());
+
+    const commitBtn = screen.getByRole("button", { name: "Commit" });
+    expect((commitBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(commitBtn);
+    await waitFor(() => expect(gitSuggestCommitMessageSpy).toHaveBeenCalled());
+    expect(screen.queryByText(/other staged files will also be committed/)).toBeNull();
+
+    // Now simulate an externally staged file outside the queue's tracking.
+    getGitChangesSpy.mockResolvedValue([
+      { path: "Home.md", status: "modified", staged: true },
+      { path: "Unrelated.md", status: "modified", staged: true }
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "검토 대기열" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commit" }));
+    await waitFor(() => expect(screen.getByText(/1 other staged files will also be committed/)).toBeTruthy());
+
+    getWikiHealthReportSpy.mockRestore();
+    sendChatMessageSpy.mockRestore();
+    applyNoteMetadataSpy.mockRestore();
+    appendAiAuditSpy.mockRestore();
+    gitStageFileSpy.mockRestore();
+    gitSuggestCommitMessageSpy.mockRestore();
+    getGitChangesSpy.mockRestore();
+    getGitStatusSpy.mockRestore();
+  });
+
   it("auto-opens the console output panel and styles it red if log contains error or fatal warnings", async () => {
     const getGitStatusSpy = vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue({
       isRepo: true,

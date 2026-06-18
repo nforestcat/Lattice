@@ -428,13 +428,18 @@ export function App() {
     selectNote: (path) => selectNote(path),
   });
 
+  const gitStagedPaths = useMemo(
+    () => new Set(gitChanges.filter(c => c.staged).map(c => c.path)),
+    [gitChanges]
+  );
+
   const reviewQueue = useReviewQueue({
     inboxCaptures,
     bulkDrafts,
     proposedEdits,
     healthReports,
     backlinkSuggestions,
-    gitStagedPaths: new Set(gitChanges.filter(c => c.staged).map(c => c.path)),
+    gitStagedPaths,
     onApplyInboxCapture: (id) => {
       void markInboxCaptureProcessed(id);
     },

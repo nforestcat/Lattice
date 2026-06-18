@@ -12,6 +12,9 @@ interface ReviewQueuePanelProps {
   readonly provenances?: Record<string, AiProvenance>;
   readonly onGenerate?: (id: string) => void | Promise<void>;
   readonly onApplyMaintenance?: (id: string) => void | Promise<void>;
+  readonly onStage?: (id: string) => void | Promise<void>;
+  readonly canStageItem?: (id: string) => boolean;
+  readonly stagedByQueue?: Set<string>;
 }
 
 const FILTER_TABS: Array<ReviewItemStatus | "all"> = [
@@ -28,6 +31,9 @@ export function ReviewQueuePanel({
   provenances,
   onGenerate,
   onApplyMaintenance,
+  onStage,
+  canStageItem,
+  stagedByQueue,
 }: ReviewQueuePanelProps) {
   const [filter, setFilter] = useState<ReviewItemStatus | "all">("all");
 
@@ -111,6 +117,9 @@ export function ReviewQueuePanel({
               provenances={provenances}
               onGenerate={onGenerate}
               onApplyMaintenance={onApplyMaintenance}
+              onStage={onStage}
+              canStage={canStageItem ? canStageItem(item.id) : false}
+              isStagedByQueue={stagedByQueue?.has(item.id) ?? false}
             />
           ))
         )}

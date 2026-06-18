@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ReviewQueuePanel } from "./ReviewQueuePanel";
 import { useMaintenancePlanner } from "../hooks/useMaintenancePlanner";
 import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview, GitStatus, GitFileChange } from "../../api/types";
@@ -188,6 +188,13 @@ export function DistillWorkspace({
 
   const maintenancePlanner = useMaintenancePlanner();
 
+  // Paths mutated by each review-queue item's apply step, keyed by item id.
+  const [mutatedPathsByItem, setMutatedPathsByItem] = useState<Record<string, string[]>>({});
+  // Paths staged via the review-queue "Stage" button — populated ONLY on click, never automatically.
+  const stagedByQueueRef = useRef<Set<string>>(new Set());
+  const [stagedByQueue, setStagedByQueue] = useState<Set<string>>(new Set());
+  const [commitWarning, setCommitWarning] = useState<string | null>(null);
+
   // Hydrate suggestions from persisted vault config on mount
   useEffect(() => {
     if (vaultConfig.maintenanceSuggestions) {
@@ -274,6 +281,63 @@ export function DistillWorkspace({
     }
   }, [distillTab, vault?.rootPath]);
 
+  function markStaged(ids: string[]) {
+    const next = new Set(stagedByQueueRef.current);
+    for (const id of ids) next.add(id);
+    stagedByQueueRef.current = next;
+    setStagedByQueue(next);
+  }
+
+  async function handleQueueStage(itemId: string) {
+    const paths = mutatedPathsByItem[itemId];
+    if (!paths || paths.length === 0) return;
+    for (const path of paths) {
+      await onStageFile(path);
+    }
+    markStaged([itemId]);
+  }
+
+  function canStageQueueItem(itemId: string): boolean {
+    const paths = mutatedPathsByItem[itemId];
+    return !!paths && paths.length > 0;
+  }
+
+  async function handleQueueApply(id: string) {
+    const item = reviewQueue?.items.find((i) => i.id === id);
+    await reviewQueue?.applyItem(id);
+    if (item) {
+      setMutatedPathsByItem((prev) => ({ ...prev, [id]: [item.path] }));
+    }
+  }
+
+  async function handleQueueApplyMaintenance(id: string) {
+    const item = reviewQueue?.items.find((i) => i.id === id);
+    if (!item) return;
+    const paths = await maintenancePlanner.apply(item);
+    setMutatedPathsByItem((prev) => ({ ...prev, [id]: paths }));
+  }
+
+  async function handleQueueCommit() {
+    setCommitWarning(null);
+    try {
+      const changes = await vaultApi.getGitChanges();
+      const stagedPaths = changes.filter((c) => c.staged).map((c) => c.path);
+      const stagedByQueuePaths = new Set(
+        Object.entries(mutatedPathsByItem)
+          .filter(([id]) => stagedByQueueRef.current.has(id))
+          .flatMap(([, paths]) => paths)
+      );
+      const extra = stagedPaths.filter((p) => !stagedByQueuePaths.has(p));
+      if (extra.length > 0) {
+        setCommitWarning(`${extra.length} other staged files will also be committed`);
+      }
+    } catch {
+      // non-fatal — proceed without the warning
+    }
+    await onSuggestCommitMessage();
+    setDistillTab("git");
+  }
+
   return (
     <section className="distillSurface">
       <div className="distillTabHeader" style={{ padding: "0 16px 8px 16px", borderBottom: "1px solid #cbd5e1", marginBottom: 12 }}>
@@ -317,23 +381,42 @@ export function DistillWorkspace({
       </div>
 
       {distillTab === "review" && reviewQueue ? (
-        <ReviewQueuePanel
-          items={reviewQueue.items}
-          onApply={reviewQueue.applyItem}
-          onApprove={reviewQueue.approveItem}
-          onReject={reviewQueue.rejectItem}
-          generating={maintenancePlanner.generating}
-          suggestions={maintenancePlanner.suggestions}
-          provenances={maintenancePlanner.provenances}
-          onGenerate={(id) => {
-            const item = reviewQueue.items.find((i) => i.id === id);
-            if (item) void maintenancePlanner.generate(item, llmConfig);
-          }}
-          onApplyMaintenance={(id) => {
-            const item = reviewQueue.items.find((i) => i.id === id);
-            if (item) void maintenancePlanner.apply(item);
-          }}
-        />
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <div style={{ padding: "8px 16px", borderBottom: "1px solid #cbd5e1", display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              className="smallButton primary"
+              disabled={stagedByQueue.size === 0}
+              onClick={() => void handleQueueCommit()}
+            >
+              Commit
+            </button>
+            {commitWarning && (
+              <span style={{ fontSize: 12, color: "#92400e", background: "#fef3c7", borderRadius: 4, padding: "2px 8px" }}>
+                ⚠️ {commitWarning}
+              </span>
+            )}
+          </div>
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <ReviewQueuePanel
+              items={reviewQueue.items}
+              onApply={handleQueueApply}
+              onApprove={reviewQueue.approveItem}
+              onReject={reviewQueue.rejectItem}
+              generating={maintenancePlanner.generating}
+              suggestions={maintenancePlanner.suggestions}
+              provenances={maintenancePlanner.provenances}
+              onGenerate={(id) => {
+                const item = reviewQueue.items.find((i) => i.id === id);
+                if (item) void maintenancePlanner.generate(item, llmConfig);
+              }}
+              onApplyMaintenance={(id) => void handleQueueApplyMaintenance(id)}
+              onStage={(id) => void handleQueueStage(id)}
+              canStageItem={canStageQueueItem}
+              stagedByQueue={stagedByQueue}
+            />
+          </div>
+        </div>
       ) : distillTab === "git" ? (
         <GitWorkspace
           gitStatus={gitStatus}
@@ -364,6 +447,7 @@ export function DistillWorkspace({
           onCancelPendingPull={onCancelPendingPull}
           onStashAndPull={onStashAndPull}
           onDropStash={onDropStash}
+          extraStagedWarning={commitWarning}
         />
       ) : (
         <div className="distillWorkspaceLayout">

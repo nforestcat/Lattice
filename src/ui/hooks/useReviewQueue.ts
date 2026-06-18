@@ -103,6 +103,7 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
       result.push(adaptBacklinkSuggestion(suggestion));
     }
 
+    console.log("[DEBUG] baseItems recompute", result.map(r => `${r.id}:${r.status}`));
     return result
       .map((item) =>
         gitStagedPaths ? { ...item, gitStaged: gitStagedPaths.has(item.path) } : item
