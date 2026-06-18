@@ -5,7 +5,7 @@ export interface DiffLine {
   value: string;
 }
 
-interface PromptHistoryPanelProps {
+export interface PromptHistoryPanelProps {
   vaultConfig: VaultConfig;
   activePath: string | null;
   archiveStatus: { fileCount: number; totalBytes: number } | null;

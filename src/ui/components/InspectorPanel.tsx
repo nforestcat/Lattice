@@ -1,6 +1,6 @@
 import type { VaultSnapshot, VaultConfig, ContextBundle, ContextBundleCandidate } from "../../api/types";
 
-interface InspectorPanelProps {
+export interface InspectorPanelProps {
   vault: VaultSnapshot | null;
   activePath: string | null;
   draft: string;

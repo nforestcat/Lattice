@@ -3,11 +3,11 @@ import { useEmbeddingsIndex } from "../hooks/useEmbeddingsIndex";
 import { useModelDownloadContext } from "../contexts/ModelDownloadContext";
 import type { LlmConfig, VaultSnapshot } from "../../api/types";
 
-type Props = {
+export interface EmbeddingsIndexPanelProps {
   llmConfig: LlmConfig | null;
   vault: VaultSnapshot | null;
   onUpdateLlmConfig?: (patch: Partial<LlmConfig>) => void;
-};
+}
 
 type StepState = "todo" | "active" | "done" | "error";
 
@@ -23,7 +23,7 @@ function stepIndicator(state: StepState) {
   return <div style={{ ...base, background: "#e2e8f0", color: "#94a3b8" }}>○</div>;
 }
 
-export function EmbeddingsIndexPanel({ llmConfig, vault, onUpdateLlmConfig }: Props) {
+export function EmbeddingsIndexPanel({ llmConfig, vault, onUpdateLlmConfig }: EmbeddingsIndexPanelProps) {
   const { indexedCount, staleCount, failedNotes, isReindexing, lastRefreshed, refresh, reindex } =
     useEmbeddingsIndex(llmConfig, vault);
   const { downloaded, modelSizeMb, downloading, progress, error: downloadError, startDownload } =
