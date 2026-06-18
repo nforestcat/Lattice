@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { buildCommitBundle } from "./commitBundle";
+import type { CommitBundle } from "./commitBundle";
 import type { InboxCaptureBlock } from "../../core/capture";
 import type {
   StubDraftReview,
@@ -49,6 +51,7 @@ export interface ReviewQueueHook {
   approveItem: (id: string) => Promise<void>;
   rejectItem: (id: string) => Promise<void>;
   updateIngestCapture: (id: string, patch: IngestQueueUpdate) => void;
+  commitBundle: CommitBundle;
 }
 
 const ACTIVE_STATUSES: ReviewItemStatus[] = ["new", "drafted"];
@@ -195,5 +198,7 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     onUpdateIngestCapture?.(id, patch);
   }
 
-  return { items, filterItems, applyItem, approveItem, rejectItem, updateIngestCapture };
+  const commitBundle = useMemo(() => buildCommitBundle(items), [items]);
+
+  return { items, filterItems, applyItem, approveItem, rejectItem, updateIngestCapture, commitBundle };
 }

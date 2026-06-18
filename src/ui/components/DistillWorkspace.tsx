@@ -455,6 +455,7 @@ export function DistillWorkspace({
           onStashAndPull={onStashAndPull}
           onDropStash={onDropStash}
           extraStagedWarning={commitWarning}
+          commitBundle={reviewQueue?.commitBundle}
         />
       ) : (
         <div className="distillWorkspaceLayout">

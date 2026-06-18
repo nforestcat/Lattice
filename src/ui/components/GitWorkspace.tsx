@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { GitFileChange, GitStatus } from "../../api/types";
+import type { CommitBundle } from "../hooks/commitBundle";
+import { KIND_LABELS, buildAuditLog } from "../hooks/commitBundle";
 
 interface GitWorkspaceProps {
   gitStatus: GitStatus | null;
@@ -31,6 +33,7 @@ interface GitWorkspaceProps {
   onStashAndPull: () => Promise<void>;
   onDropStash: () => Promise<void>;
   extraStagedWarning?: string | null;
+  commitBundle?: CommitBundle;
 }
 
 type ParsedDiffLine = {
@@ -246,9 +249,11 @@ export function GitWorkspace({
   onCancelPendingPull,
   onStashAndPull,
   onDropStash,
-  extraStagedWarning
+  extraStagedWarning,
+  commitBundle,
 }: GitWorkspaceProps) {
   const [isConsoleOpen, setIsConsoleOpen] = useState(true);
+  const [isBundleOpen, setIsBundleOpen] = useState(false);
   const [collapsedHunks, setCollapsedHunks] = useState<Set<string>>(new Set());
   const parsedDiffFiles = useMemo(() => parseUnifiedDiff(activeDiff || ""), [activeDiff]);
 
@@ -344,6 +349,41 @@ export function GitWorkspace({
               Stage All
             </button>
           </div>
+
+          {commitBundle && (
+            <div style={{ marginBottom: "8px", fontSize: "0.82rem", border: "1px solid #e2e8f0", borderRadius: "6px", overflow: "hidden" }}>
+              <button
+                type="button"
+                onClick={() => setIsBundleOpen((v) => !v)}
+                style={{ width: "100%", textAlign: "left", background: "#f8fafc", border: "none", padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <span style={{ fontSize: "0.75rem" }}>{isBundleOpen ? "▾" : "▸"}</span>
+                <span style={{ fontWeight: 600, color: "#475569" }}>Bundle</span>
+                {commitBundle.isEmpty ? (
+                  <span style={{ color: "#94a3b8" }}>— no staged review items</span>
+                ) : (
+                  <span style={{ color: "#64748b" }}>
+                    {Object.entries(commitBundle.countByKind).map(([kind, count]) => (
+                      <span key={kind} style={{ marginRight: "8px" }}>
+                        {KIND_LABELS[kind as keyof typeof KIND_LABELS]} ×{count}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </button>
+              {isBundleOpen && !commitBundle.isEmpty && (
+                <div style={{ padding: "6px 10px", background: "#fff", maxHeight: "160px", overflowY: "auto" }}>
+                  {buildAuditLog(commitBundle).map((item) => (
+                    <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "3px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.8rem" }}>
+                      <span style={{ color: "#64748b", fontWeight: 500, minWidth: "60px" }}>{KIND_LABELS[item.kind]}</span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }} title={item.title}>{item.title}</span>
+                      <span style={{ color: "#94a3b8", whiteSpace: "nowrap" }}>{new Date(item.createdAt).toLocaleTimeString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="gitCommitBox">
             <textarea
