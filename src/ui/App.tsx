@@ -11,6 +11,7 @@ import type { GraphData, NoteMeta } from "../core/types";
 import { estimateTokens } from "../core/contextBundle";
 import { renderMarkdownPreview } from "./markdownPreview";
 import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
+import { loadNoteContext, loadVaultOverview } from "./contextRefresh";
 import { GraphView } from "./components/GraphView";
 import { DistillWorkspace } from "./components/DistillWorkspace";
 import { Sidebar } from "./components/Sidebar";
@@ -187,7 +188,7 @@ async function hashPromptContent(content: string): Promise<string> {
 export function App() {
   const vaultHook = useVault({
     setResults: (notes) => setResults(notes),
-    selectNote: (path) => selectNote(path),
+    selectNote: (path) => selectNoteAfterMutation(path),
     refreshVault: (path) => refreshVault(path),
     clearActiveNoteState: () => clearActiveNoteState(),
   });
@@ -288,7 +289,7 @@ export function App() {
     vaultConfig,
     defaultNoteTemplates: DEFAULT_NOTE_TEMPLATES,
     setStatus,
-    selectNote: (path) => selectNote(path),
+    selectNote: (path) => selectNoteAfterMutation(path),
     runHealthAudit: () => runHealthAudit(),
   });
   const {
@@ -442,7 +443,7 @@ export function App() {
     activePath,
     setResults,
     setStatus,
-    selectNote: (path) => selectNote(path),
+    selectNote: (path) => selectNoteAfterMutation(path),
   });
 
   const gitStagedPaths = useMemo(
@@ -525,7 +526,7 @@ export function App() {
     updateSemanticRecommendationsBase(path, config, notes, setContextCandidates);
 
   const applyBacklinkSuggestion = (suggestion: BacklinkSuggestion) =>
-    applyBacklinkSuggestionBase(suggestion, refreshContext, runHealthAudit);
+    applyBacklinkSuggestionBase(suggestion, refreshContextAfterMutation, runHealthAudit);
 
   function clearActiveNoteState() {
     setActivePath(null);
@@ -713,11 +714,10 @@ export function App() {
     if (nextVault.obsidianSettings?.detected) {
       setStatus("Imported Obsidian settings");
     }
-    if (nextVault.notes[0]) {
-      await selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes, runtimeLlmConfig);
-    }
-    setGraph(await vaultApi.getGraph());
-    setGitStatus(await vaultApi.getGitStatus());
+    const noteSelection = nextVault.notes[0]
+      ? selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes, runtimeLlmConfig)
+      : Promise.resolve();
+    await Promise.all([noteSelection, refreshVaultOverview()]);
     setGitChanges([]);
     setSelectedGitFile(null);
     setActiveDiff(null);
@@ -742,13 +742,13 @@ export function App() {
     const nextVault = await vaultApi.openVault(vault?.rootPath ?? "Demo Vault");
     setVault(nextVault);
     setResults(nextVault.notes);
-    setGraph(await vaultApi.getGraph());
-    setGitStatus(await vaultApi.getGitStatus());
-    if (selectedPath) {
-      await selectNote(selectedPath, undefined, nextVault.notes, undefined, true);
-    } else {
+    const noteSelection = selectedPath
+      ? selectNote(selectedPath, undefined, nextVault.notes, undefined, true)
+      : Promise.resolve();
+    if (!selectedPath) {
       clearActiveNoteState();
     }
+    await Promise.all([noteSelection, refreshVaultOverview()]);
     void refreshArchiveStatus();
     void runHealthAudit();
   }
@@ -762,19 +762,44 @@ export function App() {
     if (!preserveViewMode) {
       setViewMode("split");
     }
-    await refreshContext(path, currentConfig, currentNotes, currentLlmConfig);
+    await refreshContext(path, currentConfig, currentNotes, currentLlmConfig, note);
+  }
+
+  async function selectNoteAfterMutation(path: string): Promise<void> {
+    await Promise.all([selectNote(path), refreshVaultOverview()]);
+  }
+
+  async function refreshVaultOverview(): Promise<void> {
+    const { graph: nextGraph, gitStatus: nextGitStatus } = await loadVaultOverview(vaultApi);
+    setGraph(nextGraph);
+    setGitStatus(nextGitStatus);
+  }
+
+  async function refreshContextAfterMutation(path: string): Promise<void> {
+    await Promise.all([refreshContext(path), refreshVaultOverview()]);
   }
 
   function normalizeRef(value: string): string {
     return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
   }
 
-  async function refreshContext(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig) {
+  async function refreshContext(
+    path: string,
+    currentConfig?: VaultConfig,
+    currentNotes?: NoteMeta[],
+    currentLlmConfig?: LlmConfig,
+    currentDocument?: NoteDocument,
+  ) {
     setMetadataSuggestions(null);
-    setContext(await vaultApi.getNoteContext(path));
-    setSnapshots(await vaultApi.listSnapshots(path));
     setContextBundle(null);
-    const candidates = await vaultApi.getContextBundleCandidates(path);
+    const {
+      context: nextContext,
+      snapshots: nextSnapshots,
+      candidates,
+      inboxCaptures: nextInboxCaptures,
+    } = await loadNoteContext(vaultApi, path, isInboxPath(path));
+    setContext(nextContext);
+    setSnapshots(nextSnapshots);
     setContextCandidates(candidates);
 
     const configToUse = currentConfig ?? vaultConfigRef.current;
@@ -788,12 +813,10 @@ export function App() {
     const savedPrompt = configToUse.promptInstructions?.[path] || "";
     setPromptInstruction(savedPrompt);
 
-    setInboxCaptures(isInboxPath(path) ? await vaultApi.getInboxCaptures(path) : []);
-    setGraph(await vaultApi.getGraph());
-    setGitStatus(await vaultApi.getGitStatus());
+    setInboxCaptures(nextInboxCaptures);
 
     try {
-      const note = await vaultApi.readNote(path);
+      const note = currentDocument ?? await vaultApi.readNote(path);
       const notesForSuggestions = currentNotes ?? vault?.notes ?? [];
       updateLinkSuggestions(note.content, notesForSuggestions);
       void updateSemanticRecommendations(path, currentLlmConfig ?? llmConfig, notesForSuggestions);
@@ -811,20 +834,20 @@ export function App() {
     const result = await vaultApi.saveNote(document.path, draft, document.revision);
     if (result.conflict) {
       setStatus("Conflict detected. Snapshot created before overwriting.");
-      await refreshContext(document.path);
+      await refreshContextAfterMutation(document.path);
       return;
     }
 
     setDocument({ ...document, content: draft, revision: result.revision });
     setStatus(result.gitCommit ? `Saved and committed ${result.gitCommit}` : "Saved");
-    await refreshContext(document.path);
+    await refreshContextAfterMutation(document.path);
     void runHealthAudit();
   }
 
   async function restoreSnapshot(snapshotId: string) {
     await vaultApi.restoreSnapshot(snapshotId);
     if (activePath) {
-      await selectNote(activePath);
+      await selectNoteAfterMutation(activePath);
       setStatus("Snapshot restored");
     }
   }
@@ -837,7 +860,10 @@ export function App() {
       setDraft(result.note.content);
     }
     setStatus("Graph link added to ## Links");
-    await refreshContext(sourcePath);
+    await Promise.all([
+      refreshContext(sourcePath),
+      vaultApi.getGitStatus().then(setGitStatus),
+    ]);
     void runHealthAudit();
   }
 
@@ -853,7 +879,10 @@ export function App() {
       setDraft(result.note.content);
     }
     setStatus("Managed graph link removed");
-    await refreshContext(sourcePath);
+    await Promise.all([
+      refreshContext(sourcePath),
+      vaultApi.getGitStatus().then(setGitStatus),
+    ]);
     void runHealthAudit();
   }
 
