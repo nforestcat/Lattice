@@ -30,11 +30,11 @@ export function EditorToolbar({
         <span>{viewMode === "distill" ? "Compounding Memory Pipeline" : activePath}</span>
       </div>
       <div className="segmented">
-        <button className={viewMode === "split" ? "active" : ""} onClick={() => setViewMode("split")}>Split</button>
-        <button className={viewMode === "edit" ? "active" : ""} onClick={() => setViewMode("edit")}>Edit</button>
-        <button className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>Preview</button>
-        <button className={viewMode === "graph" ? "active" : ""} onClick={() => setViewMode("graph")}>Graph</button>
-        <button className={viewMode === "distill" ? "active" : ""} onClick={() => setViewMode("distill")}>Distill</button>
+        <button title="Split view (Alt+1)" className={viewMode === "split" ? "active" : ""} onClick={() => setViewMode("split")}>Split</button>
+        <button title="Edit view (Alt+2)" className={viewMode === "edit" ? "active" : ""} onClick={() => setViewMode("edit")}>Edit</button>
+        <button title="Preview view (Alt+3)" className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>Preview</button>
+        <button title="Graph view (Alt+4)" className={viewMode === "graph" ? "active" : ""} onClick={() => setViewMode("graph")}>Graph</button>
+        <button title="Distill workspace (Alt+5)" className={viewMode === "distill" ? "active" : ""} onClick={() => setViewMode("distill")}>Distill</button>
       </div>
       {viewMode !== "distill" && activePath && (
         <div className="templateSelectorContainer" style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
@@ -58,7 +58,7 @@ export function EditorToolbar({
               <option key={t.name} value={t.name}>{t.name}</option>
             ))}
           </select>
-          <button className="primary" onClick={() => void saveActiveNote()}>Save</button>
+          <button title="Save note (Ctrl/Cmd+S)" className="primary" onClick={() => void saveActiveNote()}>Save</button>
         </div>
       )}
       {viewMode !== "distill" && !activePath && (
