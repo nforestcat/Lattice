@@ -2,7 +2,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
-import { askConfirm, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
+import { askConfirm, askInput, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { canUseEmbeddings, getEmbedding } from "../api/embeddings";
@@ -973,7 +973,7 @@ export function App() {
       setStatus("No instruction text to save as template");
       return;
     }
-    const name = window.prompt("Enter a name for this prompt template:");
+    const name = await askInput("Enter a name for this prompt template:", { title: "Save Template" });
     if (!name || !name.trim()) {
       return;
     }
