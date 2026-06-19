@@ -178,13 +178,13 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
       if (item.suggestionKind === "summary" || item.kind === "missing_summary") {
         await vaultApi.applyNoteMetadata(item.path, { summary: proposed }, []);
         await auditPath(item.path);
-        item.status = "applied";
         return [item.path];
       }
 
       if (item.suggestionKind === "link_candidates" || item.suggestionKind === "backlinks_in") {
         const candidates = await vaultApi.getContextBundleCandidates(item.path);
         const succeeded: string[] = [];
+        const failed: string[] = [];
         const target = item.path.replace(/\.md$/i, "");
         for (const candidate of candidates) {
           try {
@@ -196,20 +196,15 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             setErrors((prev) => ({ ...prev, [item.id]: msg }));
-            if (succeeded.length > 0) {
-              item.status = "applied";
-            }
-            return succeeded;
+            failed.push(candidate.path);
           }
         }
-        item.status = "applied";
         return succeeded;
       }
 
       if (item.suggestionKind === "review_prompt") {
         await vaultApi.applyNoteMetadata(item.path, { reviewRequestedAt: appliedAt }, []);
         await auditPath(item.path);
-        item.status = "applied";
         return [item.path];
       }
 

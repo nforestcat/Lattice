@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { vaultApi } from "../../api";
 import type { GitStatus, GitFileChange, NoteDocument, UnresolvedLinkGroup, UnresolvedLinkSource } from "../../api/types";
 
@@ -57,11 +57,14 @@ export function useGit(callbacks: UseGitCallbacks) {
   const [stashRetainedRef, setStashRetainedRef] = useState<string | null>(null);
   const [mergeHeadExists, setMergeHeadExists] = useState<boolean>(false);
   const [forceFreshConflictResolver, setForceFreshConflictResolver] = useState<boolean>(false);
+  const gitRequestCounter = useRef(0);
 
   async function refreshGitWorkspace(intendedSelection?: { path: string; staged: boolean }) {
+    const requestId = ++gitRequestCounter.current;
     setIsGitLoading(true);
     try {
       const status = await vaultApi.getGitStatus();
+      if (gitRequestCounter.current !== requestId) return;
       setGitStatus(status);
       void refreshMergeHeadExists();
       if (status.isRepo) {
@@ -133,8 +136,10 @@ export function useGit(callbacks: UseGitCallbacks) {
     setActiveDiff(null);
     try {
       const diff = await vaultApi.getGitDiff(path, staged);
+      if (selectedGitFile !== path) return;
       setActiveDiff(diff);
     } catch (err) {
+      if (selectedGitFile !== path) return;
       setActiveDiff(`Error loading diff: ${errorMessage(err)}`);
     }
   }

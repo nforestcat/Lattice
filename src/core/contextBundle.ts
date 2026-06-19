@@ -38,10 +38,12 @@ type IncludedNote = {
 
 export function extractExcerpt(content: string, length = 150): string {
   let body = content;
-  if (content.startsWith("---\n")) {
-    const end = content.indexOf("\n---", 4);
+  const fmOpen = content.match(/^---\r?\n/);
+  if (fmOpen) {
+    const end = content.indexOf("\n---", fmOpen[0].length);
     if (end !== -1) {
-      body = content.slice(end + 4);
+      const closeLen = content[end + 4] === "\r" ? 5 : 4;
+      body = content.slice(end + closeLen);
     }
   }
   // Remove title heading (# Heading)
@@ -94,10 +96,12 @@ export function getContextBundleCandidates(index: VaultIndex, focusPath: string)
 }
 
 function stripFrontmatter(content: string): string {
-  if (content.startsWith("---\n")) {
-    const end = content.indexOf("\n---", 4);
+  const fmOpen = content.match(/^---\r?\n/);
+  if (fmOpen) {
+    const end = content.indexOf("\n---", fmOpen[0].length);
     if (end !== -1) {
-      return content.slice(end + 4);
+      const closeLen = content[end + 4] === "\r" ? 5 : 4;
+      return content.slice(end + closeLen);
     }
   }
   return content;
@@ -212,7 +216,7 @@ function getIncludedNotes(index: VaultIndex, focusPath: string): IncludedNote[] 
       }
 
       // Final dynamic score & reason detail (cap below Focus & Outgoing, i.e., max 9.5)
-      const score = Math.min(9.5, Math.max(tagScore, mentionScore));
+      const score = Math.min(9.5, tagScore + mentionScore);
       const reasonDetail = reasons.join('; ');
 
       included.set(note.path, {

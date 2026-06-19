@@ -29,7 +29,14 @@ export function EmbeddingsIndexPanel({ llmConfig, vault, onUpdateLlmConfig }: Em
   const { downloaded, modelSizeMb, downloading, progress, error: downloadError, startDownload } =
     useModelDownloadContext();
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const initialRefreshDone = useRef(false);
+  useEffect(() => {
+    if (!initialRefreshDone.current) {
+      initialRefreshDone.current = true;
+      refresh();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [showReindexPrompt, setShowReindexPrompt] = useState(false);
   const prevDownloadedRef = useRef(false);

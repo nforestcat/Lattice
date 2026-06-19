@@ -49,15 +49,17 @@ export function useContextBundle(callbacks: UseContextBundleCallbacks) {
     if (!activePath) {
       return;
     }
+    const capturedPath = activePath;
     try {
       const paths = overridePaths ?? contextCandidates.filter((candidate) => selectedContextPaths.has(candidate.path)).map((candidate) => candidate.path);
       const mode = overrideMode ?? bundleMode;
-      const bundle = await vaultApi.getContextBundle(activePath, {
+      const bundle = await vaultApi.getContextBundle(capturedPath, {
         selectedPaths: paths,
         purpose: bundlePurpose,
         mode,
         preset: overridePreset ?? bundlePreset
       });
+      if (activePath !== capturedPath) return;
       setPrevContextBundle(contextBundle);
       setContextBundle(bundle);
       setStatus(`Context bundle includes ${bundle.notePaths.length} notes`);

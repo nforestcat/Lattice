@@ -68,6 +68,8 @@ export function IngestPanel({
 
       if (dup?.exactMatch) {
         setStatus("preview");
+      } else if (dup?.similarNotes && dup.similarNotes.some((n: any) => (n.similarity ?? 0) >= 0.8)) {
+        setStatus("preview");
       } else {
         void processRaw(raw);
       }
@@ -218,6 +220,26 @@ export function IngestPanel({
               if (rawPreview) void processRaw(rawPreview);
             }}
           />
+        )}
+
+        {status === "preview" && !duplicateCheck?.exactMatch && !duplicateDismissed && duplicateCheck?.similarNotes && duplicateCheck.similarNotes.length > 0 && (
+          <div className="ingestDuplicateWarning" role="alert" style={{ padding: "12px", background: "#fef9c3", border: "1px solid #fde68a", borderRadius: 6, margin: "8px 12px" }}>
+            <p style={{ margin: "0 0 8px 0", fontWeight: 600 }}>Similar notes found:</p>
+            <ul style={{ margin: "0 0 8px 0", paddingLeft: "18px" }}>
+              {duplicateCheck.similarNotes.map((n: any, i: number) => (
+                <li key={i} style={{ fontSize: "13px" }}>
+                  <strong>{n.path ?? n.title}</strong>
+                  {n.similarity != null && <span style={{ marginLeft: 6, opacity: 0.7 }}>({Math.round(n.similarity * 100)}% match)</span>}
+                </li>
+              ))}
+            </ul>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button className="primary" onClick={() => { setDuplicateDismissed(true); if (rawPreview) void processRaw(rawPreview); }}>
+                Continue anyway
+              </button>
+              <button onClick={onClose}>Cancel</button>
+            </div>
+          </div>
         )}
 
         {status === "review" && (

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { vaultApi } from "../../api";
 import { canUseEmbeddings, getEmbedding, cosineSimilarity, type VectorCache } from "../../api/embeddings";
 import type { LlmConfig, VaultSnapshot, ContextBundleCandidate } from "../../api/types";
@@ -23,6 +23,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
   const [embeddingStatus, setEmbeddingStatus] = useState("");
   const [isSearchingSemantic, setIsSearchingSemantic] = useState(false);
   const [semanticSearchError, setSemanticSearchError] = useState<string | null>(null);
+  const activePathRef = useRef<string | null>(null);
 
   async function updateSemanticRecommendations(
     path: string,
@@ -33,6 +34,9 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
     if (!config || !canUseEmbeddings(config)) {
       return;
     }
+
+    const capturedPath = path;
+    activePathRef.current = capturedPath;
 
     setEmbeddingStatus("Semantic indexing...");
     try {
@@ -56,6 +60,9 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
           const result = await embedNote(config, doc.content);
           if ("error" in result) {
             console.error(`Failed to generate embedding for ${note.path}:`, result.error);
+            if (cacheUpdated) {
+              await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+            }
             setEmbeddingStatus("Embedding error (API unreachable)");
             return;
           }
@@ -67,6 +74,9 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
       if (cacheUpdated) {
         await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
       }
+
+      if (activePathRef.current !== capturedPath) return;
+
       setEmbeddingsCache(cache);
 
       const activeEntry = cache[path];
@@ -117,6 +127,8 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
         });
       }
 
+      if (activePathRef.current !== capturedPath) return;
+
       setContextCandidates((prev) => {
         const next = [...prev];
 
@@ -127,7 +139,11 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
             next[existingIdx] = {
               ...prevItem,
               score: Math.max(prevItem.score, item.score),
-              reasonDetail: prevItem.reason === "Recommended" ? item.reasonDetail : `${prevItem.reasonDetail} | ${item.reasonDetail}`
+              reasonDetail: prevItem.reason === "Recommended"
+                ? item.reasonDetail
+                : prevItem.reasonDetail.includes("Semantic")
+                  ? prevItem.reasonDetail.replace(/Semantic[^|]*%/, item.reasonDetail.replace(/^.*?(Semantic.*)/, "$1"))
+                  : `${prevItem.reasonDetail} | ${item.reasonDetail}`
             };
           } else {
             next.push({

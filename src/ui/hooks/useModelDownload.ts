@@ -73,6 +73,7 @@ export function useModelDownload(): UseModelDownloadReturn {
       const msg = e instanceof Error ? e.message : String(e);
       setState(prev => ({ ...prev, downloading: false, error: msg }));
     } finally {
+      channel.onmessage = () => {};
       downloadingRef.current = false;
     }
   }, [refreshStatus]);

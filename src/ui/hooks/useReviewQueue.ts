@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { buildCommitBundle } from "./commitBundle";
 import type { CommitBundle } from "./commitBundle";
 import type { InboxCaptureBlock } from "../../core/capture";
@@ -133,6 +133,23 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
       .sort(sortItems);
   }, [inboxCaptures, bulkDrafts, proposedEdits, healthReports, backlinkSuggestions, ingestItems, gitStagedPaths]);
 
+  // Prune overrides for ids not present in current baseItems
+  useEffect(() => {
+    const currentIds = new Set(baseItems.map((item) => item.id));
+    setOverrides((prev) => {
+      const pruned: Record<string, ReviewItemStatus> = {};
+      let changed = false;
+      for (const [id, status] of Object.entries(prev)) {
+        if (currentIds.has(id)) {
+          pruned[id] = status;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? pruned : prev;
+    });
+  }, [baseItems]);
+
   const items = useMemo<ReviewQueueItem[]>(() => {
     return baseItems.map((item) =>
       overrides[item.id] !== undefined
@@ -173,7 +190,13 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     if (item.kind === "proposed_edit") result = await (onApplyProposedEdit?.(item.sourceId) ?? false);
     if (item.kind === "backlink_suggestion") result = await (onApplyBacklinkSuggestion?.(item.sourceId) ?? false);
     if (item.kind === "ingest_capture") result = await (onApplyIngestCapture?.(item.sourceId) ?? false);
-    if (result === false || result.length === 0) return [];
+    if (result === false) {
+      if (!["inbox_capture", "proposed_edit", "backlink_suggestion", "ingest_capture"].includes(item.kind)) {
+        console.warn(`applyItem: unhandled kind "${item.kind}" for item ${id}`);
+      }
+      return [];
+    }
+    if (result.length === 0) return [];
     setOverrides((prev) => ({ ...prev, [id]: "applied" }));
     return result;
   }

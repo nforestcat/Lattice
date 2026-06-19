@@ -110,7 +110,7 @@ function findManagedLinksSection(lines: string[]): number {
 }
 
 function findSectionEnd(lines: string[], start: number): number {
-  const nextHeading = lines.findIndex((line, index) => index >= start && /^#{1,2}\s+/.test(line.trim()));
+  const nextHeading = lines.findIndex((line, index) => index >= start && /^#{1,6}\s+/.test(line.trim()));
   return nextHeading === -1 ? lines.length : nextHeading;
 }
 
@@ -136,17 +136,19 @@ function hashContent(content: string): string {
 }
 
 function splitFrontmatter(rawContent: string): { frontmatter: Record<string, string>; content: string } {
-  if (!rawContent.startsWith("---\n")) {
+  const openMatch = rawContent.match(/^---\r?\n/);
+  if (!openMatch) {
     return { frontmatter: {}, content: rawContent };
   }
 
-  const end = rawContent.indexOf("\n---", 4);
+  const end = rawContent.indexOf("\n---", openMatch[0].length);
   if (end === -1) {
     return { frontmatter: {}, content: rawContent };
   }
 
-  const yaml = rawContent.slice(4, end);
-  const content = rawContent.slice(end + 4).replace(/^\r?\n/, "");
+  const closeLen = rawContent[end + 4] === "\r" ? 5 : 4;
+  const yaml = rawContent.slice(openMatch[0].length, end);
+  const content = rawContent.slice(end + closeLen).replace(/^\r?\n/, "");
   const frontmatter = Object.fromEntries(
     yaml
       .split(/\r?\n/)

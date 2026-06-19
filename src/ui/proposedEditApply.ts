@@ -83,6 +83,11 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
         throw new Error(`Target content not found in ${edit.path}`);
       }
 
+      const occurrences = doc.content.split(target).length - 1;
+      if (occurrences > 1) {
+        throw new Error(`Ambiguous target: found ${occurrences} occurrences in ${edit.path}`);
+      }
+
       const updatedContent = doc.content.replace(target, () => replacement);
       const stamped = stampAiProvenance(updatedContent, { ...baseProvenance, originalExcerpt: target }, edit.id);
       await vaultApi.saveNote(edit.path, stamped, doc.revision);
@@ -113,8 +118,10 @@ export async function applyProposedEditToVault(edit: ProposedEdit): Promise<Prop
       const stamped = stampAiProvenance(edit.content || "", baseProvenance, edit.id);
       await vaultApi.saveNote(targetPath, stamped, existingRevision);
       await appendAudit("merge", targetPath);
-      await appendAudit("delete", edit.path, { required: true });
-      await vaultApi.deleteEntry(edit.path);
+      if (edit.path !== targetPath) {
+        await appendAudit("delete", edit.path, { required: true });
+        await vaultApi.deleteEntry(edit.path);
+      }
       return { ...edit, applied: true, provenance: baseProvenance };
     }
   }
