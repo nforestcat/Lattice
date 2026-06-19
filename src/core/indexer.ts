@@ -51,9 +51,15 @@ export function getNoteContext(index: VaultIndex, path: string): NoteContext {
     throw new Error(`Note not found: ${path}`);
   }
 
-  const backlinks = index.notes.flatMap((candidate) =>
+  const allBacklinks = index.notes.flatMap((candidate) =>
     candidate.links.filter((link) => link.resolvedPath === path && candidate.path !== path)
   );
+  const seenSources = new Set<string>();
+  const backlinks = allBacklinks.filter((link) => {
+    if (seenSources.has(link.sourcePath)) return false;
+    seenSources.add(link.sourcePath);
+    return true;
+  });
 
   return {
     note,
@@ -64,10 +70,19 @@ export function getNoteContext(index: VaultIndex, path: string): NoteContext {
 
 function buildTargetResolver(notes: ParsedNote[]): Map<string, string> {
   const resolver = new Map<string, string>();
+  const ambiguousTitles = new Set<string>();
   for (const note of notes) {
     resolver.set(normalizeRef(note.path), note.path);
     resolver.set(normalizeRef(note.path.replace(/\.md$/i, "")), note.path);
-    resolver.set(normalizeRef(note.title), note.path);
+    const titleKey = normalizeRef(note.title);
+    if (resolver.has(titleKey) && resolver.get(titleKey) !== note.path) {
+      ambiguousTitles.add(titleKey);
+    } else {
+      resolver.set(titleKey, note.path);
+    }
+  }
+  for (const titleKey of ambiguousTitles) {
+    resolver.delete(titleKey);
   }
   return resolver;
 }

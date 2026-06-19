@@ -11,8 +11,8 @@ import type {
 } from "../../api/types";
 
 function captureCreatedAt(title: string): number {
-  const parsed = new Date(`${title.replace(" ", "T")}:00`).getTime();
-  return Number.isNaN(parsed) ? 0 : parsed;
+  const parsed = Date.parse(`${title.replace(" ", "T")}:00`);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
 }
 
 export function adaptInboxCapture(item: InboxCaptureBlock): ReviewQueueItem {

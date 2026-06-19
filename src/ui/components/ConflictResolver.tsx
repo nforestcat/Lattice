@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ConflictHunk = {
   index: number;
@@ -29,14 +29,16 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
   const [markedFiles, setMarkedFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [editingHunk, setEditingHunk] = useState<{ path: string; index: number } | null>(null);
-  const [manualContent, setManualContent] = useState("");
+  const [manualContentMap, setManualContentMap] = useState<Record<string, string>>({});
   const [freshLoadComplete, setFreshLoadComplete] = useState(false);
+  const dirtyRef = useRef(false);
 
   // Load conflict state: try persisted state first, fall back to server
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setFreshLoadComplete(false);
+    dirtyRef.current = false;
 
     async function load() {
       if (!forceFresh) {
@@ -69,9 +71,9 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
     void load();
   }, [open, forceFresh]);
 
-  // Persist state whenever files change
+  // Persist state whenever files change (only after user mutations, not initial load)
   useEffect(() => {
-    if (!open || conflictFiles.length === 0 || !freshLoadComplete) return;
+    if (!open || conflictFiles.length === 0 || !freshLoadComplete || !dirtyRef.current) return;
     const state = { files: conflictFiles, savedAt: new Date().toISOString() };
     void invoke("save_note", {
       path: STATE_PATH,
@@ -82,14 +84,21 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
     });
   }, [conflictFiles, open, freshLoadComplete]);
 
-  // When all files resolved, call onResolved
+  // When all files resolved, call onResolved (fire only once per fully-resolved transition)
+  const hasCalledOnResolved = useRef(false);
   useEffect(() => {
-    if (!open || conflictFiles.length === 0) return;
+    if (!open || conflictFiles.length === 0) {
+      hasCalledOnResolved.current = false;
+      return;
+    }
     const allMarked = conflictFiles.every(
       (f) => f.hunks.every((h) => h.resolved) && markedFiles.has(f.path)
     );
-    if (allMarked) {
+    if (allMarked && !hasCalledOnResolved.current) {
+      hasCalledOnResolved.current = true;
       onResolved();
+    } else if (!allMarked) {
+      hasCalledOnResolved.current = false;
     }
   }, [conflictFiles, markedFiles, open, onResolved]);
 
@@ -106,12 +115,17 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
         resolution,
         manualContent: content ?? null,
       });
+      dirtyRef.current = true;
       setConflictFiles((prev) =>
         prev.map((f) => (f.path === path ? updated : f))
       );
       if (editingHunk?.path === path && editingHunk.index === hunkIndex) {
         setEditingHunk(null);
-        setManualContent("");
+        setManualContentMap((prev) => {
+          const next = { ...prev };
+          delete next[`${path}:${hunkIndex}`];
+          return next;
+        });
       }
     } catch (err) {
       console.error("Failed to resolve hunk", err);
@@ -121,6 +135,7 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
   async function undoHunk(filePath: string, _hunkIndex: number) {
     try {
       const files = await invoke<ConflictFile[]>("get_conflict_files");
+      dirtyRef.current = true;
       setConflictFiles((prev) =>
         prev.map((f) =>
           f.path === filePath
@@ -143,8 +158,9 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
   }
 
   function startEditHunk(path: string, index: number, initialContent: string) {
+    const key = `${path}:${index}`;
     setEditingHunk({ path, index });
-    setManualContent(initialContent);
+    setManualContentMap((prev) => key in prev ? prev : { ...prev, [key]: initialContent });
   }
 
   const isFileResolved = (f: ConflictFile) =>
@@ -280,8 +296,11 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
                     {isEditing && (
                       <div style={{ padding: "0.5rem" }}>
                         <textarea
-                          value={manualContent}
-                          onChange={(e) => setManualContent(e.target.value)}
+                          value={manualContentMap[`${file.path}:${hunk.index}`] ?? ""}
+                          onChange={(e) => {
+                            const key = `${file.path}:${hunk.index}`;
+                            setManualContentMap((prev) => ({ ...prev, [key]: e.target.value }));
+                          }}
                           style={{
                             width: "100%",
                             minHeight: 100,
@@ -320,7 +339,7 @@ export function ConflictResolver({ open, onClose, onResolved, forceFresh = false
                           {isEditing && (
                             <button
                               type="button"
-                              onClick={() => void resolveHunk(file.path, hunk.index, "manual", manualContent)}
+                              onClick={() => void resolveHunk(file.path, hunk.index, "manual", manualContentMap[`${file.path}:${hunk.index}`] ?? "")}
                             >
                               Apply
                             </button>

@@ -51,7 +51,9 @@ export function canUseEmbeddings(config: LlmConfig | null): boolean {
   if (!config) return false;
   if (config.embeddingProvider === "local-onnx") return true;
   const provider = config.embeddingProvider ?? config.provider;
-  return provider === "ollama" || provider === "lm-studio" || config.apiKey.trim().length > 0;
+  if (provider === "ollama" || provider === "lm-studio") return true;
+  if (provider === "custom") return !!(config.baseUrl && config.baseUrl.trim());
+  return config.apiKey.trim().length > 0;
 }
 
 export async function getEmbedding(config: LlmConfig, text: string): Promise<number[]> {

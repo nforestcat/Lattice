@@ -57,12 +57,14 @@ function ensureProvenance(result: IngestResult, raw: IngestRaw): IngestResult {
   const fmMatch = markdown.match(/^---\n([\s\S]*?)\n---/);
   if (fmMatch) {
     let fm = fmMatch[1];
-    if (!fm.includes("source:")) {
-      const sourceValue =
-        raw.sourceType === "pdf"
-          ? `source_file: ${raw.sourceRef}`
-          : `source: ${raw.sourceRef}`;
-      fm = fm + `\n${sourceValue}`;
+    if (raw.sourceType === "pdf") {
+      if (!/^source_file:/m.test(fm)) {
+        fm = fm + `\nsource_file: ${raw.sourceRef}`;
+      }
+    } else {
+      if (!/^source:/m.test(fm)) {
+        fm = fm + `\nsource: ${raw.sourceRef}`;
+      }
     }
     if (!fm.includes("ingest_date:")) {
       fm = fm + `\ningest_date: ${today}`;

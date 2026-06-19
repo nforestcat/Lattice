@@ -82,11 +82,15 @@ export function GraphView(props: {
     return ids;
   }, [props.graph.nodes, props.notes, excludedTags, frontmatterQuery, showOnlyUnhealthy, healthByPath]);
 
-  const nodes = useMemo<Node[]>(() => {
-    // Only include visible nodes
+  // Layout computation: depends only on node positions, edges, embeddings — NOT on activePath/health styling
+  const layoutPositions = useMemo(() => {
     const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
     const n = graphNodes.length;
     if (n === 0) return [];
+
+    // Build index map for O(1) lookups
+    const idToIndex = new Map<string, number>();
+    graphNodes.forEach((node, index) => idToIndex.set(node.id, index));
 
     // Initialize positions in a circle to start force layout simulation
     const positions = graphNodes.map((node, index) => {
@@ -136,7 +140,7 @@ export function GraphView(props: {
           const yDist = positions[i].y - positions[j].y;
           let dist = Math.sqrt(xDist * xDist + yDist * yDist);
           if (dist === 0) dist = 0.1;
-          
+
           const force = (k * k) / dist;
           dxs[i] += (xDist / dist) * force;
           dys[i] += (yDist / dist) * force;
@@ -146,9 +150,9 @@ export function GraphView(props: {
       // 2. Attraction along hard wiki links (only between visible nodes)
       for (const edge of props.graph.edges) {
         if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) continue;
-        const idxS = graphNodes.findIndex((node) => node.id === edge.source);
-        const idxT = graphNodes.findIndex((node) => node.id === edge.target);
-        if (idxS === -1 || idxT === -1) continue;
+        const idxS = idToIndex.get(edge.source);
+        const idxT = idToIndex.get(edge.target);
+        if (idxS === undefined || idxT === undefined) continue;
 
         const xDist = positions[idxS].x - positions[idxT].x;
         const yDist = positions[idxS].y - positions[idxT].y;
@@ -164,9 +168,9 @@ export function GraphView(props: {
 
       // 3. Attraction along semantic links (only between visible nodes)
       for (const semLink of semanticLinks) {
-        const idxS = graphNodes.findIndex((node) => node.id === semLink.source);
-        const idxT = graphNodes.findIndex((node) => node.id === semLink.target);
-        if (idxS === -1 || idxT === -1) continue;
+        const idxS = idToIndex.get(semLink.source);
+        const idxT = idToIndex.get(semLink.target);
+        if (idxS === undefined || idxT === undefined) continue;
 
         const xDist = positions[idxS].x - positions[idxT].x;
         const yDist = positions[idxS].y - positions[idxT].y;
@@ -191,17 +195,24 @@ export function GraphView(props: {
       }
     }
 
-    return graphNodes.map((node, index) => {
-      const pos = positions[index];
-      const id = node.id;
-      
+    return graphNodes.map((node, index) => ({
+      id: node.id,
+      kind: node.kind,
+      label: node.label,
+      x: positions[index].x,
+      y: positions[index].y,
+    }));
+  }, [props.graph.nodes, props.graph.edges, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
+
+  // Styling pass: depends on activePath/health but does NOT recompute positions
+  const nodes = useMemo<Node[]>(() => {
+    return layoutPositions.map((lp) => {
       let cls = "graphNode";
-      
-      if (node.kind === "unresolved") {
+
+      if (lp.kind === "unresolved") {
         cls += " ghost-node";
       } else {
-        // Health style outline precedence
-        const score = healthByPath.get(id);
+        const score = healthByPath.get(lp.id);
         if (score !== undefined && score < 100) {
           if (score < 70) {
             cls += " health-critical";
@@ -211,16 +222,16 @@ export function GraphView(props: {
         }
       }
 
-      if (node.kind === "unresolved") {
-        if (id === `unresolved:${props.activeUnresolvedTarget}`) {
+      if (lp.kind === "unresolved") {
+        if (lp.id === `unresolved:${props.activeUnresolvedTarget}`) {
           cls += " active";
         }
       } else {
-        if (id === props.activePath) {
+        if (lp.id === props.activePath) {
           cls += " active";
         } else if (props.activePath) {
           const vecActive = props.embeddingsCache[props.activePath]?.vector;
-          const vecNode = props.embeddingsCache[id]?.vector;
+          const vecNode = props.embeddingsCache[lp.id]?.vector;
           if (vecActive && vecNode) {
             const sim = cosineSimilarity(vecActive, vecNode);
             if (sim >= 0.7) {
@@ -233,13 +244,13 @@ export function GraphView(props: {
       }
 
       return {
-        id,
-        position: { x: pos.x, y: pos.y },
-        data: { label: node.label },
+        id: lp.id,
+        position: { x: lp.x, y: lp.y },
+        data: { label: lp.label },
         className: cls
       };
     });
-  }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold, healthByPath, props.healthReports, showOnlyUnhealthy, props.activeUnresolvedTarget]);
+  }, [layoutPositions, props.activePath, props.embeddingsCache, healthByPath, props.activeUnresolvedTarget]);
 
   const edges = useMemo<Edge[]>(() => {
     const graphNodes = props.graph.nodes.filter(node => visibleNodeIds.has(node.id));
@@ -286,14 +297,15 @@ export function GraphView(props: {
     return list;
   }, [props.graph.nodes, props.graph.edges, props.activePath, props.embeddingsCache, visibleNodeIds, semanticThreshold]);
 
+  const { onOpen, onSelectUnresolved } = props;
   const onNodeClick = useCallback((_: unknown, node: Node) => {
     if (node.id.startsWith("unresolved:")) {
       const normalizedTarget = node.id.replace("unresolved:", "");
-      props.onSelectUnresolved(normalizedTarget);
+      onSelectUnresolved(normalizedTarget);
     } else {
-      props.onOpen(node.id);
+      onOpen(node.id);
     }
-  }, [props]);
+  }, [onOpen, onSelectUnresolved]);
   const otherNodes = props.graph.nodes
     .filter((node) => node.kind !== "unresolved")
     .filter((node) => node.id !== props.activePath)
@@ -302,11 +314,11 @@ export function GraphView(props: {
   return (
     <div className="graphShell">
       <div className="graphToolbar">
-        <select onChange={(event) => event.target.value && props.onCreateLink(event.target.value)} defaultValue="">
+        <select value="" onChange={(event) => { if (event.target.value) props.onCreateLink(event.target.value); }}>
           <option value="">Add link from current note</option>
           {otherNodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
         </select>
-        <select onChange={(event) => event.target.value && props.onDeleteLink(event.target.value)} defaultValue="">
+        <select value="" onChange={(event) => { if (event.target.value) props.onDeleteLink(event.target.value); }}>
           <option value="">Remove managed link</option>
           {otherNodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
         </select>

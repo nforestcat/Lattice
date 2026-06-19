@@ -202,13 +202,16 @@ export function DistillWorkspace({
   const [stagedByQueue, setStagedByQueue] = useState<Set<string>>(new Set());
   const [commitWarning, setCommitWarning] = useState<string | null>(null);
 
-  // Hydrate suggestions from persisted vault config on mount
+  // Hydrate suggestions from persisted vault config once maintenanceSuggestions are available
+  const hydratedOnceRef = useRef(false);
   useEffect(() => {
+    if (hydratedOnceRef.current) return;
     if (vaultConfig.maintenanceSuggestions) {
       maintenancePlanner.hydrate(vaultConfig.maintenanceSuggestions);
+      hydratedOnceRef.current = true;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [vaultConfig.maintenanceSuggestions]);
 
   // Purge stale maintenance suggestions when health report refreshes
   useEffect(() => {
@@ -284,7 +287,8 @@ export function DistillWorkspace({
 
   useEffect(() => {
     if (distillTab === "auditor") {
-      void onRunHealthAudit();
+      // Health audit is triggered by the button handler; this effect only runs the link scan
+      void runUnresolvedLinksScan();
     }
   }, [distillTab, vault?.rootPath]);
 

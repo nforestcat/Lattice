@@ -46,7 +46,8 @@ export function parseInboxCaptures(markdown: string): InboxCaptureBlock[] {
 }
 
 function parseInboxCaptureSpans(markdown: string): InboxCaptureSpan[] {
-  const unprocessed = markdown.split(/\n## Processed\b/i)[0] ?? "";
+  const lastIdx = markdown.lastIndexOf("\n## Processed");
+  const unprocessed = lastIdx === -1 ? markdown : markdown.slice(0, lastIdx);
   const matches = Array.from(unprocessed.matchAll(/^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$/gm));
   const seenTitles = new Map<string, number>();
   return matches.map((match, index) => {
@@ -83,8 +84,10 @@ export function moveInboxCaptureToProcessed(markdown: string, captureId: string)
   }
 
   const withoutCapture = `${markdown.slice(0, span.start)}${markdown.slice(span.end)}`.replace(/\n{3,}/g, "\n\n").trimEnd();
-  if (/^## Processed\s*$/m.test(withoutCapture)) {
-    return `${withoutCapture}\n\n${span.capture.markdown}`;
+  const processedMatch = /^## Processed\s*$/m.exec(withoutCapture);
+  if (processedMatch) {
+    const insertPos = processedMatch.index + processedMatch[0].length;
+    return `${withoutCapture.slice(0, insertPos)}\n\n${span.capture.markdown}${withoutCapture.slice(insertPos)}`.trimEnd();
   }
   return `${withoutCapture}\n\n## Processed\n\n${span.capture.markdown}`;
 }

@@ -190,6 +190,8 @@ export function normalizeVaultConfig(config: unknown): VaultConfig {
   const preset = normalizePreset(input.bundlePreset);
   const bundlePurpose = typeof input.bundlePurpose === "string" ? input.bundlePurpose : PRESETS[preset].purpose;
   const bundleMode = normalizeBundleMode(input.bundleMode, PRESETS[preset].mode);
+  const noteTemplates = Array.isArray(input.noteTemplates) ? input.noteTemplates as VaultConfig["noteTemplates"] : undefined;
+  const maintenanceSuggestions = isStringKeyedRecord(input.maintenanceSuggestions) ? input.maintenanceSuggestions as VaultConfig["maintenanceSuggestions"] : undefined;
   const normalized: VaultConfig = {
     version: Math.max(VAULT_CONFIG_VERSION, typeof input.version === "number" ? input.version : VAULT_CONFIG_VERSION),
     contextLimit: typeof input.contextLimit === "number" && Number.isFinite(input.contextLimit) && input.contextLimit > 0 ? input.contextLimit : 8000,
@@ -201,7 +203,9 @@ export function normalizeVaultConfig(config: unknown): VaultConfig {
     promptRuns: normalizePromptRuns(input.promptRuns, bundlePurpose),
     promptTemplates: normalizePromptTemplates(input.promptTemplates),
     llmConfig: normalizeLlmConfigInternal(input.llmConfig),
-    archiveRetentionPolicy: typeof input.archiveRetentionPolicy === "string" ? input.archiveRetentionPolicy : "none"
+    archiveRetentionPolicy: typeof input.archiveRetentionPolicy === "string" ? input.archiveRetentionPolicy : "none",
+    noteTemplates,
+    maintenanceSuggestions
   };
   return normalized;
 }

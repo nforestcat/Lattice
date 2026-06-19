@@ -602,7 +602,7 @@ export function App() {
     if (vault?.notes) {
       updateLinkSuggestions(draft, vault.notes);
     }
-  }, [draft, vault?.notes]);
+  }, [draft, vault?.notes, updateLinkSuggestions]);
 
   // Real-time Background Embedding Synchronization
   useEffect(() => {
@@ -657,7 +657,7 @@ export function App() {
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [draft, activePath, document?.path, document?.content, vaultConfig, llmConfig]);
+  }, [draft, activePath, document?.path, document?.content, llmConfig, vault?.notes]);
 
   async function openVault(path: string) {
     const nextVault = await vaultApi.openVault(path);
@@ -1075,10 +1075,10 @@ export function App() {
     }
   }, [gitStatus?.hasConflicts]);
 
-  const isActiveNoteConflicted = activePath && (
+  const isActiveNoteConflicted = useMemo(() => activePath && (
     gitChanges.some(c => c.path === activePath && c.status === "conflict") ||
     (viewMode !== "distill" && viewMode !== "graph" && draft.includes("<<<<<<<") && draft.includes("=======") && draft.includes(">>>>>>>"))
-  );
+  ), [activePath, gitChanges, viewMode, draft]);
 
   const focusEditorLine = useCallback((lineNum: number): boolean => {
     const view = editorRef.current?.view;
@@ -1092,12 +1092,20 @@ export function App() {
 
   useEffect(() => {
     if (viewMode !== "edit" || pendingPreviewLineRef.current === null) return;
-    const frame = requestAnimationFrame(() => {
+    let retries = 0;
+    let frame: number;
+    function tryFocus() {
       const pendingLine = pendingPreviewLineRef.current;
       if (pendingLine !== null && focusEditorLine(pendingLine)) {
         pendingPreviewLineRef.current = null;
+        return;
       }
-    });
+      retries++;
+      if (retries < 10 && pendingPreviewLineRef.current !== null) {
+        frame = requestAnimationFrame(tryFocus);
+      }
+    }
+    frame = requestAnimationFrame(tryFocus);
     return () => cancelAnimationFrame(frame);
   }, [focusEditorLine, viewMode]);
 

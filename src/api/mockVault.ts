@@ -31,6 +31,9 @@ import type {
 } from "./types";
 import { createContextBundle, getContextBundleCandidates } from "../core/contextBundle";
 import { formatInboxCapture, inboxPathForDate, moveInboxCaptureToProcessed, parseInboxCaptures } from "../core/capture";
+
+let snapshotCounter = 0;
+
 const initialFiles: VaultFile[] = [
   {
     path: "Home.md",
@@ -89,7 +92,7 @@ Windows 경로와 한글 파일명을 확인하는 노트입니다. [[Home]]
 ];
 
 export function createMockVaultApi(): VaultApi {
-  let files = [...initialFiles];
+  let files = initialFiles.map(f => ({ ...f }));
   let index = buildVaultIndex(files);
   let openRoot = "Demo Vault";
   let autoGitEnabled = false;
@@ -116,7 +119,7 @@ export function createMockVaultApi(): VaultApi {
 
   function createSnapshot(path: string, reason: Snapshot["reason"]): string {
     const file = findFile(path);
-    const id = `${path}:${Date.now()}`;
+    const id = `${path}:${Date.now()}:${snapshotCounter++}`;
     snapshots = [
       {
         id,
@@ -245,7 +248,14 @@ export function createMockVaultApi(): VaultApi {
     async captureToInbox(input: CaptureInput): Promise<EntryMutationResult> {
       const capturedAt = input.capturedAt ? new Date(input.capturedAt) : new Date();
       const path = inboxPathForDate(capturedAt);
-      const relatedTitle = input.relatedPath ? getNoteContext(index, input.relatedPath).note.title : null;
+      let relatedTitle: string | null = null;
+      if (input.relatedPath) {
+        try {
+          relatedTitle = getNoteContext(index, input.relatedPath).note.title;
+        } catch {
+          relatedTitle = null;
+        }
+      }
       const capture = formatInboxCapture({
         content: input.content,
         relatedTitle,
@@ -301,10 +311,10 @@ export function createMockVaultApi(): VaultApi {
       }
 
       const target = findFile(input.targetPath);
-      const separator = target.content.endsWith("\n") ? "\n" : "\n\n";
-      const appendText = `${separator}### Appended Capture (${capture.title})\n\n${capture.body.trim()}\n`;
+      const trimmedContent = target.content.trimEnd();
+      const appendText = `\n\n### Appended Capture (${capture.title})\n\n${capture.body.trim()}\n`;
 
-      target.content = `${target.content}${appendText}`;
+      target.content = `${trimmedContent}${appendText}`;
       target.modifiedAt = new Date().toISOString();
 
       inbox.content = moveInboxCaptureToProcessed(inbox.content, input.captureId);
@@ -358,6 +368,7 @@ export function createMockVaultApi(): VaultApi {
       }
 
       const file = findFile(snapshot.path);
+      createSnapshot(snapshot.path, "restore");
       file.content = content;
       rebuild();
       return {
@@ -520,7 +531,6 @@ index 89abcde..1234567 100644
       localStorage.setItem(`lattice:mock_embeddings_status:${openRoot}`, content);
     },
     async getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]> {
-      const index = buildVaultIndex(files);
       const unresolvedMap = new Map<string, { path: string; title: string; excerpt: string }[]>();
 
       for (const note of index.notes) {
@@ -592,8 +602,8 @@ index 89abcde..1234567 100644
         const mentionRegex = new RegExp(`(^|[^a-zA-Z0-9가-힣_])(${escapedTitle})([^a-zA-Z0-9가-힣_]|$)`, "i");
         const mentionMatch = cleanedContent.match(mentionRegex);
 
-        if (mentionMatch) {
-          const matchIndex = cleanedContent.indexOf(mentionMatch[2]);
+        if (mentionMatch && mentionMatch.index !== undefined) {
+          const matchIndex = mentionMatch.index + mentionMatch[1].length;
           const lines = note.content.split(/\r?\n/);
           let currentLen = 0;
           let lineIdx = 0;
@@ -672,18 +682,33 @@ index 89abcde..1234567 100644
       if (!file) throw new Error(`Note not found: ${path}`);
 
       let frontmatterBlock: Record<string, string> = {};
+      const rawValues: Record<string, string> = {};
       let body = file.content;
       if (file.content.startsWith("---\n")) {
-        const endIdx = file.content.indexOf("\n---", 4);
-        if (endIdx !== -1) {
-          const yaml = file.content.slice(4, endIdx);
-          body = file.content.slice(endIdx + 4).trimStart();
+        const contentLines = file.content.split("\n");
+        let endLineIdx = -1;
+        for (let i = 1; i < contentLines.length; i++) {
+          if (contentLines[i].trim() === "---") {
+            endLineIdx = i;
+            break;
+          }
+        }
+        if (endLineIdx !== -1) {
+          const yaml = contentLines.slice(1, endLineIdx).join("\n");
+          body = contentLines.slice(endLineIdx + 1).join("\n").trimStart();
           yaml.split("\n").forEach((line) => {
             const idx = line.indexOf(":");
             if (idx !== -1) {
               const k = line.slice(0, idx).trim();
-              const v = line.slice(idx + 1).trim().replace(/^"/, "").replace(/"$/, "");
-              if (k) frontmatterBlock[k] = v;
+              const raw = line.slice(idx + 1).trim();
+              let v = raw;
+              if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+                v = v.slice(1, -1);
+              }
+              if (k) {
+                frontmatterBlock[k] = v;
+                rawValues[k] = raw;
+              }
             }
           });
         }
@@ -718,7 +743,18 @@ index 89abcde..1234567 100644
       if (keys.length > 0) {
         newContent += "---\n";
         for (const key of keys) {
-          newContent += `${key}: "${frontmatterBlock[key]}"\n`;
+          if (rawValues[key] !== undefined && frontmatterBlock[key] === (
+            (rawValues[key].startsWith('"') && rawValues[key].endsWith('"')) ||
+            (rawValues[key].startsWith("'") && rawValues[key].endsWith("'"))
+              ? rawValues[key].slice(1, -1)
+              : rawValues[key]
+          )) {
+            newContent += `${key}: ${rawValues[key]}\n`;
+          } else {
+            const val = frontmatterBlock[key];
+            const needsQuoting = /[:,\[\]{}#&*!|>'"%@`]/.test(val) || val === "" || val === "true" || val === "false" || val === "null" || !isNaN(Number(val));
+            newContent += needsQuoting ? `${key}: "${val}"\n` : `${key}: ${val}\n`;
+          }
         }
         newContent += "---\n";
       }

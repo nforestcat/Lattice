@@ -73,13 +73,16 @@ export function useInbox(callbacks: UseInboxCallbacks) {
     if (!activePath) {
       return false;
     }
+    const capturedPath = activePath;
     try {
-      const result = await vaultApi.markInboxCaptureProcessed(activePath, captureId);
+      const result = await vaultApi.markInboxCaptureProcessed(capturedPath, captureId);
       setVault(result.vault);
       setResults(result.vault.notes);
       setStatus("Capture marked processed");
-      await selectNote(activePath);
-      return [activePath];
+      if (activePath === capturedPath) {
+        await selectNote(capturedPath);
+      }
+      return [capturedPath];
     } catch (error) {
       setStatus(errorMessage(error));
       return false;

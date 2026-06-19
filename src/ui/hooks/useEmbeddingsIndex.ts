@@ -92,7 +92,12 @@ export function useEmbeddingsIndex(
         }
       }
 
-      await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+      // Re-read the cache before saving to merge with concurrent writes from useEmbeddings
+      const latestCache = parseJsonSafe<VectorCache>(await vaultApi.loadEmbeddingsCache(), {});
+      for (const [path, entry] of Object.entries(cache)) {
+        latestCache[path] = entry;
+      }
+      await vaultApi.saveEmbeddingsCache(JSON.stringify(latestCache));
       await vaultApi.saveEmbeddingsStatus(JSON.stringify(status));
       await refresh();
     } finally {

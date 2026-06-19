@@ -17,12 +17,15 @@ export interface DiffLine {
 }
 
 function computeSimpleLineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
+  const oldLinesRaw = oldText.split("\n");
+  const newLinesRaw = newText.split("\n");
+
+  const n = Math.min(oldLinesRaw.length, 1000);
+  const m = Math.min(newLinesRaw.length, 1000);
+  const oldLines = oldLinesRaw.slice(0, n);
+  const newLines = newLinesRaw.slice(0, m);
 
   const dp: number[][] = [];
-  const n = Math.min(oldLines.length, 1000);
-  const m = Math.min(newLines.length, 1000);
 
   for (let i = 0; i <= n; i++) {
     dp[i] = new Array(m + 1).fill(0);
@@ -54,7 +57,7 @@ function computeSimpleLineDiff(oldText: string, newText: string): DiffLine[] {
     }
   }
 
-  if (oldLines.length > n || newLines.length > m) {
+  if (oldLinesRaw.length > n || newLinesRaw.length > m) {
     result.reverse();
     result.push({ type: "normal", value: "... [Diff truncated for performance, showing first 1000 lines] ..." });
     return result;
@@ -397,7 +400,6 @@ export function usePromptHistory(callbacks: UsePromptHistoryCallbacks) {
           nextRuns.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
           await updateVaultConfig({
-            ...vaultConfig,
             promptRuns: nextRuns
           });
           setStatus(`Imported ${newCount} new prompt run(s) successfully`);

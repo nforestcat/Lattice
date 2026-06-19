@@ -175,7 +175,8 @@ export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
           const result = await vaultApi.createNote(null, target);
           const newPath = result.selectedPath;
           if (newPath) {
-            const saveResult = await vaultApi.saveNote(newPath, draft.content, "");
+            const createdDoc = await vaultApi.readNote(newPath);
+            const saveResult = await vaultApi.saveNote(newPath, draft.content, createdDoc.revision);
             if (!saveResult.saved) {
               throw new Error("Failed to save stub content");
             }
@@ -215,7 +216,8 @@ export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
   }
 
   function handleSelectAllToggle() {
-    if (selectedUnresolvedTargets.size === unresolvedLinks.length) {
+    const allSelected = unresolvedLinks.every(item => selectedUnresolvedTargets.has(item.target));
+    if (allSelected) {
       setSelectedUnresolvedTargets(new Set());
     } else {
       setSelectedUnresolvedTargets(new Set(unresolvedLinks.map(item => item.target)));

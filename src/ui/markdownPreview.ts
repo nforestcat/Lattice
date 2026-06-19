@@ -62,6 +62,10 @@ renderer.codespan = ({ text }) => {
   return `<code class="inlineCode">${escapeHtml(text)}</code>`;
 };
 
+renderer.html = ({ text }) => {
+  return escapeHtml(text);
+};
+
 markedPreview.use({ renderer });
 
 export function renderMarkdownPreview(markdownSrc: string): string {

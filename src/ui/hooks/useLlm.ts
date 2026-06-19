@@ -100,8 +100,12 @@ export function useLlm(callbacks: UseLlmCallbacks) {
       if (edits.length > 0) {
         const chatProvenance: AiProvenance = { source: "chat", model: llmConfig.model };
         setProposedEdits((prev) => {
+          const existing = new Map(prev.map(p => [`${p.path}::${p.type}`, p]));
           const filteredPrev = prev.filter(p => !edits.some(e => e.path === p.path && e.type === p.type));
-          const checkedEdits = edits.map(e => ({ ...e, checked: true, provenance: chatProvenance }));
+          const checkedEdits = edits.map(e => {
+            const prior = existing.get(`${e.path}::${e.type}`);
+            return { ...e, checked: prior ? prior.checked : true, provenance: chatProvenance };
+          });
           return [...filteredPrev, ...checkedEdits];
         });
         setStatus(`LLM proposed ${edits.length} wiki edit(s)`);
@@ -209,7 +213,9 @@ ${draft}
       const tagsToApply = Array.from(selectedSuggestedTags);
       const propertiesToApply: Record<string, string> = {};
       for (const key of Array.from(selectedSuggestedProperties)) {
-        propertiesToApply[key] = metadataSuggestions.frontmatter[key];
+        if (key in metadataSuggestions.frontmatter) {
+          propertiesToApply[key] = metadataSuggestions.frontmatter[key];
+        }
       }
 
       await vaultApi.applyNoteMetadata(activePath, propertiesToApply, tagsToApply);

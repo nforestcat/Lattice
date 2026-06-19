@@ -107,6 +107,7 @@ export function useIngestQueue({ onIngested, setVault }: UseIngestQueueOptions):
           if (!appendTargetPath) {
             throw new Error("append 대상 노트 경로를 입력해 주세요.");
           }
+          // Re-read target immediately before save to get the latest revision
           const target = await vaultApi.readNote(appendTargetPath);
           await vaultApi.saveNote(
             target.path,

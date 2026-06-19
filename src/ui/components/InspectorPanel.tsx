@@ -110,13 +110,13 @@ export function InspectorPanel({
       <div className="budgetSection">
         <div className="budgetsHeader">
           <span>{selectedContextTokens.toLocaleString()} / {contextLimit.toLocaleString()} tokens</span>
-          <span className="budgetPercent">{Math.min(100, Math.round((selectedContextTokens / contextLimit) * 100))}%</span>
+          <span className="budgetPercent">{Math.min(100, Math.round((selectedContextTokens / (contextLimit || 1)) * 100))}%</span>
         </div>
-        
+
         <div className="progressBarOuter">
-          <div 
+          <div
             className={`progressBarInner ${selectedContextTokens > contextLimit ? "overLimit" : ""}`}
-            style={{ width: `${Math.min(100, (selectedContextTokens / contextLimit) * 100)}%` }}
+            style={{ width: `${Math.min(100, (selectedContextTokens / (contextLimit || 1)) * 100)}%` }}
           />
         </div>
 

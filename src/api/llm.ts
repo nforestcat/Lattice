@@ -144,7 +144,7 @@ export async function sendChatMessage(
     }
 
     case "gemini": {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
       const systemMsg = messages.find((m) => m.role === "system")?.content;
       const conversationMsgs = messages.filter((m) => m.role !== "system");
 
@@ -181,10 +181,24 @@ export async function sendChatMessage(
       const systemMsg = messages.find((m) => m.role === "system")?.content;
       const conversationMsgs = messages.filter((m) => m.role !== "system");
 
-      const anthropicMessages: AnthropicMessage[] = conversationMsgs.map((m) => ({
+      const rawAnthropicMessages: AnthropicMessage[] = conversationMsgs.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
       }));
+
+      // Ensure first message is 'user' and merge consecutive same-role messages
+      if (rawAnthropicMessages.length === 0 || rawAnthropicMessages[0].role !== "user") {
+        rawAnthropicMessages.unshift({ role: "user", content: "" });
+      }
+      const anthropicMessages: AnthropicMessage[] = [];
+      for (const msg of rawAnthropicMessages) {
+        const last = anthropicMessages[anthropicMessages.length - 1];
+        if (last && last.role === msg.role) {
+          anthropicMessages[anthropicMessages.length - 1] = { role: msg.role, content: `${last.content}\n${msg.content}` };
+        } else {
+          anthropicMessages.push({ ...msg });
+        }
+      }
       const body: AnthropicRequest = systemMsg
         ? { model, max_tokens: 4000, messages: anthropicMessages, system: systemMsg }
         : { model, max_tokens: 4000, messages: anthropicMessages };
@@ -195,7 +209,7 @@ export async function sendChatMessage(
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
-          "dangerously-allow-browser": "true",
+          "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify(body),
       });
