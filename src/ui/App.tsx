@@ -32,6 +32,7 @@ import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
 import { useIngestQueue } from "./hooks/useIngestQueue";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { applyProposedEditToVault } from "./proposedEditApply";
 import { findAmbiguousUpdateAnchor } from "./proposedEditGuards";
 import {
@@ -978,6 +979,14 @@ export function App() {
     }
   }
 
+  const editorShortcutExtension = useKeyboardShortcuts({
+    activePath,
+    notes: vault?.notes ?? [],
+    saveActiveNote,
+    selectNote: (path) => selectNote(path, undefined, undefined, undefined, true),
+    setViewMode,
+  });
+
   const html = useMemo(() => ({ __html: renderMarkdownPreview(draft) }), [draft]);
   const themeStyles = useMemo<React.CSSProperties>(() => {
     const color = vault?.obsidianSettings?.accentColor;
@@ -1199,7 +1208,7 @@ export function App() {
                   ref={editorRef}
                   value={draft}
                   height="100%"
-                  extensions={[markdown()]}
+                  extensions={[markdown(), editorShortcutExtension]}
                   theme={vault?.obsidianSettings?.theme === "obsidian" || vault?.obsidianSettings?.theme === "dark" ? "dark" : "light"}
                   basicSetup={{ lineNumbers: true, foldGutter: true }}
                   onChange={setDraft}
