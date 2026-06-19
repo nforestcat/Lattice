@@ -1,6 +1,6 @@
 import { useRef, useState, useMemo } from "react";
 import { vaultApi } from "../../api";
-import { askConfirm } from "../../api/dialog";
+import { askConfirm, askInput } from "../../api/dialog";
 import type { FileTreeNode, NoteDocument, NoteHealthReport, Snapshot, VaultConfig, VaultSnapshot } from "../../api/types";
 import type { NoteContext, NoteMeta } from "../../core/types";
 import { VAULT_CONFIG_VERSION, sanitizeVaultConfig, errorMessage } from "./contextShared";
@@ -86,7 +86,7 @@ export function useVault(callbacks: UseVaultCallbacks) {
   };
 
   async function createNoteInCurrentFolder() {
-    const title = window.prompt("New note name");
+    const title = await askInput("New note name", { title: "Create Note" });
     if (!title) {
       return;
     }
@@ -105,7 +105,7 @@ export function useVault(callbacks: UseVaultCallbacks) {
   }
 
   async function createFolderInCurrentFolder() {
-    const name = window.prompt("New folder name");
+    const name = await askInput("New folder name", { title: "Create Folder" });
     if (!name) {
       return;
     }
@@ -121,7 +121,7 @@ export function useVault(callbacks: UseVaultCallbacks) {
 
   async function renameTreeEntry(path: string) {
     const currentName = path.split("/").pop()?.replace(/\.md$/i, "") ?? path;
-    const newName = window.prompt("Rename", currentName);
+    const newName = await askInput("Rename", { title: "Rename", defaultValue: currentName });
     if (!newName || newName === currentName) {
       return;
     }

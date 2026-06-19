@@ -26,3 +26,49 @@ export async function askConfirm(message: string, title?: string): Promise<boole
   }
   return window.confirm(message);
 }
+
+// --- askInput: imperative promise bridge ---
+
+export interface InputDialogOptions {
+  title?: string;
+  defaultValue?: string;
+  placeholder?: string;
+}
+
+export interface InputDialogRequest {
+  message: string;
+  options: InputDialogOptions;
+  resolve: (value: string | null) => void;
+}
+
+type InputDialogOpener = (request: InputDialogRequest) => void;
+
+let registeredOpener: InputDialogOpener | null = null;
+let pendingResolve: ((value: string | null) => void) | null = null;
+
+export function registerInputDialog(opener: InputDialogOpener): void {
+  registeredOpener = opener;
+}
+
+export function unregisterInputDialog(): void {
+  registeredOpener = null;
+  if (pendingResolve) {
+    pendingResolve(null);
+    pendingResolve = null;
+  }
+}
+
+export function askInput(message: string, options?: InputDialogOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!registeredOpener) {
+      console.warn("[askInput] No InputDialogHost mounted");
+      resolve(null);
+      return;
+    }
+    if (pendingResolve) {
+      pendingResolve(null);
+    }
+    pendingResolve = resolve;
+    registeredOpener({ message, options: options || {}, resolve });
+  });
+}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { vaultApi } from "../../api";
+import { askInput } from "../../api/dialog";
 import type { VaultSnapshot } from "../../api/types";
 import type { NoteMeta } from "../../core/types";
 import type { InboxCaptureBlock } from "../../core/capture";
@@ -48,7 +49,7 @@ export function useInbox(callbacks: UseInboxCallbacks) {
     if (!activePath) {
       return;
     }
-    const title = window.prompt("New note title");
+    const title = await askInput("New note title", { title: "Promote Capture" });
     if (!title) {
       return;
     }
