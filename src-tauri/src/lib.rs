@@ -343,22 +343,6 @@ fn get_tag_content(inner_content: &str, tag_name: &str) -> Option<String> {
 }
 
 
-#[cfg(not(test))]
-fn mutate_graph_link(source_path: String, target_path: String, add: bool, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
-    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
-    let root = guard.root_path.clone().ok_or("No vault is open")?;
-    let target_title = guard.notes.iter().find(|note| note.meta.path == target_path).map(|note| note.meta.title.clone()).ok_or("Target note not found")?;
-    let full_path = root.join(&source_path);
-    let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
-    let next = if add { add_managed_link(&content, &target_title) } else { remove_managed_link(&content, &target_title) };
-    fs::write(&full_path, &next).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
-    Ok(LinkMutationResult {
-        note: NoteDocument { path: source_path, revision: revision_of(&next), content: next },
-        graph: build_graph(&guard.notes),
-    })
-}
-
 fn scan_vault(root: &Path) -> Result<Vec<ParsedNote>, String> {
     let mut notes = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok).filter(|entry| entry.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md"))) {
@@ -1224,7 +1208,7 @@ fn normalize_ref(value: &str) -> String {
 }
 
 pub(crate) fn reindex_after_mutation(state: &mut VaultState, root: &Path) -> Result<(), String> {
-    state.notes = resolve_links(scan_vault(root)?);
+    state.notes = scan_vault(root)?;
     Ok(())
 }
 

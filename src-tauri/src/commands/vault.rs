@@ -9,7 +9,7 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
     let metas = notes.iter().map(|note| note.meta.clone()).collect();
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     guard.root_path = Some(root.clone());
-    guard.notes = resolve_links(notes);
+    guard.notes = notes;
     Ok(VaultSnapshot {
         root_path: root.to_string_lossy().to_string(),
         notes: metas,
@@ -23,7 +23,8 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
 pub(crate) fn read_note(path: String, state: tauri::State<AppState>) -> Result<NoteDocument, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
-    let content = fs::read_to_string(root.join(&path)).map_err(|error| error.to_string())?;
+    let full_path = resolve_vault_path(root, &path)?;
+    let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     Ok(NoteDocument {
         path,
         revision: revision_of(&content),
@@ -36,7 +37,7 @@ pub(crate) fn read_note(path: String, state: tauri::State<AppState>) -> Result<N
 pub(crate) fn save_note(path: String, content: String, base_revision: String, state: tauri::State<AppState>) -> Result<SaveResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
-    let full_path = root.join(&path);
+    let full_path = resolve_vault_path(&root, &path)?;
     let current = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     let current_revision = revision_of(&current);
     if !base_revision.is_empty() && base_revision != current_revision {
@@ -324,6 +325,22 @@ pub(crate) fn get_note_context(path: String, state: tauri::State<AppState>) -> R
 pub(crate) fn get_graph(_filters: HashMap<String, serde_json::Value>, state: tauri::State<AppState>) -> Result<GraphData, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     Ok(build_graph(&guard.notes))
+}
+
+#[cfg(not(test))]
+fn mutate_graph_link(source_path: String, target_path: String, add: bool, state: tauri::State<AppState>) -> Result<LinkMutationResult, String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.clone().ok_or("No vault is open")?;
+    let target_title = guard.notes.iter().find(|note| note.meta.path == target_path).map(|note| note.meta.title.clone()).ok_or("Target note not found")?;
+    let full_path = resolve_vault_path(&root, &source_path)?;
+    let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
+    let next = if add { add_managed_link(&content, &target_title) } else { remove_managed_link(&content, &target_title) };
+    fs::write(&full_path, &next).map_err(|error| error.to_string())?;
+    reindex_after_mutation(&mut guard, &root)?;
+    Ok(LinkMutationResult {
+        note: NoteDocument { path: source_path, revision: revision_of(&next), content: next },
+        graph: build_graph(&guard.notes),
+    })
 }
 
 #[cfg(not(test))]

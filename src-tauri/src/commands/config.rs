@@ -283,7 +283,7 @@ pub(crate) fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: t
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
     
-    let source_full_path = root.join(&suggestion.source_path);
+    let source_full_path = resolve_vault_path(&root, &suggestion.source_path)?;
     let content = fs::read_to_string(&source_full_path).map_err(|e| e.to_string())?;
     
     let new_content = if suggestion.suggestion_type == "unlinked_mention" {
@@ -334,7 +334,7 @@ pub(crate) fn apply_note_metadata(
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
     
-    let full_path = root.join(&path);
+    let full_path = resolve_vault_path(&root, &path)?;
     let raw = fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
     
     let (mut current_fm, body) = parse_frontmatter(&raw);
