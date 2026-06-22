@@ -744,7 +744,7 @@ fn mutate_graph_link(source_path: String, target_path: String, add: bool, state:
     let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     let next = if add { add_managed_link(&content, &target_title) } else { remove_managed_link(&content, &target_title) };
     fs::write(&full_path, &next).map_err(|error| error.to_string())?;
-    guard.notes = resolve_links(scan_vault(&root)?);
+    reindex_after_mutation(&mut guard, &root)?;
     Ok(LinkMutationResult {
         note: NoteDocument { path: source_path, revision: revision_of(&next), content: next },
         graph: build_graph(&guard.notes),
@@ -1613,6 +1613,11 @@ fn revision_of(content: &str) -> String {
 
 fn normalize_ref(value: &str) -> String {
     value.replace('\\', "/").trim_end_matches(".md").to_lowercase()
+}
+
+pub(crate) fn reindex_after_mutation(state: &mut VaultState, root: &Path) -> Result<(), String> {
+    state.notes = resolve_links(scan_vault(root)?);
+    Ok(())
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
