@@ -54,7 +54,7 @@ pub(crate) fn save_note(path: String, content: String, base_revision: String, st
     let snapshot_id = snapshot(&mut guard, &path, &current, "save");
     fs::write(&full_path, &content).map_err(|error| error.to_string())?;
     reindex_after_mutation(&mut guard, &root)?;
-    let git_commit = if guard.auto_git_enabled { auto_commit(&root, &path).ok() } else { None };
+    let git_commit = if guard.auto_git_enabled { commit_after_mutation(&root, &[&path]).ok().flatten() } else { None };
     Ok(SaveResult {
         saved: true,
         revision: revision_of(&content),
@@ -268,8 +268,7 @@ pub(crate) fn append_inbox_capture(input: AppendInboxCaptureInput, state: tauri:
     
     reindex_after_mutation(&mut guard, &root)?;
     if guard.auto_git_enabled {
-        let _ = auto_commit(&root, &input.target_path);
-        let _ = auto_commit(&root, &input.inbox_path);
+        let _ = commit_after_mutation(&root, &[&input.target_path, &input.inbox_path]);
     }
     
     Ok(EntryMutationResult {
