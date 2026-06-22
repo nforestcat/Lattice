@@ -423,17 +423,40 @@ pub(crate) fn git_output_all(root: &Path, args: &[&str]) -> Result<String, Strin
     }
 }
 
-pub(crate) fn auto_commit(root: &Path, path: &str) -> Result<String, String> {
+pub(crate) fn commit_after_mutation(root: &Path, paths: &[&str]) -> Result<Option<String>, String> {
     if has_conflicts(root) {
         return Err("Cannot auto-commit: repository has unresolved merge conflicts.".to_string());
     }
-    git_output(root, &["add", path])?;
-    if let Some(marker_path) = staged_conflict_marker_file(root, &[path])? {
+    let mut add_args = vec!["add", "-A", "--"];
+    add_args.extend(paths);
+    git_output(root, &add_args)?;
+
+    let porcelain = git_output(root, &["status", "--porcelain"])?.trim().to_string();
+    let has_staged = porcelain.lines().any(|line| {
+        if line.len() >= 2 {
+            let x = line.chars().next().unwrap_or(' ');
+            x != ' ' && x != '?'
+        } else {
+            false
+        }
+    });
+    if !has_staged {
+        return Ok(None);
+    }
+
+    let marker_paths = paths.to_vec();
+    if let Some(marker_path) = staged_conflict_marker_file(root, &marker_paths)? {
         return Err(format!(
             "Cannot auto-commit: File '{}' contains unresolved merge conflict markers.",
             marker_path
         ));
     }
-    git_output(root, &["commit", "-m", &format!("Update {}", path)])?;
-    git_output(root, &["rev-parse", "--short", "HEAD"])
+
+    let message = if paths.len() == 1 {
+        format!("Update {}", paths[0])
+    } else {
+        format!("Update {} files", paths.len())
+    };
+    git_output(root, &["commit", "-m", &message])?;
+    git_output(root, &["rev-parse", "--short", "HEAD"]).map(Some)
 }

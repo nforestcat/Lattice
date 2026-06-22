@@ -317,7 +317,7 @@ pub(crate) fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: t
     reindex_after_mutation(&mut guard, &root)?;
     
     if guard.auto_git_enabled {
-        let _ = auto_commit(&root, &suggestion.source_path);
+        let _ = commit_after_mutation(&root, &[&suggestion.source_path]);
     }
     
     Ok(())
@@ -380,7 +380,7 @@ pub(crate) fn apply_note_metadata(
     reindex_after_mutation(&mut guard, &root)?;
     
     if guard.auto_git_enabled {
-        let _ = auto_commit(&root, &path);
+        let _ = commit_after_mutation(&root, &[&path]);
     }
     
     Ok(())

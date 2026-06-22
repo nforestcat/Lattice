@@ -1864,8 +1864,8 @@ mod tests {
         assert!(push_res.is_err());
         assert!(push_res.unwrap_err().contains("unresolved merge conflicts"));
 
-        // 5. Verify auto_commit returns conflict error
-        let auto_res = auto_commit(&root, test_file);
+        // 5. Verify commit_after_mutation returns conflict error
+        let auto_res = commit_after_mutation(&root, &[test_file]);
         assert!(auto_res.is_err());
         assert!(auto_res.unwrap_err().contains("unresolved merge conflicts"));
 
@@ -1879,7 +1879,7 @@ mod tests {
         assert!(commit_res2.is_err());
         assert!(commit_res2.unwrap_err().contains("unresolved merge conflict markers"));
 
-        let auto_marker_res = auto_commit(&root, test_file);
+        let auto_marker_res = commit_after_mutation(&root, &[test_file]);
         assert!(auto_marker_res.is_err());
         assert!(auto_marker_res.unwrap_err().contains("unresolved merge conflict markers"));
 
