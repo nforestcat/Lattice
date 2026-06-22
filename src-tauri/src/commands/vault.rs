@@ -78,6 +78,9 @@ pub(crate) fn create_note(parent_path: Option<String>, title: String, state: tau
     }
     fs::write(&full_path, format!("# {}\n", clean_title)).map_err(|error| error.to_string())?;
     reindex_after_mutation(&mut guard, &root)?;
+    if guard.auto_git_enabled {
+        let _ = commit_after_mutation(&root, &[&path]);
+    }
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path: Some(path),
@@ -123,6 +126,9 @@ pub(crate) fn rename_entry(path: String, new_name: String, state: tauri::State<A
     }
     fs::rename(&from, &to).map_err(|error| error.to_string())?;
     reindex_after_mutation(&mut guard, &root)?;
+    if guard.auto_git_enabled {
+        let _ = commit_after_mutation(&root, &[&path, &to_path]);
+    }
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path: Some(to_path),
@@ -149,6 +155,9 @@ pub(crate) fn delete_entry(path: String, state: tauri::State<AppState>) -> Resul
         return Err(format!("Entry not found: {}", path));
     }
     reindex_after_mutation(&mut guard, &root)?;
+    if guard.auto_git_enabled {
+        let _ = commit_after_mutation(&root, &[&path]);
+    }
     let selected_path = guard.notes.first().map(|note| note.meta.path.clone());
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
@@ -181,6 +190,9 @@ pub(crate) fn capture_to_inbox(input: CaptureInput, state: tauri::State<AppState
         fs::write(&full_path, format!("# {}\n\n{}", title, capture)).map_err(|error| error.to_string())?;
     }
     reindex_after_mutation(&mut guard, &root)?;
+    if guard.auto_git_enabled {
+        let _ = commit_after_mutation(&root, &[&path]);
+    }
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path: Some(path),
@@ -229,6 +241,9 @@ pub(crate) fn promote_inbox_capture(input: PromoteInboxCaptureInput, state: taur
     fs::write(&note_full_path, format!("# {}\n\n{}\n", clean_title, capture.body.trim())).map_err(|error| error.to_string())?;
     fs::write(&inbox_full_path, move_inbox_capture_to_processed(&inbox_content, &input.capture_id)?).map_err(|error| error.to_string())?;
     reindex_after_mutation(&mut guard, &root)?;
+    if guard.auto_git_enabled {
+        let _ = commit_after_mutation(&root, &[&note_path, &input.inbox_path]);
+    }
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path: Some(note_path),
