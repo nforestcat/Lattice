@@ -1224,7 +1224,7 @@ fn normalize_ref(value: &str) -> String {
 }
 
 pub(crate) fn reindex_after_mutation(state: &mut VaultState, root: &Path) -> Result<(), String> {
-    state.notes = resolve_links(scan_vault(root)?);
+    state.notes = scan_vault(root)?;
     Ok(())
 }
 

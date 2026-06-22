@@ -9,7 +9,7 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
     let metas = notes.iter().map(|note| note.meta.clone()).collect();
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     guard.root_path = Some(root.clone());
-    guard.notes = resolve_links(notes);
+    guard.notes = notes;
     Ok(VaultSnapshot {
         root_path: root.to_string_lossy().to_string(),
         notes: metas,
