@@ -348,7 +348,7 @@ fn mutate_graph_link(source_path: String, target_path: String, add: bool, state:
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
     let target_title = guard.notes.iter().find(|note| note.meta.path == target_path).map(|note| note.meta.title.clone()).ok_or("Target note not found")?;
-    let full_path = root.join(&source_path);
+    let full_path = resolve_vault_path(&root, &source_path)?;
     let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     let next = if add { add_managed_link(&content, &target_title) } else { remove_managed_link(&content, &target_title) };
     fs::write(&full_path, &next).map_err(|error| error.to_string())?;

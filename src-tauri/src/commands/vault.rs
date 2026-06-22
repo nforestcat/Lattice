@@ -23,7 +23,8 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
 pub(crate) fn read_note(path: String, state: tauri::State<AppState>) -> Result<NoteDocument, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
-    let content = fs::read_to_string(root.join(&path)).map_err(|error| error.to_string())?;
+    let full_path = resolve_vault_path(root, &path)?;
+    let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     Ok(NoteDocument {
         path,
         revision: revision_of(&content),
@@ -36,7 +37,7 @@ pub(crate) fn read_note(path: String, state: tauri::State<AppState>) -> Result<N
 pub(crate) fn save_note(path: String, content: String, base_revision: String, state: tauri::State<AppState>) -> Result<SaveResult, String> {
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
-    let full_path = root.join(&path);
+    let full_path = resolve_vault_path(&root, &path)?;
     let current = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     let current_revision = revision_of(&current);
     if !base_revision.is_empty() && base_revision != current_revision {
