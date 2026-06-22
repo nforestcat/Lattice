@@ -314,7 +314,7 @@ pub(crate) fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: t
     };
     
     fs::write(&source_full_path, &new_content).map_err(|e| e.to_string())?;
-    guard.notes = resolve_links(scan_vault(&root)?);
+    reindex_after_mutation(&mut guard, &root)?;
     
     if guard.auto_git_enabled {
         let _ = auto_commit(&root, &suggestion.source_path);
@@ -377,7 +377,7 @@ pub(crate) fn apply_note_metadata(
     new_content.push_str(&updated_body);
     
     fs::write(&full_path, &new_content).map_err(|e| e.to_string())?;
-    guard.notes = resolve_links(scan_vault(&root)?);
+    reindex_after_mutation(&mut guard, &root)?;
     
     if guard.auto_git_enabled {
         let _ = auto_commit(&root, &path);
