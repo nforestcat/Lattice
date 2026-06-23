@@ -214,6 +214,22 @@ fn prompt_run_archive_path(root: &Path, run_id: &str) -> Result<PathBuf, String>
 }
 
 
+fn recovery_dir(root: &Path) -> PathBuf {
+    root.join(".lattice").join("recovery")
+}
+
+fn recovery_index_path(root: &Path) -> PathBuf {
+    recovery_dir(root).join("index.json")
+}
+
+fn hex_encode_id(id: &str) -> String {
+    id.bytes().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn recovery_blob_path(root: &Path, id: &str) -> PathBuf {
+    recovery_dir(root).join("blobs").join(hex_encode_id(id))
+}
+
 fn embeddings_cache_path(root: &Path) -> PathBuf {
     root.join(".lattice").join("embeddings.json")
 }
@@ -1185,16 +1201,120 @@ fn remove_managed_link(content: &str, target: &str) -> String {
     }).collect::<Vec<_>>().join("\n") + "\n"
 }
 
-fn snapshot(state: &mut VaultState, path: &str, content: &str, reason: &str) -> String {
-    let id = format!("{}:{}", path, Utc::now().timestamp_millis());
-    state.snapshots.insert(0, SnapshotRecord {
+fn snapshot(state: &mut VaultState, root: &Path, path: &str, content: &str, reason: &str) -> String {
+    let ts = Utc::now().timestamp_millis();
+    let mut id = format!("{}:{}", path, ts);
+    let mut counter = 1u32;
+    while state.snapshots.iter().any(|s| s.id == id) {
+        id = format!("{}:{}:{}", path, ts, counter);
+        counter += 1;
+    }
+    let record = SnapshotRecord {
         id: id.clone(),
         path: path.to_string(),
         created_at: Utc::now().to_rfc3339(),
         reason: reason.to_string(),
-    });
+    };
+    state.snapshots.insert(0, record);
     state.snapshot_content.insert(id.clone(), content.to_string());
+
+    if let Err(e) = write_recovery_blob(root, &id, content) {
+        eprintln!("[lattice] recovery blob write failed: {}", e);
+    } else if let Err(e) = persist_recovery_index(root, &state.snapshots) {
+        eprintln!("[lattice] recovery index write failed: {}", e);
+    }
+
+    apply_retention(root, &mut state.snapshots);
+
     id
+}
+
+fn write_recovery_blob(root: &Path, id: &str, content: &str) -> Result<(), String> {
+    let blob_path = recovery_blob_path(root, id);
+    if let Some(parent) = blob_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&blob_path, content).map_err(|e| e.to_string())
+}
+
+fn persist_recovery_index(root: &Path, snapshots: &[SnapshotRecord]) -> Result<(), String> {
+    let index_path = recovery_index_path(root);
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(snapshots).map_err(|e| e.to_string())?;
+    let tmp_path = index_path.with_extension("json.tmp");
+    fs::write(&tmp_path, &json).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &index_path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        e.to_string()
+    })
+}
+
+fn load_recovery_index(root: &Path) -> Vec<SnapshotRecord> {
+    let index_path = recovery_index_path(root);
+    let content = match fs::read_to_string(&index_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let mut records: Vec<SnapshotRecord> = serde_json::from_str(&content).unwrap_or_default();
+    records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    records
+}
+
+fn load_recovery_content(root: &Path, id: &str) -> Result<String, String> {
+    let blob_path = recovery_blob_path(root, id);
+    fs::read_to_string(&blob_path).map_err(|e| format!("Blob read failed for {}: {}", id, e))
+}
+
+fn self_heal_recovery(root: &Path, snapshots: &mut Vec<SnapshotRecord>) {
+    let blobs_dir = recovery_dir(root).join("blobs");
+    let index_ids: HashSet<String> = snapshots.iter().map(|s| hex_encode_id(&s.id)).collect();
+
+    if let Ok(entries) = fs::read_dir(&blobs_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !index_ids.contains(&name) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    let original_len = snapshots.len();
+    snapshots.retain(|s| recovery_blob_path(root, &s.id).exists());
+    if snapshots.len() != original_len {
+        if let Err(e) = persist_recovery_index(root, snapshots) {
+            eprintln!("[lattice] self-heal index rewrite failed: {}", e);
+        }
+    }
+}
+
+const RETENTION_MAX_PER_PATH: usize = 50;
+
+fn apply_retention(root: &Path, snapshots: &mut Vec<SnapshotRecord>) {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut to_remove = Vec::new();
+
+    for (i, s) in snapshots.iter().enumerate() {
+        let count = counts.entry(s.path.clone()).or_insert(0);
+        *count += 1;
+        if *count > RETENTION_MAX_PER_PATH {
+            to_remove.push(i);
+        }
+    }
+
+    if to_remove.is_empty() {
+        return;
+    }
+
+    for &i in to_remove.iter().rev() {
+        let removed = snapshots.remove(i);
+        let _ = fs::remove_file(recovery_blob_path(root, &removed.id));
+    }
+
+    if let Err(e) = persist_recovery_index(root, snapshots) {
+        eprintln!("[lattice] retention index rewrite failed: {}", e);
+    }
 }
 
 fn revision_of(content: &str) -> String {
@@ -2064,5 +2184,167 @@ mod tests {
         assert!(git_merge_head_exists_in_root(&root));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    // ── Recovery persistence tests ─────────────────────────────────────
+
+    #[test]
+    fn recovery_path_helpers() {
+        let root = PathBuf::from("/tmp/vault");
+        assert_eq!(recovery_dir(&root), root.join(".lattice").join("recovery"));
+        assert_eq!(recovery_index_path(&root), root.join(".lattice").join("recovery").join("index.json"));
+
+        let path_a = recovery_blob_path(&root, "notes/a.md:123");
+        let path_b = recovery_blob_path(&root, "notes/b.md:123");
+        assert_ne!(path_a, path_b, "different IDs must map to different blob paths");
+    }
+
+    #[test]
+    fn recovery_blob_write_and_load_roundtrip() {
+        let root = temp_test_dir("recovery-roundtrip");
+        let id = "test.md:1000";
+        let content = "# Hello World\nSome content here.";
+
+        write_recovery_blob(&root, id, content).unwrap();
+        let loaded = load_recovery_content(&root, id).unwrap();
+        assert_eq!(loaded, content);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recovery_index_write_and_load_roundtrip() {
+        let root = temp_test_dir("recovery-index");
+        let records = vec![
+            SnapshotRecord { id: "a.md:100".into(), path: "a.md".into(), created_at: "2026-01-01T00:00:00Z".into(), reason: "save".into() },
+            SnapshotRecord { id: "b.md:200".into(), path: "b.md".into(), created_at: "2026-01-02T00:00:00Z".into(), reason: "delete".into() },
+        ];
+
+        persist_recovery_index(&root, &records).unwrap();
+        let loaded = load_recovery_index(&root);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "b.md:200", "should be sorted newest-first");
+        assert_eq!(loaded[1].id, "a.md:100");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recovery_index_corrupt_returns_empty() {
+        let root = temp_test_dir("recovery-corrupt");
+        let index_path = recovery_index_path(&root);
+        fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        fs::write(&index_path, "NOT VALID JSON {{{}").unwrap();
+
+        let loaded = load_recovery_index(&root);
+        assert!(loaded.is_empty(), "corrupt index should return empty vec");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recovery_index_missing_returns_empty() {
+        let root = temp_test_dir("recovery-missing");
+        let loaded = load_recovery_index(&root);
+        assert!(loaded.is_empty(), "missing index should return empty vec");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn snapshot_id_collision_prevention() {
+        let root = temp_test_dir("recovery-collision");
+        fs::create_dir_all(root.join(".lattice")).unwrap();
+
+        let mut state = VaultState::default();
+        state.root_path = Some(root.clone());
+
+        let id1 = snapshot(&mut state, &root, "test.md", "v1", "save");
+        let id2 = snapshot(&mut state, &root, "test.md", "v2", "save");
+        assert_ne!(id1, id2, "consecutive IDs must be unique");
+
+        let unique_ids: HashSet<&String> = state.snapshots.iter().map(|s| &s.id).collect();
+        assert_eq!(unique_ids.len(), state.snapshots.len(), "all IDs must be unique in snapshots vec");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn retention_removes_oldest_beyond_limit() {
+        let root = temp_test_dir("recovery-retention");
+        let blobs_dir = recovery_dir(&root).join("blobs");
+        fs::create_dir_all(&blobs_dir).unwrap();
+
+        let mut snapshots: Vec<SnapshotRecord> = Vec::new();
+        for i in 0..52 {
+            let id = format!("note.md:{}", 1000 + i);
+            let record = SnapshotRecord {
+                id: id.clone(),
+                path: "note.md".into(),
+                created_at: format!("2026-01-01T00:00:{:02}Z", i),
+                reason: "save".into(),
+            };
+            snapshots.insert(0, record);
+            write_recovery_blob(&root, &id, &format!("content {}", i)).unwrap();
+        }
+        persist_recovery_index(&root, &snapshots).unwrap();
+
+        apply_retention(&root, &mut snapshots);
+
+        assert_eq!(snapshots.len(), 50, "should retain max 50 per path");
+        assert!(!snapshots.iter().any(|s| s.id == "note.md:1000"), "oldest should be removed");
+        assert!(!snapshots.iter().any(|s| s.id == "note.md:1001"), "second oldest should be removed");
+        assert!(snapshots.iter().any(|s| s.id == "note.md:1051"), "newest should be retained");
+
+        assert!(!recovery_blob_path(&root, "note.md:1000").exists(), "oldest blob should be deleted");
+        assert!(recovery_blob_path(&root, "note.md:1051").exists(), "newest blob should exist");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_healing_removes_orphan_blobs() {
+        let root = temp_test_dir("recovery-orphan");
+        let blobs_dir = recovery_dir(&root).join("blobs");
+        fs::create_dir_all(&blobs_dir).unwrap();
+
+        let record = SnapshotRecord {
+            id: "a.md:100".into(), path: "a.md".into(),
+            created_at: "2026-01-01T00:00:00Z".into(), reason: "save".into(),
+        };
+        write_recovery_blob(&root, "a.md:100", "real content").unwrap();
+        write_recovery_blob(&root, "orphan:999", "orphan content").unwrap();
+
+        let mut snapshots = vec![record];
+        persist_recovery_index(&root, &snapshots).unwrap();
+
+        self_heal_recovery(&root, &mut snapshots);
+
+        assert_eq!(snapshots.len(), 1);
+        assert!(!recovery_blob_path(&root, "orphan:999").exists(), "orphan blob should be deleted");
+        assert!(recovery_blob_path(&root, "a.md:100").exists(), "indexed blob should survive");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn self_healing_removes_dangling_index_entries() {
+        let root = temp_test_dir("recovery-dangling");
+        fs::create_dir_all(recovery_dir(&root).join("blobs")).unwrap();
+
+        let records = vec![
+            SnapshotRecord { id: "a.md:100".into(), path: "a.md".into(), created_at: "2026-01-01T00:00:00Z".into(), reason: "save".into() },
+            SnapshotRecord { id: "b.md:200".into(), path: "b.md".into(), created_at: "2026-01-02T00:00:00Z".into(), reason: "save".into() },
+        ];
+        write_recovery_blob(&root, "a.md:100", "content a").unwrap();
+        persist_recovery_index(&root, &records).unwrap();
+
+        let mut snapshots = records;
+        self_heal_recovery(&root, &mut snapshots);
+
+        assert_eq!(snapshots.len(), 1, "dangling entry should be removed");
+        assert_eq!(snapshots[0].id, "a.md:100", "entry with blob should survive");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
