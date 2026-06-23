@@ -10,6 +10,8 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     guard.root_path = Some(root.clone());
     guard.notes = notes;
+    guard.snapshots = load_recovery_index(&root);
+    self_heal_recovery(&root, &mut guard.snapshots);
     Ok(VaultSnapshot {
         root_path: root.to_string_lossy().to_string(),
         notes: metas,
@@ -41,7 +43,7 @@ pub(crate) fn save_note(path: String, content: String, base_revision: String, st
     let current = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     let current_revision = revision_of(&current);
     if !base_revision.is_empty() && base_revision != current_revision {
-        let snapshot_id = snapshot(&mut guard, &path, &current, "conflict");
+        let snapshot_id = snapshot(&mut guard, &root, &path, &current, "conflict");
         return Ok(SaveResult {
             saved: false,
             revision: current_revision,
@@ -51,7 +53,7 @@ pub(crate) fn save_note(path: String, content: String, base_revision: String, st
         });
     }
 
-    let snapshot_id = snapshot(&mut guard, &path, &current, "save");
+    let snapshot_id = snapshot(&mut guard, &root, &path, &current, "save");
     fs::write(&full_path, &content).map_err(|error| error.to_string())?;
     reindex_after_mutation(&mut guard, &root)?;
     let git_commit = if guard.auto_git_enabled { commit_after_mutation(&root, &[&path]).ok().flatten() } else { None };
@@ -149,7 +151,7 @@ pub(crate) fn delete_entry(path: String, state: tauri::State<AppState>) -> Resul
         fs::remove_dir(&target).map_err(|error| error.to_string())?;
     } else if target.is_file() {
         let content = fs::read_to_string(&target).unwrap_or_default();
-        snapshot(&mut guard, &path, &content, "delete");
+        snapshot(&mut guard, &root, &path, &content, "delete");
         fs::remove_file(&target).map_err(|error| error.to_string())?;
     } else {
         return Err(format!("Entry not found: {}", path));
@@ -382,7 +384,8 @@ pub(crate) fn restore_snapshot(snapshot_id: String, state: tauri::State<AppState
     let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.clone().ok_or("No vault is open")?;
     let snapshot = guard.snapshots.iter().find(|candidate| candidate.id == snapshot_id).cloned().ok_or("Snapshot not found")?;
-    let content = guard.snapshot_content.get(&snapshot_id).cloned().ok_or("Snapshot content not found")?;
+    let content = load_recovery_content(&root, &snapshot_id)
+        .or_else(|_| guard.snapshot_content.get(&snapshot_id).cloned().ok_or("Snapshot content not found".to_string()))?;
     let target_path = resolve_vault_path(&root, &snapshot.path)?;
     fs::write(target_path, &content).map_err(|error| error.to_string())?;
     reindex_after_mutation(&mut guard, &root)?;
