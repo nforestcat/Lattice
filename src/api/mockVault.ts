@@ -959,6 +959,10 @@ index 89abcde..1234567 100644
       const key = `lattice:mock_ai_audit:${openRoot}`;
       const existing = localStorage.getItem(key) || "";
       localStorage.setItem(key, existing + JSON.stringify(record) + "\n");
+    },
+    async persistReviewDecisions(decisions): Promise<void> {
+      const key = `lattice:mock_review_decisions:${openRoot}`;
+      localStorage.setItem(key, JSON.stringify(decisions));
     }
   };
 }

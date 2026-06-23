@@ -464,6 +464,12 @@ export function App() {
     backlinkSuggestions,
     ingestItems: ingestQueue.ingestItems,
     gitStagedPaths,
+    initialDecisions: vault?.reviewDecisions,
+    onPersistDecisions: (decisions) => {
+      vaultApi.persistReviewDecisions(decisions).catch((err) =>
+        console.error("[lattice] persist review decisions failed:", err)
+      );
+    },
     onApplyInboxCapture: (id) => markInboxCaptureProcessed(id),
     onApplyProposedEdit: (id) => applyProposedEditFromQueue(id),
     onApplyBacklinkSuggestion: async (id) => {
