@@ -26,6 +26,7 @@ pub(crate) struct VaultState {
     pub(crate) snapshots: Vec<SnapshotRecord>,
     pub(crate) snapshot_content: HashMap<String, String>,
     pub(crate) auto_git_enabled: bool,
+    pub(crate) review_decisions: Vec<ReviewDecisionRecord>,
 }
 
 static FALLBACK_KEYS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
@@ -380,6 +381,7 @@ fn vault_snapshot(root: &Path, notes: &[ParsedNote]) -> VaultSnapshot {
         notes: notes.iter().map(|note| note.meta.clone()).collect(),
         tree: build_tree(notes),
         obsidian_settings: read_obsidian_settings(root),
+        review_decisions: vec![],
     }
 }
 
@@ -1317,6 +1319,68 @@ fn apply_retention(root: &Path, snapshots: &mut Vec<SnapshotRecord>) {
     }
 }
 
+// ── Review Decision Persistence ───────────────────────────────────────────
+
+fn decisions_path(root: &Path) -> PathBuf {
+    root.join(".lattice").join("decisions.json")
+}
+
+const REVIEW_DECISIONS_MAX: usize = 500;
+
+fn load_review_decisions(root: &Path) -> Vec<ReviewDecisionRecord> {
+    let path = decisions_path(root);
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn persist_review_decisions_to_disk(root: &Path, decisions: &[ReviewDecisionRecord]) -> Result<(), String> {
+    let path = decisions_path(root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(decisions).map_err(|e| e.to_string())?;
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, &json).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        e.to_string()
+    })
+}
+
+const PERSISTABLE_KINDS: &[&str] = &[
+    "inbox_capture",
+    "proposed_edit",
+    "backlink_suggestion",
+    "ingest_capture",
+];
+
+fn compact_review_decisions(
+    decisions: &mut Vec<ReviewDecisionRecord>,
+    note_paths: &HashSet<String>,
+) {
+    // Orphan-prune: drop decisions whose sourceId is a path not in the vault
+    // (only prune if sourceId looks like a path — contains '/' or '.')
+    decisions.retain(|d| {
+        if !PERSISTABLE_KINDS.contains(&d.kind.as_str()) {
+            return false;
+        }
+        let looks_like_path = d.source_id.contains('/') || d.source_id.contains('.');
+        if looks_like_path && !note_paths.contains(&d.source_id) {
+            return false;
+        }
+        true
+    });
+
+    // Cap-evict oldest-first by decidedAt
+    if decisions.len() > REVIEW_DECISIONS_MAX {
+        decisions.sort_by(|a, b| b.decided_at.cmp(&a.decided_at));
+        decisions.truncate(REVIEW_DECISIONS_MAX);
+    }
+}
+
 fn revision_of(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
@@ -1401,6 +1465,7 @@ pub fn run() {
             commands::config::delete_archived_prompt,
             commands::config::prune_archived_prompts,
             commands::config::append_ai_audit,
+            commands::config::persist_review_decisions,
             commands::config::check_ingest_duplicate,
             commands::config::load_embeddings_cache,
             commands::config::save_embeddings_cache,

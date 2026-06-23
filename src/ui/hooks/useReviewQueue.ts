@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { buildCommitBundle } from "./commitBundle";
 import type { CommitBundle } from "./commitBundle";
 import type { InboxCaptureBlock } from "../../core/capture";
@@ -10,6 +10,7 @@ import type {
   IngestQueueItem,
   IngestQueueUpdate,
   ReviewQueueItem,
+  ReviewDecisionRecord,
   ReviewItemKind,
   ReviewItemStatus,
 } from "../../api/types";
@@ -21,6 +22,7 @@ import {
   adaptBacklinkSuggestion,
   adaptIngestCapture,
 } from "./reviewQueueAdapters";
+import { PERSISTABLE_KINDS } from "./reviewQueueKinds";
 
 type ApprovalResult = boolean | void | Promise<boolean | void>;
 type ApplyResult = readonly string[] | false | Promise<readonly string[] | false>;
@@ -33,6 +35,8 @@ export interface ReviewQueueSources {
   backlinkSuggestions: BacklinkSuggestion[];
   ingestItems: IngestQueueItem[];
   gitStagedPaths?: Set<string>;
+  initialDecisions?: ReviewDecisionRecord[];
+  onPersistDecisions?: (decisions: ReviewDecisionRecord[]) => void;
   onApplyInboxCapture?: (id: string) => ApplyResult;
   onApplyProposedEdit?: (id: string) => ApplyResult;
   onApplyBacklinkSuggestion?: (id: string) => ApplyResult;
@@ -72,6 +76,8 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     backlinkSuggestions,
     ingestItems,
     gitStagedPaths,
+    initialDecisions,
+    onPersistDecisions,
     onApplyInboxCapture,
     onApplyProposedEdit,
     onApplyBacklinkSuggestion,
@@ -83,7 +89,44 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     onUpdateIngestCapture,
   } = sources;
 
-  const [overrides, setOverrides] = useState<Record<string, ReviewItemStatus>>({});
+  const [overrides, setOverrides] = useState<Record<string, ReviewItemStatus>>(() => {
+    if (!initialDecisions?.length) return {};
+    const seed: Record<string, ReviewItemStatus> = {};
+    for (const d of initialDecisions) {
+      seed[d.id] = d.status;
+    }
+    return seed;
+  });
+
+  const decisionsRef = useRef(initialDecisions);
+  const persistRef = useRef(onPersistDecisions);
+  persistRef.current = onPersistDecisions;
+
+  const buildAndPersist = useCallback(
+    (nextOverrides: Record<string, ReviewItemStatus>, currentItems: ReviewQueueItem[]) => {
+      if (!persistRef.current) return;
+      const now = new Date().toISOString();
+      const decisions: ReviewDecisionRecord[] = [];
+      for (const [id, status] of Object.entries(nextOverrides)) {
+        if (!["approved", "rejected", "applied", "committed"].includes(status)) continue;
+        const item = currentItems.find((i) => i.id === id);
+        if (!item || !(PERSISTABLE_KINDS as readonly string[]).includes(item.kind)) continue;
+        const existing = decisionsRef.current?.find((d) => d.id === id);
+        decisions.push({
+          id,
+          sourceId: item.sourceId,
+          kind: item.kind,
+          status,
+          decidedAt: existing?.decidedAt ?? now,
+          appliedPaths: existing?.appliedPaths ?? [],
+          auditEditIds: existing?.auditEditIds ?? [],
+        });
+      }
+      decisionsRef.current = decisions;
+      persistRef.current(decisions);
+    },
+    []
+  );
 
   const baseItems = useMemo<ReviewQueueItem[]>(() => {
     const result: ReviewQueueItem[] = [];
@@ -178,7 +221,11 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
       if (result === false) {
         return;
       }
-      setOverrides(prev => ({ ...prev, [id]: status }));
+      setOverrides(prev => {
+        const next = { ...prev, [id]: status };
+        buildAndPersist(next, items);
+        return next;
+      });
     });
   }
 
@@ -191,13 +238,24 @@ export function useReviewQueue(sources: ReviewQueueSources): ReviewQueueHook {
     if (item.kind === "backlink_suggestion") result = await (onApplyBacklinkSuggestion?.(item.sourceId) ?? false);
     if (item.kind === "ingest_capture") result = await (onApplyIngestCapture?.(item.sourceId) ?? false);
     if (result === false) {
-      if (!["inbox_capture", "proposed_edit", "backlink_suggestion", "ingest_capture"].includes(item.kind)) {
+      if (!(PERSISTABLE_KINDS as readonly string[]).includes(item.kind)) {
         console.warn(`applyItem: unhandled kind "${item.kind}" for item ${id}`);
       }
       return [];
     }
     if (result.length === 0) return [];
-    setOverrides((prev) => ({ ...prev, [id]: "applied" }));
+    setOverrides((prev) => {
+      const next = { ...prev, [id]: "applied" as ReviewItemStatus };
+      buildAndPersist(next, items);
+      // Patch appliedPaths on the just-persisted decision
+      if (decisionsRef.current) {
+        decisionsRef.current = decisionsRef.current.map((d) =>
+          d.id === id ? { ...d, appliedPaths: result } : d
+        );
+        persistRef.current?.(decisionsRef.current);
+      }
+      return next;
+    });
     return result;
   }
 

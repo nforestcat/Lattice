@@ -12,11 +12,19 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
     guard.notes = notes;
     guard.snapshots = load_recovery_index(&root);
     self_heal_recovery(&root, &mut guard.snapshots);
+
+    let mut decisions = load_review_decisions(&root);
+    let note_paths: std::collections::HashSet<String> =
+        guard.notes.iter().map(|n| n.meta.path.clone()).collect();
+    compact_review_decisions(&mut decisions, &note_paths);
+    guard.review_decisions = decisions.clone();
+
     Ok(VaultSnapshot {
         root_path: root.to_string_lossy().to_string(),
         notes: metas,
         tree,
         obsidian_settings: read_obsidian_settings(&root),
+        review_decisions: decisions,
     })
 }
 

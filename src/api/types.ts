@@ -1,7 +1,7 @@
 import type { GraphData, NoteContext, NoteMeta, SearchFilters } from "../core/types";
 export type { GraphData, NoteContext, NoteMeta, SearchFilters };
 import type { InboxCaptureBlock } from "../core/capture";
-import type { AiAuditRecord, AiProvenance } from "./ingestReviewTypes";
+import type { AiAuditRecord, AiProvenance, ReviewDecisionRecord } from "./ingestReviewTypes";
 import type { GitFileChange, GitSettings, GitStatus, PullPreflight, StashPopResult } from "./gitTypes";
 import type { LlmConfig, VaultConfig } from "./configTypes";
 export type {
@@ -29,6 +29,7 @@ export type {
   IngestResult,
   IngestSimilarNote,
   MaintenanceSuggestionKind,
+  ReviewDecisionRecord,
   ReviewItemKind,
   ReviewItemStatus,
   ReviewQueueItem,
@@ -39,6 +40,7 @@ export type VaultSnapshot = {
   notes: NoteMeta[];
   tree: FileTreeNode[];
   obsidianSettings?: ObsidianSettings | null;
+  reviewDecisions?: ReviewDecisionRecord[];
 };
 
 export type ObsidianSettings = {
@@ -205,6 +207,7 @@ export type VaultApi = {
   fetchProviderModels(provider: string, baseUrl?: string): Promise<string[]>;
   getWikiHealthReport(): Promise<NoteHealthReport[]>;
   appendAiAudit(record: AiAuditRecord): Promise<void>;
+  persistReviewDecisions(decisions: ReviewDecisionRecord[]): Promise<void>;
 };
 
 export type DuplicatePeerInfo = {

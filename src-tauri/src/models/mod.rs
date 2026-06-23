@@ -47,6 +47,8 @@ pub struct VaultSnapshot {
     pub notes: Vec<NoteMeta>,
     pub tree: Vec<FileTreeNode>,
     pub obsidian_settings: Option<ObsidianSettings>,
+    #[serde(default)]
+    pub review_decisions: Vec<ReviewDecisionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -443,4 +445,18 @@ pub struct ConflictHunk {
 pub struct ConflictFile {
     pub path: String,
     pub hunks: Vec<ConflictHunk>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDecisionRecord {
+    pub id: String,
+    pub source_id: String,
+    pub kind: String,
+    pub status: String,
+    pub decided_at: String,
+    #[serde(default)]
+    pub applied_paths: Vec<String>,
+    #[serde(default)]
+    pub audit_edit_ids: Vec<String>,
 }

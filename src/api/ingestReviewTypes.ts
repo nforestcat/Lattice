@@ -108,3 +108,13 @@ export type IngestQueueItem = {
 export type IngestQueueUpdate = Partial<
   Pick<IngestQueueItem, "title" | "tags" | "markdown" | "targetFolder" | "appendTargetPath">
 >;
+
+export type ReviewDecisionRecord = {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly kind: ReviewItemKind;
+  readonly status: ReviewItemStatus;
+  readonly decidedAt: string;
+  readonly appliedPaths: readonly string[];
+  readonly auditEditIds: readonly string[];
+};

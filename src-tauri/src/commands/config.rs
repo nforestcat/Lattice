@@ -152,6 +152,22 @@ pub(crate) fn append_ai_audit(record: serde_json::Value, state: tauri::State<App
 
 #[cfg(not(test))]
 #[tauri::command]
+pub(crate) fn persist_review_decisions(
+    decisions: Vec<ReviewDecisionRecord>,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?.clone();
+    let note_paths: HashSet<String> = guard.notes.iter().map(|n| n.meta.path.clone()).collect();
+    let mut to_persist = decisions;
+    compact_review_decisions(&mut to_persist, &note_paths);
+    persist_review_decisions_to_disk(&root, &to_persist)?;
+    guard.review_decisions = to_persist;
+    Ok(())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
 pub(crate) fn load_embeddings_cache(state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
