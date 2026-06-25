@@ -11,6 +11,8 @@ import type {
   UnresolvedLinkSource,
   VaultSnapshot,
 } from "../../api/types";
+import { normalizeRef } from "../../core/normalizeRef";
+import type { UnresolvedLinksState } from "./useUnresolvedLinks";
 
 export interface UseStubDraftingCallbacks {
   readonly llmConfig: LlmConfig;
@@ -18,11 +20,7 @@ export interface UseStubDraftingCallbacks {
   readonly activePath: string | null;
   readonly setStatus: (status: string) => void;
   readonly refreshVault: (path: string | null) => Promise<void>;
-  readonly unresolvedLinks: UnresolvedLinkGroup[];
-  readonly setUnresolvedLinks: (links: UnresolvedLinkGroup[]) => void;
-  readonly setIsScanningUnresolved: (scanning: boolean) => void;
-  readonly activeUnresolvedTarget: string | null;
-  readonly setActiveUnresolvedTarget: (target: string | null) => void;
+  readonly unresolved: UnresolvedLinksState;
 }
 
 class StubDraftApplyError extends Error {
@@ -41,10 +39,6 @@ class StubDraftApplyError extends Error {
     this.path = details?.path;
     this.saveResult = details?.saveResult;
   }
-}
-
-function normalizeRef(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
 }
 
 function warningFor(error: unknown, path: string): SourceMutationWarning {
@@ -92,17 +86,20 @@ export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
     activePath,
     setStatus,
     refreshVault,
+    unresolved,
+  } = callbacks;
+  const {
     unresolvedLinks,
     setUnresolvedLinks,
+    isScanningUnresolved: _,
     setIsScanningUnresolved,
+    selectedUnresolvedTargets,
+    setSelectedUnresolvedTargets,
     activeUnresolvedTarget,
     setActiveUnresolvedTarget,
-  } = callbacks;
+  } = unresolved;
   const [draftingTarget, setDraftingTarget] = useState<string | null>(null);
   const [draftedContent, setDraftedContent] = useState<string | null>(null);
-  const [selectedUnresolvedTargets, setSelectedUnresolvedTargets] = useState<Set<string>>(
-    new Set(),
-  );
   const [bulkDrafts, setBulkDrafts] = useState<Record<string, StubDraftReview>>({});
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
@@ -261,5 +258,5 @@ export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
     );
   }
 
-  return { draftingTarget, setDraftingTarget, draftedContent, setDraftedContent, selectedUnresolvedTargets, setSelectedUnresolvedTargets, bulkDrafts, setBulkDrafts, isBulkProcessing, runUnresolvedLinksScan, draftStubNote, runBulkDrafting, applyStubDraft, handleSelectAllToggle };
+  return { draftingTarget, setDraftingTarget, draftedContent, setDraftedContent, bulkDrafts, setBulkDrafts, isBulkProcessing, runUnresolvedLinksScan, draftStubNote, runBulkDrafting, applyStubDraft, handleSelectAllToggle };
 }
