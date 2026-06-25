@@ -20,7 +20,7 @@ interface GitWorkspaceProps {
   onStageAll: () => Promise<void>;
   onStageFile: (path: string) => Promise<void>;
   onUnstageFile: (path: string) => Promise<void>;
-  onCommit: (message: string) => Promise<void>;
+  onCommit: (message: string) => Promise<string[]>;
   onSuggestCommitMessage: () => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;

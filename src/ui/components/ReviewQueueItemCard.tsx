@@ -1,13 +1,20 @@
 import { useState } from "react";
-import type { AiProvenance, IngestQueueUpdate, ReviewItemStatus, ReviewQueueItem } from "../../api/types";
+import type { AiProvenance, IngestQueueUpdate } from "../../api/types";
+import type { ReviewWorkflowItem } from "../reviewWorkflow/ledger";
+import { getReviewCapabilities } from "../reviewWorkflow/stateMachine";
 import { IngestQueueReviewControls } from "./reviewQueue/IngestQueueReviewControls";
 import { ActionButton } from "./reviewQueue/ReviewQueueActionButton";
-import { DiffBlock, ProvenanceBlock } from "./reviewQueue/ReviewQueueBlocks";
+import {
+  DiffBlock,
+  ProvenanceBlock,
+  ReviewQueueItemHeader,
+  ReviewQueuePreview,
+} from "./reviewQueue/ReviewQueueBlocks";
 
 type QueueActionHandler = (id: string) => void | Promise<void>;
 
 interface ReviewItemCardProps {
-  readonly item: ReviewQueueItem;
+  readonly item: ReviewWorkflowItem;
   readonly onApply: QueueActionHandler;
   readonly onApprove: QueueActionHandler;
   readonly onReject: QueueActionHandler;
@@ -21,30 +28,6 @@ interface ReviewItemCardProps {
   readonly isStagedByQueue?: boolean;
   readonly onUpdateIngestCapture?: (id: string, patch: IngestQueueUpdate) => void;
 }
-
-const KIND_COLORS: Record<string, string> = {
-  inbox_capture: "#6366f1",
-  ingest_capture: "#0284c7",
-  ingest_draft: "#0ea5e9",
-  proposed_edit: "#f59e0b",
-  missing_summary: "#8b5cf6",
-  dead_link: "#ef4444",
-  backlink_suggestion: "#10b981",
-  duplicate_warning: "#f97316",
-  orphan_note: "#64748b",
-  stale_note: "#a16207",
-  too_broad: "#f59e0b",
-  weak_backlinks: "#0d9488",
-};
-
-const STATUS_COLORS: Record<ReviewItemStatus, { readonly bg: string; readonly color: string }> = {
-  new: { bg: "#dbeafe", color: "#1d4ed8" },
-  drafted: { bg: "#e0e7ff", color: "#4338ca" },
-  approved: { bg: "#d1fae5", color: "#065f46" },
-  applied: { bg: "#f0fdf4", color: "#166534" },
-  committed: { bg: "#ecfdf5", color: "#14532d" },
-  rejected: { bg: "#fee2e2", color: "#991b1b" },
-};
 
 const GENERATE_LABELS: Record<string, string> = {
   summary: "Generate Summary",
@@ -72,10 +55,14 @@ export function ReviewQueueItemCard({
   isStagedByQueue = false,
   onUpdateIngestCapture,
 }: ReviewItemCardProps) {
-  const kindColor = KIND_COLORS[item.kind] ?? "#64748b";
-  const statusStyle = STATUS_COLORS[item.status];
-  const canApply = item.kind === "inbox_capture" || item.kind === "proposed_edit" || item.kind === "backlink_suggestion" || item.kind === "ingest_capture";
-  const canApprove = item.kind === "ingest_draft" || item.kind === "proposed_edit" || item.kind === "ingest_capture";
+  const capabilities = getReviewCapabilities({
+    kind: item.kind,
+    status: item.status,
+    suggestionKind: item.suggestionKind,
+    hasGeneratedSuggestion: item.proposed !== undefined || suggestions[item.id] !== undefined,
+  });
+  const isPending = item.inFlight !== null;
+  const lastFailure = item.failures.approve ?? item.failures.apply ?? item.failures.reject;
 
   const isGenerating = generating.has(item.id);
   const suggestion = suggestions[item.id];
@@ -107,77 +94,11 @@ export function ReviewQueueItemCard({
         background: "#fff",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <span
-          style={{
-            background: kindColor,
-            color: "#fff",
-            borderRadius: 4,
-            padding: "1px 7px",
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "0.02em",
-          }}
-        >
-          {item.kind.replace(/_/g, " ")}
-        </span>
-        <span
-          style={{
-            background: statusStyle.bg,
-            color: statusStyle.color,
-            borderRadius: 4,
-            padding: "1px 7px",
-            fontSize: 11,
-            fontWeight: 600,
-          }}
-        >
-          {item.status}
-        </span>
-        {item.gitStaged && (
-          <span
-            style={{
-              background: "#f0fdf4",
-              color: "#166534",
-              border: "1px solid #bbf7d0",
-              borderRadius: 4,
-              padding: "1px 7px",
-              fontSize: 11,
-              fontWeight: 600,
-            }}
-          >
-            staged
-          </span>
-        )}
-      </div>
+      <ReviewQueueItemHeader kind={item.kind} status={item.status} gitStaged={item.gitStaged} />
 
       <div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>{item.title}</div>
 
-      {item.original != null ? (
-        <div style={{ display: "flex", gap: 8 }}>
-          <DiffBlock label="이전" value={item.original} tone="remove" />
-          <DiffBlock label="이후" value={effectiveProposed ?? ""} tone="add" />
-        </div>
-      ) : effectiveProposed != null ? (
-        <div>
-          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>제안</div>
-          <pre
-            style={{
-              margin: 0,
-              padding: "8px 10px",
-              background: "#f8fafc",
-              border: "1px solid #e2e8f0",
-              borderRadius: 4,
-              fontSize: 12,
-              overflowX: "auto",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              color: "#1e293b",
-            }}
-          >
-            {effectiveProposed}
-          </pre>
-        </div>
-      ) : null}
+      <ReviewQueuePreview original={item.original} proposed={effectiveProposed} reason={item.reason} />
 
       {needsDiffPreview && suggestion && diffPreviewOpen && (
         <div style={{ display: "flex", gap: 8 }}>
@@ -185,8 +106,6 @@ export function ReviewQueueItemCard({
           <DiffBlock label="이후" value={suggestion} tone="add" />
         </div>
       )}
-
-      {item.reason && <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>{item.reason}</div>}
 
       {item.kind === "proposed_edit" && <ProvenanceBlock provenance={item.provenance} />}
       {item.kind === "ingest_capture" && (
@@ -226,54 +145,44 @@ export function ReviewQueueItemCard({
           </>
         )}
 
-        {/* Standard queue actions */}
-        {(item.status === "new" || item.status === "drafted") && (
-          <>
-            {canApprove && (
-              <ActionButton variant="approve" onClick={() => void onApprove(item.id)}>
-                Approve
-              </ActionButton>
-            )}
-            {canApply && (
-              <ActionButton variant="apply" onClick={() => void onApply(item.id)}>
-                Apply
-              </ActionButton>
-            )}
-            <ActionButton variant="reject" onClick={() => void onReject(item.id)}>
-              Reject
-            </ActionButton>
-          </>
+        {/* Standard queue actions — driven by state-machine capabilities */}
+        {capabilities.approve && (
+          <ActionButton variant={isPending ? "disabled" : "approve"} disabled={isPending} onClick={!isPending ? () => void onApprove(item.id) : undefined}>
+            Approve
+          </ActionButton>
         )}
-        {item.status === "approved" && (
-          <>
-            {canApply && (
-              <ActionButton variant="apply" onClick={() => void onApply(item.id)}>
-                Apply
-              </ActionButton>
-            )}
-            <ActionButton variant="reject" onClick={() => void onReject(item.id)}>
-              Reject
-            </ActionButton>
-          </>
+        {capabilities.apply && (
+          <ActionButton variant={isPending ? "disabled" : "apply"} disabled={isPending} onClick={!isPending ? () => void onApply(item.id) : undefined}>
+            Apply
+          </ActionButton>
+        )}
+        {capabilities.reject && (
+          <ActionButton variant={isPending ? "disabled" : "reject"} disabled={isPending} onClick={!isPending ? () => void onReject(item.id) : undefined}>
+            Reject
+          </ActionButton>
         )}
         {canStage && onStage && (
           <ActionButton
-            variant={isStagedByQueue ? "disabled" : "approve"}
-            disabled={isStagedByQueue}
-            onClick={!isStagedByQueue ? () => void onStage(item.id) : undefined}
+            variant={isStagedByQueue || isPending ? "disabled" : "approve"}
+            disabled={isStagedByQueue || isPending}
+            onClick={!isStagedByQueue && !isPending ? () => void onStage(item.id) : undefined}
           >
             {isStagedByQueue ? "Staged" : "Stage"}
           </ActionButton>
         )}
-        {(item.status === "applied" || item.status === "committed") && (
-          <ActionButton variant="disabled" disabled>
-            Applied
-          </ActionButton>
+        {item.status === "applied" && !capabilities.apply && (
+          <ActionButton variant="disabled" disabled>Applied</ActionButton>
+        )}
+        {item.status === "committed" && (
+          <ActionButton variant="disabled" disabled>Committed</ActionButton>
         )}
         {item.status === "rejected" && (
-          <ActionButton variant="disabled" disabled>
-            Rejected
-          </ActionButton>
+          <ActionButton variant="disabled" disabled>Rejected</ActionButton>
+        )}
+        {lastFailure && (
+          <span style={{ fontSize: 11, color: "#dc2626", alignSelf: "center" }}>
+            {lastFailure.message}
+          </span>
         )}
       </div>
     </div>

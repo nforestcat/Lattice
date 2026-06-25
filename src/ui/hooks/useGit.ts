@@ -158,22 +158,39 @@ export function useGit(callbacks: UseGitCallbacks) {
     }
   }
 
-  async function handleGitCommit(message: string) {
+  // ponytail: returns normalized staged paths on success, empty on failure
+  async function handleGitCommit(message: string): Promise<string[]> {
     if (!message.trim()) {
       setGitOutputLog("Error: Commit message cannot be empty.");
-      return;
+      return [];
     }
     setIsGitLoading(true);
     try {
+      const changes = await vaultApi.getGitChanges();
+      const stagedPaths = changes
+        .filter((c) => c.staged)
+        .map((c) => c.path.replace(/\\/g, "/"));
+      if (stagedPaths.length === 0) {
+        setGitOutputLog("Nothing staged to commit.");
+        setIsGitLoading(false);
+        return [];
+      }
       const output = await vaultApi.gitCommit(message);
       setGitOutputLog(output);
       setCommitMessage("");
       setSelectedGitFile(null);
       setActiveDiff(null);
-      await refreshGitWorkspace();
-      await refreshVault(activePath);
+      // ponytail: refresh failure after successful commit is non-fatal
+      try {
+        await refreshGitWorkspace();
+        await refreshVault(activePath);
+      } catch (refreshErr) {
+        setGitOutputLog(`${output}\n⚠ Post-commit refresh: ${errorMessage(refreshErr)}`);
+      }
+      return stagedPaths;
     } catch (err) {
       setGitOutputLog(`Commit failed:\n${errorMessage(err)}`);
+      return [];
     } finally {
       setIsGitLoading(false);
     }

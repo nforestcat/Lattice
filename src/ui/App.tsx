@@ -3,7 +3,7 @@ import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
 import { askConfirm, askInput, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource } from "../api/types";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource, SourceMutationResult } from "../api/types";
 import { sendChatMessage, type ChatMessage } from "../api/llm";
 import { canUseEmbeddings, getEmbedding } from "../api/embeddings";
 import type { InboxCaptureBlock } from "../core/capture";
@@ -76,6 +76,13 @@ export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 
+function sourceMutationResult(paths: readonly string[] | false): SourceMutationResult {
+  return {
+    changedPaths: paths === false ? [] : paths,
+    warnings: [],
+  };
+}
+
 async function computeHash(content: string): Promise<string> {
   if (typeof crypto === "undefined" || !crypto.subtle) {
     let hash = 0;
@@ -99,8 +106,15 @@ function llmApiKeyStorageKey(provider: LlmProvider): string {
 
 const apiKeysCache: Record<string, string> = {};
 
+function hasTauriInternals(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "__TAURI_INTERNALS__" in window
+  );
+}
+
 function readStoredLlmApiKey(provider: LlmProvider): string {
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (hasTauriInternals()) {
     return apiKeysCache[provider] || "";
   }
   if (typeof window === "undefined") {
@@ -116,7 +130,7 @@ function readStoredLlmApiKey(provider: LlmProvider): string {
 function saveStoredLlmApiKey(provider: LlmProvider, apiKey: string): void {
   const key = apiKey.trim();
   apiKeysCache[provider] = key;
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+  if (hasTauriInternals()) {
     void vaultApi.saveApiKey(provider, key);
     return;
   }
@@ -407,12 +421,8 @@ export function App() {
     runUnresolvedLinksScan,
     draftStubNote,
     runBulkDrafting,
-    createSelectedStubs,
+    applyStubDraft,
     handleSelectAllToggle,
-    approveDraft,
-    rejectDraft,
-    approveAllDrafts,
-    rejectAllDrafts,
   } = stub;
   runUnresolvedLinksScanRef.current = runUnresolvedLinksScan;
   draftStubNoteRef.current = draftStubNote;
@@ -464,26 +474,18 @@ export function App() {
     backlinkSuggestions,
     ingestItems: ingestQueue.ingestItems,
     gitStagedPaths,
-    initialDecisions: vault?.reviewDecisions,
-    onPersistDecisions: (decisions) => {
-      vaultApi.persistReviewDecisions(decisions).catch((err) =>
-        console.error("[lattice] persist review decisions failed:", err)
-      );
-    },
-    onApplyInboxCapture: (id) => markInboxCaptureProcessed(id),
-    onApplyProposedEdit: (id) => applyProposedEditFromQueue(id),
+    onApplyInboxCapture: async (id) =>
+      sourceMutationResult(await markInboxCaptureProcessed(id)),
+    onApplyProposedEdit: async (id) =>
+      sourceMutationResult(await applyProposedEditFromQueue(id)),
     onApplyBacklinkSuggestion: async (id) => {
       const suggestion = backlinkSuggestions.find((item) => item.id === id);
       if (!suggestion) {
-        return false;
+        return { changedPaths: [], warnings: [] };
       }
-      return await applyBacklinkSuggestion(suggestion) ? [suggestion.sourcePath] : false;
+      return applyBacklinkSuggestion(suggestion);
     },
     onApplyIngestCapture: (id) => ingestQueue.applyIngestItem(id),
-    onApproveStubDraft: (target) => approveDraft(target),
-    onRejectStubDraft: (target) => rejectDraft(target),
-    onApproveIngestCapture: (id) => { ingestQueue.approveIngestItem(id); },
-    onRejectIngestCapture: (id) => { ingestQueue.rejectIngestItem(id); },
     onUpdateIngestCapture: (id, patch) => { ingestQueue.updateIngestItem(id, patch); },
   });
 
@@ -567,7 +569,7 @@ export function App() {
 
   useEffect(() => {
     async function init() {
-      if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+      if (hasTauriInternals()) {
         const providers: LlmProvider[] = ["openai", "anthropic", "gemini", "ollama", "lm-studio", "custom"];
         for (const provider of providers) {
           try {
@@ -1367,11 +1369,7 @@ export function App() {
               runUnresolvedLinksScan={runUnresolvedLinksScan}
               handleSelectAllToggle={handleSelectAllToggle}
               runBulkDrafting={runBulkDrafting}
-              createSelectedStubs={createSelectedStubs}
-              approveDraft={approveDraft}
-              rejectDraft={rejectDraft}
-              approveAllDrafts={approveAllDrafts}
-              rejectAllDrafts={rejectAllDrafts}
+              applyStubDraft={applyStubDraft}
               draftStubNote={draftStubNote}
               onSelectNote={selectNote}
               onRefreshVault={async () => { await refreshVault(activePath); }}
@@ -1515,7 +1513,8 @@ export function App() {
           onNavigateNote: selectNote,
           onInsertLinkAtCursor: insertWikiLinkAtCursor,
           onApplyWikiLinkSuggestion: applyWikiLinkSuggestion,
-          onApplyBacklinkSuggestion: applyBacklinkSuggestion,
+          onApplyBacklinkSuggestion: async (suggestion) =>
+            (await applyBacklinkSuggestion(suggestion)).changedPaths.length > 0,
         }}
         vault={vault}
         context={context}

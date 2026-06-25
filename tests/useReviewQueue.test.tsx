@@ -1,223 +1,262 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { InboxCaptureBlock } from "../src/core/capture";
-import type { ProposedEdit, StubDraftReview } from "../src/api/types";
+import type { ReviewActionResult } from "../src/ui/reviewWorkflow/contracts";
 import {
-  useReviewQueue,
-  type ReviewQueueSources,
-} from "../src/ui/hooks/useReviewQueue";
+  approveCapture,
+  renderQueue,
+  sources,
+  stubSources,
+} from "./reviewWorkflow/reviewQueueFixtures";
 
-const capture: InboxCaptureBlock = {
-  id: "capture-1",
-  title: "2026-06-18 09:00",
-  body: "Captured text",
-  markdown: "Captured text",
-  relatedTitle: "Inbox.md",
-};
-
-function sources(
-  overrides: Partial<ReviewQueueSources> = {}
-): ReviewQueueSources {
-  return {
-    inboxCaptures: [capture],
-    bulkDrafts: {},
-    proposedEdits: [],
-    healthReports: [],
-    backlinkSuggestions: [],
-    ingestItems: [],
-    ...overrides,
-  };
-}
-
-describe("useReviewQueue", () => {
-  it("keeps an item new when apply reports no mutation", async () => {
-    // Given: applying a capture reports that no file changed.
-    const { result } = renderHook(() =>
-      useReviewQueue(sources({ onApplyInboxCapture: () => false }))
+describe("useReviewQueue action gates", () => {
+  it("returns not_found without invoking an adapter", async () => {
+    // Given
+    const reject = vi.fn();
+    const { result } = renderQueue(
+      sources({ onRejectIngestCapture: reject })
     );
 
-    // When: the capture is applied.
-    await act(async () => {
-      expect(await result.current.applyItem("capture-1")).toEqual([]);
+    // When
+    const actionResult = await result.current.rejectItem("missing");
+
+    // Then
+    expect(actionResult).toMatchObject({
+      ok: false,
+      operation: "reject",
+      itemId: null,
+      status: null,
+      code: "not_found",
     });
-
-    // Then: the queue does not claim the capture was applied.
-    expect(result.current.items[0]?.status).toBe("new");
+    expect(reject).not.toHaveBeenCalled();
   });
 
-  it("returns exact mutated paths and marks the item applied", async () => {
-    // Given: applying a capture mutates Inbox.md.
-    const apply = vi.fn().mockResolvedValue(["Inbox.md"]);
-    const { result } = renderHook(() =>
-      useReviewQueue(sources({ onApplyInboxCapture: apply }))
+  it("blocks unsupported approval without reserving an attempt", async () => {
+    // Given
+    const { result } = renderQueue(
+      sources({
+        inboxCaptures: [],
+        healthReports: [{
+          path: "Duplicate.md",
+          title: "Duplicate",
+          score: 20,
+          issues: [],
+          isOrphan: false,
+          isStale: false,
+          isTooBroad: false,
+          isDuplicated: true,
+          missingSummary: false,
+          weakBacklinks: false,
+        }],
+      })
     );
 
-    // When: the capture is applied.
-    await act(async () => {
-      expect(await result.current.applyItem("capture-1")).toEqual(["Inbox.md"]);
+    // When
+    const actionResult = await result.current.approveItem(
+      "health-Duplicate.md-isDuplicated"
+    );
+
+    // Then
+    expect(actionResult).toMatchObject({
+      ok: false,
+      operation: "approve",
+      code: "unsupported",
+      status: "drafted",
     });
-
-    // Then: the exact path and applied state are exposed.
-    expect(apply).toHaveBeenCalledWith("capture-1");
-    expect(result.current.items[0]?.status).toBe("applied");
+    expect(result.current.items[0]?.attempts.approve).toBe(0);
   });
 
-  it("sorts active items before completed items and filters by kind and status", () => {
-    // Given: captures have different timestamps and an applied edit is completed.
-    const olderCapture: InboxCaptureBlock = {
-      ...capture,
-      id: "capture-old",
-      title: "2026-06-17 09:00",
-    };
-    const newerCapture: InboxCaptureBlock = {
-      ...capture,
-      id: "capture-new",
-      title: "2026-06-19 09:00",
-    };
-    const appliedEdit: ProposedEdit = {
-      id: "edit-1",
-      type: "update",
-      path: "Done.md",
-      targetContent: "before",
-      replacementContent: "after",
-      applied: true,
-    };
-    const { result } = renderHook(() =>
-      useReviewQueue(
-        sources({
-          inboxCaptures: [olderCapture, newerCapture],
-          proposedEdits: [appliedEdit],
-        })
-      )
-    );
-
-    // When: the full queue and an active capture filter are read.
-    const filtered = result.current.filterItems("inbox_capture", "new");
-
-    // Then: active captures are newest-first and precede the completed edit.
-    expect(result.current.items.map((item) => item.id)).toEqual([
-      "capture-new",
-      "capture-old",
-      "edit-1",
-    ]);
-    expect(filtered.map((item) => item.id)).toEqual([
-      "capture-new",
-      "capture-old",
-    ]);
-  });
-
-  it("approves a draft after its approval callback succeeds", async () => {
-    // Given: a drafted stub has an approval callback.
-    const draft: StubDraftReview = {
-      content: "# Draft",
-      status: "drafting",
-      approved: false,
-    };
-    const approve = vi.fn().mockResolvedValue(true);
-    const { result } = renderHook(() =>
-      useReviewQueue(
-        sources({
-          inboxCaptures: [],
-          bulkDrafts: { "Draft.md": draft },
-          onApproveStubDraft: approve,
-        })
-      )
-    );
-
-    // When: the draft is approved.
-    await act(async () => {
-      await result.current.approveItem("stub-Draft.md");
+  it("blocks apply-before-approve without invoking its executor", async () => {
+    // Given
+    const apply = vi.fn().mockResolvedValue({
+      changedPaths: ["Inbox.md"],
+      warnings: [],
     });
+    const { result } = renderQueue(sources({ onApplyInboxCapture: apply }));
 
-    // Then: the source callback receives the target and the item transitions.
-    expect(approve).toHaveBeenCalledWith("Draft.md");
-    expect(result.current.items[0]?.status).toBe("approved");
-  });
+    // When
+    const actionResult = await result.current.applyItem("capture-1");
 
-  it("keeps a draft unchanged when its rejection callback declines", async () => {
-    // Given: a drafted stub has a rejection callback that declines the action.
-    const draft: StubDraftReview = {
-      content: "# Draft",
-      status: "drafting",
-      approved: false,
-    };
-    const reject = vi.fn().mockResolvedValue(false);
-    const { result } = renderHook(() =>
-      useReviewQueue(
-        sources({
-          inboxCaptures: [],
-          bulkDrafts: { "Draft.md": draft },
-          onRejectStubDraft: reject,
-        })
-      )
-    );
-
-    // When: rejection is requested.
-    await act(async () => {
-      await result.current.rejectItem("stub-Draft.md");
+    // Then
+    expect(actionResult).toMatchObject({
+      ok: false,
+      operation: "apply",
+      code: "invalid_transition",
+      status: "drafted",
     });
-
-    // Then: the source is called but the queue status remains drafted.
-    expect(reject).toHaveBeenCalledWith("Draft.md");
-    expect(result.current.items[0]?.status).toBe("drafted");
+    expect(apply).not.toHaveBeenCalled();
+    expect(result.current.items[0]?.attempts.apply).toBe(0);
   });
 
-  it("prunes a local status override after its source item disappears", async () => {
-    // Given: an applied capture has a local applied override.
-    const { result, rerender } = renderHook(
-      ({ currentSources }: { currentSources: ReviewQueueSources }) =>
-        useReviewQueue(currentSources),
-      {
-        initialProps: {
-          currentSources: sources({
-            onApplyInboxCapture: () => ["Inbox.md"],
-          }),
+  it("applies only approved generated stub drafts when a bulk executor is supplied", async () => {
+    // Given
+    const applyDraftOne = vi.fn(() => ({
+      changedPaths: ["Draft One.md"],
+      warnings: [],
+    }));
+    const applyDraftTwo = vi.fn(() => ({
+      changedPaths: ["Draft Two.md"],
+      warnings: [],
+    }));
+    const { result } = renderQueue(
+      stubSources({
+        bulkDrafts: {
+          "Draft One": { content: "# Draft One", status: "done" },
+          "Draft Two": { content: "# Draft Two", status: "done" },
         },
-      }
+      })
+    );
+
+    // When
+    await act(async () => {
+      expect(
+        await result.current.applyItem("stub-Draft One", applyDraftOne)
+      ).toMatchObject({
+        ok: false,
+        operation: "apply",
+        code: "invalid_transition",
+        status: "drafted",
+      });
+    });
+    await act(async () => {
+      expect(await result.current.approveItem("stub-Draft One")).toMatchObject({
+        ok: true,
+        operation: "approve",
+        status: "approved",
+      });
+    });
+    const approvedItems = result.current.items.filter(
+      (candidate) =>
+        candidate.kind === "ingest_draft" &&
+        candidate.status === "approved"
     );
     await act(async () => {
-      await result.current.applyItem("capture-1");
+      for (const item of approvedItems) {
+        const executor =
+          item.sourceId === "Draft One" ? applyDraftOne : applyDraftTwo;
+        await result.current.applyItem(item.id, executor);
+      }
     });
-    expect(result.current.items[0]?.status).toBe("applied");
 
-    // When: the source disappears and later returns.
-    rerender({ currentSources: sources({ inboxCaptures: [] }) });
-    await waitFor(() => {
-      expect(result.current.items).toEqual([]);
-    });
-    rerender({ currentSources: sources() });
-
-    // Then: the reintroduced source starts from its base status.
-    await waitFor(() => {
-      expect(result.current.items[0]?.status).toBe("new");
-    });
+    // Then
+    expect(applyDraftOne).toHaveBeenCalledTimes(1);
+    expect(applyDraftTwo).not.toHaveBeenCalled();
   });
 
-  it("exposes staged queue items through the commit bundle", () => {
-    // Given: only Inbox.md is staged in git.
-    const { result } = renderHook(() =>
-      useReviewQueue(
-        sources({
-          gitStagedPaths: new Set(["Inbox.md"]),
-        })
-      )
+  it("supports drafted rejection and approved rejection", async () => {
+    // Given
+    const first = renderQueue();
+    const second = renderQueue();
+    await approveCapture(second.result);
+
+    // When
+    await act(async () => {
+      expect(await first.result.current.rejectItem("capture-1")).toMatchObject({
+        ok: true,
+        operation: "reject",
+        status: "rejected",
+      });
+      expect(await second.result.current.rejectItem("capture-1")).toMatchObject({
+        ok: true,
+        operation: "reject",
+        status: "rejected",
+      });
+    });
+
+    // Then
+    expect(first.result.current.items[0]?.status).toBe("rejected");
+    expect(second.result.current.items[0]?.status).toBe("rejected");
+  });
+
+  it("rejects approval after an approved item is rejected without reusing cached approval", async () => {
+    // Given
+    const approve = vi.fn<() => void>();
+    const reject = vi.fn<() => void>();
+    const { result } = renderQueue(
+      stubSources({
+        onApproveStubDraft: approve,
+        onRejectStubDraft: reject,
+      })
     );
 
-    // When: the hook's commit bundle is read.
-    const bundle = result.current.commitBundle;
+    // When
+    let repeatedApproval: ReviewActionResult | undefined;
+    await act(async () => {
+      expect(await result.current.approveItem("stub-Draft.md")).toMatchObject({
+        ok: true,
+        operation: "approve",
+        status: "approved",
+      });
+      expect(await result.current.rejectItem("stub-Draft.md")).toMatchObject({
+        ok: true,
+        operation: "reject",
+        status: "rejected",
+      });
+      repeatedApproval = await result.current.approveItem("stub-Draft.md");
+    });
 
-    // Then: the staged item is projected and counted by kind.
-    expect(bundle.isEmpty).toBe(false);
-    expect(bundle.items).toEqual([
-      {
-        id: "capture-1",
-        kind: "inbox_capture",
-        title: "2026-06-18 09:00",
-        path: "Inbox.md",
-        status: "new",
-        createdAt: Date.parse("2026-06-18T09:00:00"),
-      },
-    ]);
-    expect(bundle.countByKind).toEqual({ inbox_capture: 1 });
+    // Then
+    expect(repeatedApproval).toMatchObject({
+      ok: false,
+      operation: "approve",
+      code: "invalid_transition",
+      status: "rejected",
+    });
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(reject).toHaveBeenCalledTimes(1);
+    expect(result.current.items[0]?.status).toBe("rejected");
+  });
+
+  it("records decline and retries approval successfully", async () => {
+    // Given
+    const approve = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const { result } = renderQueue(
+      stubSources({ onApproveStubDraft: approve })
+    );
+
+    // When
+    await act(async () => {
+      expect(await result.current.approveItem("stub-Draft.md")).toMatchObject({
+        ok: false,
+        code: "declined",
+        status: "drafted",
+      });
+      expect(await result.current.approveItem("stub-Draft.md")).toMatchObject({
+        ok: true,
+        status: "approved",
+      });
+    });
+
+    // Then
+    expect(approve).toHaveBeenCalledTimes(2);
+    expect(result.current.items[0]?.attempts.approve).toBe(2);
+    expect(result.current.items[0]?.failures.approve).toBeUndefined();
+  });
+
+  it("converts thrown approval errors into retryable failed outcomes", async () => {
+    // Given
+    const approve = vi.fn().mockRejectedValue(new Error("approval failed"));
+    const { result } = renderQueue(
+      stubSources({ onApproveStubDraft: approve })
+    );
+
+    // When
+    let actionResult: ReviewActionResult | undefined;
+    await act(async () => {
+      actionResult = await result.current.approveItem("stub-Draft.md");
+    });
+
+    // Then
+    expect(actionResult).toMatchObject({
+      ok: false,
+      operation: "approve",
+      code: "failed",
+      message: "approval failed",
+      status: "drafted",
+    });
+    expect(result.current.items[0]?.attempts.approve).toBe(1);
+    expect(result.current.items[0]?.failures.approve?.code).toBe("failed");
   });
 });

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ReviewQueuePanel } from "./ReviewQueuePanel";
 import { useMaintenancePlanner } from "../hooks/useMaintenancePlanner";
-import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview, GitStatus, GitFileChange } from "../../api/types";
+import type { VaultSnapshot, LlmConfig, LlmProvider, VaultConfig, ContextBundle, ProposedEdit, UnresolvedLinkGroup, NoteHealthReport, StubDraftReview, GitStatus, GitFileChange, SourceMutationResult } from "../../api/types";
 import type { ChatMessage } from "../../api/llm";
 import { vaultApi } from "../../api";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
@@ -43,7 +43,7 @@ interface DistillWorkspaceProps {
   onStageAll: () => Promise<void>;
   onStageFile: (path: string) => Promise<void>;
   onUnstageFile: (path: string) => Promise<void>;
-  onCommit: (message: string) => Promise<void>;
+  onCommit: (message: string) => Promise<string[]>;
   onSuggestCommitMessage: () => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;
@@ -85,12 +85,8 @@ interface DistillWorkspaceProps {
   runUnresolvedLinksScan: () => Promise<UnresolvedLinkGroup[]>;
   handleSelectAllToggle: (e: React.ChangeEvent<HTMLInputElement>) => void;
   runBulkDrafting: () => Promise<void>;
-  createSelectedStubs: () => Promise<void>;
+  applyStubDraft: (target: string) => Promise<SourceMutationResult>;
   draftStubNote: (target: string, sources: Array<{ path: string; title: string; excerpt: string }>) => Promise<void>;
-  approveDraft: (target: string) => void;
-  rejectDraft: (target: string) => void;
-  approveAllDrafts: () => void;
-  rejectAllDrafts: () => void;
 
   healthReports: NoteHealthReport[];
   isScanningHealth: boolean;
@@ -143,7 +139,7 @@ export function DistillWorkspace({
   runUnresolvedLinksScan,
   handleSelectAllToggle,
   runBulkDrafting,
-  createSelectedStubs,
+  applyStubDraft,
   draftStubNote,
   onSelectNote,
   onRefreshVault,
@@ -155,10 +151,6 @@ export function DistillWorkspace({
   generateRepairForIssue,
   generateAllRepairsForNote,
   generatingRepairFor,
-  approveDraft,
-  rejectDraft,
-  approveAllDrafts,
-  rejectAllDrafts,
   gitStatus,
   gitChanges,
   selectedGitFile,
@@ -195,8 +187,6 @@ export function DistillWorkspace({
 
   const maintenancePlanner = useMaintenancePlanner();
 
-  // Paths mutated by each review-queue item's apply step, keyed by item id.
-  const [mutatedPathsByItem, setMutatedPathsByItem] = useState<Record<string, string[]>>({});
   // Paths staged via the review-queue "Stage" button — populated ONLY on click, never automatically.
   const stagedByQueueRef = useRef<Set<string>>(new Set());
   const [stagedByQueue, setStagedByQueue] = useState<Set<string>>(new Set());
@@ -241,12 +231,43 @@ export function DistillWorkspace({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [healthReports]);
 
-  const approvedCount = Array.from(selectedUnresolvedTargets).filter(t => {
-    const draft = bulkDrafts[t];
-    return draft?.status === "done" && draft?.approved;
-  }).length;
+  const stubReviewItems = reviewQueue?.items.filter((item) => item.kind === "ingest_draft") ?? [];
+  const approvedStubReviewItems = stubReviewItems.filter(
+    (item) =>
+      item.status === "approved" &&
+      selectedUnresolvedTargets.has(item.sourceId) &&
+      bulkDrafts[item.sourceId]?.status === "done",
+  );
+  const approvedCount = approvedStubReviewItems.length;
 
   const hasDoneDrafts = Object.values(bulkDrafts).some(d => d.status === "done");
+
+  function stubWorkflowStatus(target: string) {
+    return stubReviewItems.find((item) => item.sourceId === target)?.status ?? "drafted";
+  }
+
+  async function approveAllStubDrafts(): Promise<void> {
+    for (const item of stubReviewItems) {
+      if (item.status === "drafted" && bulkDrafts[item.sourceId]?.status === "done") {
+        await reviewQueue?.approveItem(item.id);
+      }
+    }
+  }
+
+  async function rejectAllStubDrafts(): Promise<void> {
+    for (const item of stubReviewItems) {
+      const status = bulkDrafts[item.sourceId]?.status;
+      if (status === "done" && (item.status === "drafted" || item.status === "approved")) {
+        await reviewQueue?.rejectItem(item.id);
+      }
+    }
+  }
+
+  async function applyApprovedStubDrafts(): Promise<void> {
+    for (const item of approvedStubReviewItems) {
+      await reviewQueue?.applyItem(item.id, () => applyStubDraft(item.sourceId));
+    }
+  }
 
 
   const handleGenerateSummary = async (path: string) => {
@@ -300,31 +321,27 @@ export function DistillWorkspace({
   }
 
   async function handleQueueStage(itemId: string) {
-    const paths = mutatedPathsByItem[itemId];
-    if (!paths || paths.length === 0) return;
-    for (const path of paths) {
+    const item = reviewQueue?.items.find((i) => i.id === itemId);
+    if (!item || item.changedPaths.length === 0) return;
+    for (const path of item.changedPaths) {
       await onStageFile(path);
     }
     markStaged([itemId]);
   }
 
   function canStageQueueItem(itemId: string): boolean {
-    const paths = mutatedPathsByItem[itemId];
-    return !!paths && paths.length > 0;
+    const item = reviewQueue?.items.find((i) => i.id === itemId);
+    return !!item && item.changedPaths.length > 0;
   }
 
   async function handleQueueApply(id: string) {
-    const paths = await reviewQueue?.applyItem(id);
-    if (paths && paths.length > 0) {
-      setMutatedPathsByItem((prev) => ({ ...prev, [id]: [...paths] }));
-    }
+    await reviewQueue?.applyItem(id);
   }
 
   async function handleQueueApplyMaintenance(id: string) {
     const item = reviewQueue?.items.find((i) => i.id === id);
     if (!item) return;
-    const paths = await maintenancePlanner.apply(item);
-    setMutatedPathsByItem((prev) => ({ ...prev, [id]: paths }));
+    await reviewQueue?.applyItem(id, () => maintenancePlanner.apply(item));
   }
 
   async function handleQueueCommit() {
@@ -333,9 +350,9 @@ export function DistillWorkspace({
       const changes = await vaultApi.getGitChanges();
       const stagedPaths = changes.filter((c) => c.staged).map((c) => c.path);
       const stagedByQueuePaths = new Set(
-        Object.entries(mutatedPathsByItem)
-          .filter(([id]) => stagedByQueueRef.current.has(id))
-          .flatMap(([, paths]) => paths)
+        (reviewQueue?.items ?? [])
+          .filter((i) => stagedByQueueRef.current.has(i.id))
+          .flatMap((i) => i.changedPaths)
       );
       const extra = stagedPaths.filter((p) => !stagedByQueuePaths.has(p));
       if (extra.length > 0) {
@@ -409,10 +426,10 @@ export function DistillWorkspace({
           </div>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <ReviewQueuePanel
-              items={reviewQueue.items}
+              items={[...reviewQueue.items]}
               onApply={handleQueueApply}
-              onApprove={reviewQueue.approveItem}
-              onReject={reviewQueue.rejectItem}
+              onApprove={(id) => { void reviewQueue.approveItem(id); }}
+              onReject={(id) => { void reviewQueue.rejectItem(id); }}
               generating={maintenancePlanner.generating}
               suggestions={maintenancePlanner.suggestions}
               provenances={maintenancePlanner.provenances}
@@ -446,7 +463,19 @@ export function DistillWorkspace({
           onStageAll={onStageAll}
           onStageFile={onStageFile}
           onUnstageFile={onUnstageFile}
-          onCommit={onCommit}
+          onCommit={async (message) => {
+            const paths = await onCommit(message);
+            if (paths.length > 0 && reviewQueue) {
+              const { committedIds } = reviewQueue.markCommittedPaths(paths);
+              if (committedIds.length > 0) {
+                const next = new Set(stagedByQueueRef.current);
+                for (const id of committedIds) next.delete(id);
+                stagedByQueueRef.current = next;
+                setStagedByQueue(next);
+              }
+            }
+            return paths;
+          }}
           onSuggestCommitMessage={onSuggestCommitMessage}
           onPull={onPull}
           onPush={onPush}
@@ -923,7 +952,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                   isBulkProcessing ||
                                   approvedCount === 0
                                 }
-                                onClick={() => void createSelectedStubs()}
+                                onClick={() => void applyApprovedStubDrafts()}
                               >
                                 Create Approved ({approvedCount})
                               </button>
@@ -933,7 +962,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                     type="button"
                                     className="smallButton"
                                     disabled={isBulkProcessing}
-                                    onClick={approveAllDrafts}
+                                    onClick={() => void approveAllStubDrafts()}
                                   >
                                     Approve All
                                   </button>
@@ -941,7 +970,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                     type="button"
                                     className="smallButton"
                                     disabled={isBulkProcessing}
-                                    onClick={rejectAllDrafts}
+                                    onClick={() => void rejectAllStubDrafts()}
                                   >
                                     Reject All
                                   </button>
@@ -965,7 +994,9 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
 
                           {unresolvedLinks.map((item) => {
                             const draftState = bulkDrafts[item.target];
-                            const isRejected = draftState?.status === "done" && draftState.approved === false;
+                            const workflowStatus = stubWorkflowStatus(item.target);
+                            const isRejected = draftState?.status === "done" && workflowStatus === "rejected";
+                            const workflowItem = stubReviewItems.find((candidate) => candidate.sourceId === item.target);
                             return (
                               <div key={item.target} className={`unresolvedLinkCard ${isRejected ? "rejected" : ""}`}>
                                 <div className="unresolvedLinkHeader">
@@ -991,7 +1022,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                     {draftState?.status === "drafting" && <span className="statusText drafting">⌛ Drafting...</span>}
                                     {draftState?.status === "done" && (
                                       <>
-                                        {draftState.approved ? (
+                                        {workflowStatus === "approved" ? (
                                           <>
                                             <span className="reviewBadge approved">✓ Approved</span>
                                             <button
@@ -999,21 +1030,38 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                               className="smallButton"
                                               style={{ background: "#fee2e2", borderColor: "#fecaca", color: "#991b1b" }}
                                               disabled={isBulkProcessing}
-                                              onClick={() => rejectDraft(item.target)}
+                                              onClick={() => {
+                                                if (workflowItem) void reviewQueue?.rejectItem(workflowItem.id);
+                                              }}
                                             >
                                               Reject
                                             </button>
                                           </>
+                                        ) : workflowStatus === "rejected" ? (
+                                          <span className="reviewBadge rejected">✗ Rejected</span>
                                         ) : (
                                           <>
-                                            <span className="reviewBadge rejected">✗ Rejected</span>
+                                            <span className="reviewBadge">Generated</span>
                                             <button
                                               type="button"
                                               className="smallButton primary"
                                               disabled={isBulkProcessing}
-                                              onClick={() => approveDraft(item.target)}
+                                              onClick={() => {
+                                                if (workflowItem) void reviewQueue?.approveItem(workflowItem.id);
+                                              }}
                                             >
                                               Approve
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="smallButton"
+                                              style={{ background: "#fee2e2", borderColor: "#fecaca", color: "#991b1b" }}
+                                              disabled={isBulkProcessing}
+                                              onClick={() => {
+                                                if (workflowItem) void reviewQueue?.rejectItem(workflowItem.id);
+                                              }}
+                                            >
+                                              Reject
                                             </button>
                                           </>
                                         )}
@@ -1039,7 +1087,7 @@ Persistent synthesis allows LLMs to read and write directly to the wiki rather t
                                     <textarea
                                       className="stubPreviewTextarea"
                                       value={draftState.content}
-                                      disabled={!draftState.approved}
+                                      disabled={isBulkProcessing || workflowStatus === "rejected"}
                                       onChange={(e) => {
                                         setBulkDrafts(prev => ({
                                           ...prev,
