@@ -148,7 +148,7 @@ export type UnresolvedLinkGroup = {
   sources: UnresolvedLinkSource[];
 };
 
-export type VaultApi = {
+export type VaultCapability = {
   openVault(path: string): Promise<VaultSnapshot>;
   readNote(path: string): Promise<NoteDocument>;
   saveNote(path: string, content: string, baseRevision: string): Promise<SaveResult>;
@@ -170,6 +170,20 @@ export type VaultApi = {
   deleteManagedGraphLink(sourcePath: string, targetPath: string): Promise<LinkMutationResult>;
   listSnapshots(path: string): Promise<Snapshot[]>;
   restoreSnapshot(snapshotId: string): Promise<SaveResult>;
+  getVaultConfig(): Promise<VaultConfig>;
+  saveVaultConfig(config: VaultConfig): Promise<void>;
+  loadEmbeddingsCache(): Promise<string>;
+  saveEmbeddingsCache(content: string): Promise<void>;
+  loadEmbeddingsStatus(): Promise<string>;
+  saveEmbeddingsStatus(content: string): Promise<void>;
+  getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]>;
+  getBacklinkSuggestions(activePath: string): Promise<BacklinkSuggestion[]>;
+  applyBacklinkSuggestion(suggestion: BacklinkSuggestion): Promise<void>;
+  applyNoteMetadata(path: string, frontmatter: Record<string, string>, tags: string[]): Promise<void>;
+  getWikiHealthReport(): Promise<NoteHealthReport[]>;
+};
+
+export type GitCapability = {
   getGitStatus(): Promise<GitStatus>;
   setAutoGit(enabled: boolean): Promise<GitSettings>;
   getGitChanges(): Promise<GitFileChange[]>;
@@ -186,29 +200,26 @@ export type VaultApi = {
   gitStashPop: (withIndex: boolean) => Promise<StashPopResult>;
   gitStashDrop: () => Promise<string>;
   gitMergeHeadExists: () => Promise<boolean>;
-  getVaultConfig(): Promise<VaultConfig>;
-  saveVaultConfig(config: VaultConfig): Promise<void>;
+};
+
+export type AiCapability = {
   archivePromptRun(runId: string, content: string): Promise<string>;
   getArchivedPrompt(runId: string): Promise<string>;
   deleteArchivedPrompt(runId: string): Promise<void>;
   pruneArchivedPrompts(activeRunIds: string[]): Promise<void>;
   getArchiveStatus(): Promise<{ fileCount: number; totalBytes: number }>;
-  loadEmbeddingsCache(): Promise<string>;
-  saveEmbeddingsCache(content: string): Promise<void>;
-  loadEmbeddingsStatus(): Promise<string>;
-  saveEmbeddingsStatus(content: string): Promise<void>;
-  getUnresolvedLinks(): Promise<UnresolvedLinkGroup[]>;
-  parseProposedEdits(rawText: string): Promise<ProposedEdit[]>;
-  getBacklinkSuggestions(activePath: string): Promise<BacklinkSuggestion[]>;
-  applyBacklinkSuggestion(suggestion: BacklinkSuggestion): Promise<void>;
-  applyNoteMetadata(path: string, frontmatter: Record<string, string>, tags: string[]): Promise<void>;
   saveApiKey(provider: string, key: string): Promise<void>;
   getApiKey(provider: string): Promise<string>;
   fetchProviderModels(provider: string, baseUrl?: string): Promise<string[]>;
-  getWikiHealthReport(): Promise<NoteHealthReport[]>;
+  parseProposedEdits(rawText: string): Promise<ProposedEdit[]>;
+};
+
+export type ReviewCapability = {
   appendAiAudit(record: AiAuditRecord): Promise<void>;
   persistReviewDecisions(decisions: ReviewDecisionRecord[]): Promise<void>;
 };
+
+export type VaultApi = VaultCapability & GitCapability & AiCapability & ReviewCapability;
 
 export type DuplicatePeerInfo = {
   path: string;
