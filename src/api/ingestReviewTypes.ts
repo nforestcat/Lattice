@@ -43,6 +43,17 @@ export type AiProvenance = {
   readonly appliedAt?: string;
 };
 
+export type SourceMutationWarning = {
+  readonly code: "post_action_failed" | "partial_failure";
+  readonly message: string;
+  readonly path?: string;
+};
+
+export type SourceMutationResult = {
+  readonly changedPaths: readonly string[];
+  readonly warnings: readonly SourceMutationWarning[];
+};
+
 export type ReviewItemKind =
   | "inbox_capture"
   | "ingest_capture"
@@ -66,7 +77,6 @@ export type MaintenanceSuggestionKind =
   | "backlinks_in";
 
 export type ReviewItemStatus =
-  | "new"
   | "drafted"
   | "approved"
   | "applied"
@@ -74,20 +84,20 @@ export type ReviewItemStatus =
   | "committed";
 
 export interface ReviewQueueItem {
-  id: string;
-  sourceId: string;
-  kind: ReviewItemKind;
-  status: ReviewItemStatus;
-  path: string;
-  title: string;
-  original?: string;
-  proposed?: string;
-  reason?: string;
-  gitStaged: boolean;
-  createdAt: number;
-  sourceRef?: unknown;
-  provenance?: AiProvenance;
-  suggestionKind?: MaintenanceSuggestionKind;
+  readonly id: string;
+  readonly sourceId: string;
+  readonly kind: ReviewItemKind;
+  readonly status: ReviewItemStatus;
+  readonly path: string;
+  readonly title: string;
+  readonly original?: string;
+  readonly proposed?: string;
+  readonly reason?: string;
+  readonly gitStaged: boolean;
+  readonly createdAt: number;
+  readonly sourceRef?: unknown;
+  readonly provenance?: AiProvenance;
+  readonly suggestionKind?: MaintenanceSuggestionKind;
 }
 
 export type IngestQueueItem = {
@@ -101,7 +111,6 @@ export type IngestQueueItem = {
   readonly duplicateExact: string | null;
   readonly similarNotes: readonly IngestSimilarNote[];
   readonly suggestedLinks: readonly IngestSimilarNote[];
-  readonly status: "drafted" | "approved" | "applied" | "rejected";
   readonly createdAt: number;
 };
 
@@ -109,12 +118,15 @@ export type IngestQueueUpdate = Partial<
   Pick<IngestQueueItem, "title" | "tags" | "markdown" | "targetFolder" | "appendTargetPath">
 >;
 
+export type StubDraftReview = {
+  readonly content: string;
+  readonly status: "done" | "drafting" | "error";
+};
+
 export type ReviewDecisionRecord = {
   readonly id: string;
   readonly sourceId: string;
   readonly kind: ReviewItemKind;
   readonly status: ReviewItemStatus;
   readonly decidedAt: string;
-  readonly appliedPaths: readonly string[];
-  readonly auditEditIds: readonly string[];
 };

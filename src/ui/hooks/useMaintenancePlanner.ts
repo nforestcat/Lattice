@@ -1,34 +1,70 @@
-import { useState, useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { vaultApi } from "../../api";
 import { sendChatMessage } from "../../api/llm";
-import { buildMaintenancePrompt } from "../../core/maintenancePrompts";
-import { addManagedLink } from "../../core/markdown";
 import type {
   AiProvenance,
   LlmConfig,
   ReviewQueueItem,
+  SaveResult,
+  SourceMutationResult,
+  SourceMutationWarning,
 } from "../../api/types";
+import { buildMaintenancePrompt } from "../../core/maintenancePrompts";
+import { addManagedLink } from "../../core/markdown";
 
 export interface MaintenanceSuggestionEntry {
-  proposed: string;
-  provenance: AiProvenance;
-  generatedAt: string;
+  readonly proposed: string;
+  readonly provenance: AiProvenance;
+  readonly generatedAt: string;
 }
 
 export interface UseMaintenancePlannerResult {
-  generating: Set<string>;
-  errors: Record<string, string>;
-  suggestions: Record<string, string>;
-  provenances: Record<string, AiProvenance>;
-  generate: (item: ReviewQueueItem, llmConfig: LlmConfig) => Promise<void>;
-  apply: (item: ReviewQueueItem) => Promise<string[]>;
-  hydrate: (rawSuggestions: Record<string, MaintenanceSuggestionEntry>) => void;
-  clearSuggestion: (itemId: string) => void;
+  readonly generating: Set<string>;
+  readonly errors: Record<string, string>;
+  readonly suggestions: Record<string, string>;
+  readonly provenances: Record<string, AiProvenance>;
+  readonly generate: (item: ReviewQueueItem, llmConfig: LlmConfig) => Promise<void>;
+  readonly apply: (item: ReviewQueueItem) => Promise<SourceMutationResult>;
+  readonly hydrate: (raw: Record<string, MaintenanceSuggestionEntry>) => void;
+  readonly clearSuggestion: (itemId: string) => void;
+}
+
+export class MaintenanceApplyError extends Error {
+  readonly code: "missing_suggestion" | "unsupported" | "zero_changes";
+  readonly warnings: readonly SourceMutationWarning[];
+
+  constructor(code: MaintenanceApplyError["code"], message: string, warnings: readonly SourceMutationWarning[] = []) {
+    super(message);
+    this.name = "MaintenanceApplyError";
+    this.code = code;
+    this.warnings = warnings;
+  }
+}
+
+class MaintenanceSaveError extends Error {
+  readonly name = "MaintenanceSaveError";
+
+  constructor(readonly path: string, readonly saveResult: SaveResult) {
+    super(`Save did not complete for ${path}: conflict=${saveResult.conflict}, snapshot=${saveResult.snapshotId ?? "none"}`);
+  }
 }
 
 async function readNoteExcerpt(path: string): Promise<string> {
-  const doc = await vaultApi.readNote(path);
-  return doc.content.slice(0, 1500);
+  const document = await vaultApi.readNote(path);
+  return document.content.slice(0, 1500);
+}
+
+function warning(code: SourceMutationWarning["code"], path: string, error: unknown): SourceMutationWarning {
+  return {
+    code,
+    message: error instanceof Error ? error.message : String(error),
+    path,
+  };
+}
+
+function durableSaveResult(path: string, result: SaveResult): void {
+  if (result.saved) return;
+  throw new MaintenanceSaveError(path, result);
 }
 
 export function useMaintenancePlanner(): UseMaintenancePlannerResult {
@@ -40,26 +76,26 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
 
   const hydrate = useCallback(
     (rawSuggestions: Record<string, MaintenanceSuggestionEntry>) => {
-      const newSuggestions: Record<string, string> = {};
-      const newProvenances: Record<string, AiProvenance> = {};
+      const nextSuggestions: Record<string, string> = {};
+      const nextProvenances: Record<string, AiProvenance> = {};
       for (const [key, entry] of Object.entries(rawSuggestions)) {
-        newSuggestions[key] = entry.proposed;
-        newProvenances[key] = entry.provenance;
+        nextSuggestions[key] = entry.proposed;
+        nextProvenances[key] = entry.provenance;
       }
-      setSuggestions(newSuggestions);
-      setProvenances(newProvenances);
+      setSuggestions(nextSuggestions);
+      setProvenances(nextProvenances);
     },
-    []
+    [],
   );
 
   const clearSuggestion = useCallback((itemId: string) => {
-    setSuggestions((prev) => {
-      const next = { ...prev };
+    setSuggestions((previous) => {
+      const next = { ...previous };
       delete next[itemId];
       return next;
     });
-    setProvenances((prev) => {
-      const next = { ...prev };
+    setProvenances((previous) => {
+      const next = { ...previous };
       delete next[itemId];
       return next;
     });
@@ -67,100 +103,100 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
 
   const generate = useCallback(
     async (item: ReviewQueueItem, llmConfig: LlmConfig) => {
-      if (!item.suggestionKind) return;
-      if (generatingRef.current.has(item.id)) return;
-
+      if (!item.suggestionKind || generatingRef.current.has(item.id)) return;
       generatingRef.current.add(item.id);
-      setGenerating((prev) => new Set(prev).add(item.id));
-      setErrors((prev) => {
-        const next = { ...prev };
+      setGenerating((previous) => new Set(previous).add(item.id));
+      setErrors((previous) => {
+        const next = { ...previous };
         delete next[item.id];
         return next;
       });
 
       try {
         let candidates: string[] = [];
-        if (
-          item.suggestionKind === "link_candidates" ||
-          item.suggestionKind === "backlinks_in"
-        ) {
+        if (item.suggestionKind === "link_candidates" || item.suggestionKind === "backlinks_in") {
           try {
             const raw = await vaultApi.getContextBundleCandidates(item.path);
-            candidates = raw.slice(0, 10).map((c) => c.title);
-          } catch {
-            // non-fatal — proceed without candidates
+            candidates = raw.slice(0, 10).map((candidate) => candidate.title);
+          } catch (error) {
+            console.warn(
+              "Maintenance candidates unavailable",
+              error instanceof Error ? error.message : String(error),
+            );
           }
         }
-
-        const noteExcerpt = await readNoteExcerpt(item.path);
-
         const prompt = buildMaintenancePrompt(
           item.suggestionKind,
           item.path,
-          noteExcerpt,
-          candidates
+          await readNoteExcerpt(item.path),
+          candidates,
         );
-
-        const result = await sendChatMessage(llmConfig, [
-          { role: "user", content: prompt },
-        ]);
-
+        const proposed = await sendChatMessage(llmConfig, [{ role: "user", content: prompt }]);
         const provenance: AiProvenance = {
           source: "maintenance_planner",
           model: llmConfig.model,
           appliedAt: new Date().toISOString(),
         };
+        setSuggestions((previous) => ({ ...previous, [item.id]: proposed }));
+        setProvenances((previous) => ({ ...previous, [item.id]: provenance }));
 
-        setSuggestions((prev) => ({ ...prev, [item.id]: result }));
-        setProvenances((prev) => ({ ...prev, [item.id]: provenance }));
-
-        // Persist to vault config under both item.id and path::suggestionKind
         try {
           const config = await vaultApi.getVaultConfig();
-          const existing = config.maintenanceSuggestions ?? {};
           const entry: MaintenanceSuggestionEntry = {
-            proposed: result,
+            proposed,
             provenance,
             generatedAt: provenance.appliedAt ?? new Date().toISOString(),
           };
-          const persistKey = `${item.path}::${item.suggestionKind}`;
           await vaultApi.saveVaultConfig({
             ...config,
             maintenanceSuggestions: {
-              ...existing,
+              ...config.maintenanceSuggestions,
               [item.id]: entry,
-              [persistKey]: entry,
+              [`${item.path}::${item.suggestionKind}`]: entry,
             },
           });
-        } catch {
-          // persistence failure is non-fatal
+        } catch (error) {
+          console.warn("Maintenance suggestion persistence failed", error instanceof Error ? error.message : String(error));
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setErrors((prev) => ({ ...prev, [item.id]: msg }));
+      } catch (error) {
+        setErrors((previous) => ({
+          ...previous,
+          [item.id]: error instanceof Error ? error.message : String(error),
+        }));
       } finally {
         generatingRef.current.delete(item.id);
-        setGenerating((prev) => {
-          const next = new Set(prev);
+        setGenerating((previous) => {
+          const next = new Set(previous);
           next.delete(item.id);
           return next;
         });
       }
     },
-    []
+    [],
   );
 
   const apply = useCallback(
-    async (item: ReviewQueueItem): Promise<string[]> => {
+    async (item: ReviewQueueItem): Promise<SourceMutationResult> => {
       const proposed = suggestions[item.id];
       if (!proposed) {
-        throw new Error("No suggestion generated yet for this item");
+        throw new MaintenanceApplyError(
+          "missing_suggestion",
+          "No suggestion generated yet for this item",
+        );
       }
-
+      if (
+        !item.suggestionKind ||
+        item.suggestionKind === "split" ||
+        item.suggestionKind === "merge_or_delete"
+      ) {
+        throw new MaintenanceApplyError(
+          "unsupported",
+          `apply() is not supported for suggestionKind: ${item.suggestionKind}`,
+        );
+      }
       const provenance = provenances[item.id];
       const appliedAt = new Date().toISOString();
-
-      const auditPath = async (path: string) => {
+      const auditPath = async (path: string): Promise<SourceMutationWarning | null> => {
         try {
           await vaultApi.appendAiAudit({
             editId: item.id,
@@ -170,57 +206,63 @@ export function useMaintenancePlanner(): UseMaintenancePlannerResult {
             model: provenance?.model,
             appliedAt,
           });
-        } catch {
-          // audit failure is non-fatal
+          return null;
+        } catch (error) {
+          return warning("post_action_failed", path, error instanceof Error ? error : new Error(String(error)));
         }
       };
 
       if (item.suggestionKind === "summary" || item.kind === "missing_summary") {
         await vaultApi.applyNoteMetadata(item.path, { summary: proposed }, []);
-        await auditPath(item.path);
-        return [item.path];
+        const auditWarning = await auditPath(item.path);
+        return {
+          changedPaths: [item.path],
+          warnings: auditWarning ? [auditWarning] : [],
+        };
       }
 
       if (item.suggestionKind === "link_candidates" || item.suggestionKind === "backlinks_in") {
         const candidates = await vaultApi.getContextBundleCandidates(item.path);
-        const succeeded: string[] = [];
-        const failed: string[] = [];
+        const changedPaths: string[] = [];
+        const warnings: SourceMutationWarning[] = [];
         const target = item.path.replace(/\.md$/i, "");
         for (const candidate of candidates) {
           try {
-            const doc = await vaultApi.readNote(candidate.path);
-            const updatedContent = addManagedLink(doc.content, target);
-            await vaultApi.saveNote(candidate.path, updatedContent, doc.revision);
-            await auditPath(candidate.path);
-            succeeded.push(candidate.path);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            setErrors((prev) => ({ ...prev, [item.id]: msg }));
-            failed.push(candidate.path);
+            const document = await vaultApi.readNote(candidate.path);
+            durableSaveResult(candidate.path, await vaultApi.saveNote(
+              candidate.path,
+              addManagedLink(document.content, target),
+              document.revision,
+            ));
+            changedPaths.push(candidate.path);
+            const auditWarning = await auditPath(candidate.path);
+            if (auditWarning) warnings.push(auditWarning);
+          } catch (error) {
+            warnings.push(warning("partial_failure", candidate.path, error instanceof Error ? error : new Error(String(error))));
           }
         }
-        return succeeded;
+        if (changedPaths.length === 0) {
+          throw new MaintenanceApplyError("zero_changes", "No maintenance target was updated", warnings);
+        }
+        return { changedPaths, warnings };
       }
 
       if (item.suggestionKind === "review_prompt") {
         await vaultApi.applyNoteMetadata(item.path, { reviewRequestedAt: appliedAt }, []);
-        await auditPath(item.path);
-        return [item.path];
+        const auditWarning = await auditPath(item.path);
+        return {
+          changedPaths: [item.path],
+          warnings: auditWarning ? [auditWarning] : [],
+        };
       }
 
-      throw new Error(`apply() is not supported for suggestionKind: ${item.suggestionKind}`);
+      throw new MaintenanceApplyError(
+        "unsupported",
+        `apply() is not supported for suggestionKind: ${item.suggestionKind}`,
+      );
     },
-    [suggestions, provenances]
+    [provenances, suggestions],
   );
 
-  return {
-    generating,
-    errors,
-    suggestions,
-    provenances,
-    generate,
-    apply,
-    hydrate,
-    clearSuggestion,
-  };
+  return { generating, errors, suggestions, provenances, generate, apply, hydrate, clearSuggestion };
 }

@@ -84,7 +84,7 @@ export function IngestQueueReviewControls({
 
   const ingest = item.sourceRef;
   const appendEnabled = ingest.appendTargetPath !== null;
-  const canEdit = ingest.status === "drafted" || ingest.status === "approved";
+  const canEdit = item.status === "drafted" || item.status === "approved";
 
   function update(patch: IngestQueueUpdate) {
     onUpdate?.(ingest.id, patch);

@@ -29,10 +29,13 @@ export type {
   IngestResult,
   IngestSimilarNote,
   MaintenanceSuggestionKind,
-  ReviewDecisionRecord,
   ReviewItemKind,
   ReviewItemStatus,
   ReviewQueueItem,
+  SourceMutationResult,
+  ReviewDecisionRecord,
+  SourceMutationWarning,
+  StubDraftReview,
 } from "./ingestReviewTypes";
 
 export type VaultSnapshot = {
@@ -253,11 +256,5 @@ export type ProposedEdit = {
   applied: boolean;
   checked?: boolean;
   provenance?: AiProvenance;
-};
-
-export type StubDraftReview = {
-  content: string;
-  status: "done" | "drafting" | "error";
-  approved: boolean;
 };
 

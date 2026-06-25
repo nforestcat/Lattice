@@ -56,3 +56,60 @@ describe("useGit stash pull flow", () => {
     });
   });
 });
+
+describe("useGit commit flow", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reports the commit output after commit and refresh both succeed", async () => {
+    // Given: Git commit and both refresh stages succeed.
+    const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit").mockResolvedValue("Committed abc123");
+    vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue(gitStatus());
+    const getChangesSpy = vi.spyOn(vaultApi, "getGitChanges")
+      .mockResolvedValueOnce([{ path: "notes/test.md", staged: true, status: "modified" }])
+      .mockResolvedValue([]);
+    vi.spyOn(vaultApi, "gitMergeHeadExists").mockResolvedValue(false);
+    const hookCallbacks = callbacks();
+    const { result } = renderHook(() => useGit(hookCallbacks));
+
+    // When: a non-empty commit message is submitted.
+    let paths: string[] = [];
+    await act(async () => {
+      paths = await result.current.handleGitCommit("Freeze review contracts");
+    });
+
+    // Then: the exact message is committed, staged paths returned, success remains observable.
+    expect(gitCommitSpy).toHaveBeenCalledWith("Freeze review contracts");
+    expect(hookCallbacks.refreshVault).toHaveBeenCalledWith("Home.md");
+    expect(result.current.gitOutputLog).toBe("Committed abc123");
+    expect(result.current.isGitLoading).toBe(false);
+    expect(paths).toEqual(["notes/test.md"]);
+  });
+
+  it("returns staged paths even when post-commit vault refresh fails", async () => {
+    // Given: Git commit succeeds, but vault refresh fails afterward.
+    const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit").mockResolvedValue("Committed abc123");
+    vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue(gitStatus());
+    vi.spyOn(vaultApi, "getGitChanges")
+      .mockResolvedValueOnce([{ path: "notes/test.md", staged: true, status: "modified" }])
+      .mockResolvedValue([]);
+    vi.spyOn(vaultApi, "gitMergeHeadExists").mockResolvedValue(false);
+    const hookCallbacks = callbacks();
+    vi.mocked(hookCallbacks.refreshVault).mockRejectedValue(new Error("vault refresh failed"));
+    const { result } = renderHook(() => useGit(hookCallbacks));
+
+    // When: the commit completes before the vault refresh rejects.
+    let paths: string[] = [];
+    await act(async () => {
+      paths = await result.current.handleGitCommit("Freeze review contracts");
+    });
+
+    // Then: commit succeeded — paths returned, refresh failure is a warning not a failure.
+    expect(gitCommitSpy).toHaveBeenCalledWith("Freeze review contracts");
+    expect(paths).toEqual(["notes/test.md"]);
+    expect(result.current.gitOutputLog).toContain("Committed abc123");
+    expect(result.current.gitOutputLog).toContain("Post-commit refresh");
+    expect(result.current.isGitLoading).toBe(false);
+  });
+});
