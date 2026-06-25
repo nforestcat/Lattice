@@ -1,4 +1,5 @@
 import { parseMarkdownNote } from "./markdown";
+import { normalizeRef } from "./normalizeRef";
 import type { GraphData, GraphEdge, GraphNode, NoteContext, NoteLink, ParsedNote, SearchFilters, SearchResult, VaultFile, VaultIndex } from "./types";
 
 export function buildVaultIndex(files: VaultFile[]): VaultIndex {
@@ -148,10 +149,6 @@ function buildGraph(notes: ParsedNote[]): GraphData {
     nodes,
     edges
   };
-}
-
-function normalizeRef(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
 }
 
 function makeSnippet(content: string, query: string): string {

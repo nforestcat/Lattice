@@ -12,6 +12,7 @@ import type {
 } from "../src/api/types";
 import { useLinkSuggestions } from "../src/ui/hooks/useLinkSuggestions";
 import { useStubDrafting } from "../src/ui/hooks/useStubDrafting";
+import type { UnresolvedLinksState } from "../src/ui/hooks/useUnresolvedLinks";
 
 vi.mock("../src/api/llm", () => ({ sendChatMessage: vi.fn() }));
 
@@ -43,8 +44,22 @@ const SOURCES: readonly UnresolvedLinkSource[] = [{
   excerpt: "Context for the missing concept.",
 }];
 
+function mockUnresolved(overrides?: Partial<UnresolvedLinksState>): UnresolvedLinksState {
+  return {
+    unresolvedLinks: [{ target: "Concept", sources: [...SOURCES] }],
+    setUnresolvedLinks: vi.fn(),
+    isScanningUnresolved: false,
+    setIsScanningUnresolved: vi.fn(),
+    selectedUnresolvedTargets: new Set<string>(),
+    setSelectedUnresolvedTargets: vi.fn(),
+    activeUnresolvedTarget: "concept",
+    setActiveUnresolvedTarget: vi.fn(),
+    ...overrides,
+  };
+}
+
 function renderDrafting(refreshVault = vi.fn().mockResolvedValue(undefined)) {
-  const setUnresolvedLinks = vi.fn();
+  const unresolved = mockUnresolved();
   const hook = renderHook(() => useStubDrafting({
     llmConfig: {
       provider: "custom",
@@ -56,13 +71,9 @@ function renderDrafting(refreshVault = vi.fn().mockResolvedValue(undefined)) {
     activePath: "Notes/Source.md",
     setStatus: vi.fn(),
     refreshVault,
-    unresolvedLinks: [{ target: "Concept", sources: [...SOURCES] }],
-    setUnresolvedLinks,
-    setIsScanningUnresolved: vi.fn(),
-    activeUnresolvedTarget: "concept",
-    setActiveUnresolvedTarget: vi.fn(),
+    unresolved,
   }));
-  return { ...hook, refreshVault, setUnresolvedLinks };
+  return { ...hook, refreshVault, unresolved };
 }
 
 afterEach(() => {
@@ -75,7 +86,7 @@ describe("useStubDrafting", () => {
     // Given
     vi.mocked(sendChatMessage).mockResolvedValue("Generated concept body.");
     const createNote = vi.spyOn(vaultApi, "createNote");
-    const { result } = renderDrafting();
+    const { result, unresolved } = renderDrafting();
 
     // When
     await act(async () => {
@@ -87,7 +98,7 @@ describe("useStubDrafting", () => {
       content: "Generated concept body.",
       status: "done",
     });
-    expect(result.current.selectedUnresolvedTargets.has("Concept")).toBe(true);
+    expect(unresolved.setSelectedUnresolvedTargets).toHaveBeenCalled();
     expect(createNote).not.toHaveBeenCalled();
   });
 
@@ -111,9 +122,6 @@ describe("useStubDrafting", () => {
     await act(async () => {
       await result.current.draftStubNote("Concept", [...SOURCES]);
       await result.current.draftStubNote("Other", [...SOURCES]);
-    });
-    act(() => {
-      result.current.setSelectedUnresolvedTargets(new Set());
     });
 
     // When

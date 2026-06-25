@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { vaultApi } from "../src/api";
 import type { GitStatus, NoteDocument, UnresolvedLinkGroup, UnresolvedLinkSource } from "../src/api/types";
 import { useGit, type UseGitCallbacks } from "../src/ui/hooks/useGit";
+import type { UnresolvedLinksState } from "../src/ui/hooks/useUnresolvedLinks";
 
 function gitStatus(): GitStatus {
   return {
@@ -14,6 +15,19 @@ function gitStatus(): GitStatus {
   };
 }
 
+function mockUnresolved(): UnresolvedLinksState {
+  return {
+    unresolvedLinks: [],
+    setUnresolvedLinks: vi.fn(),
+    isScanningUnresolved: false,
+    setIsScanningUnresolved: vi.fn(),
+    selectedUnresolvedTargets: new Set<string>(),
+    setSelectedUnresolvedTargets: vi.fn(),
+    activeUnresolvedTarget: null,
+    setActiveUnresolvedTarget: vi.fn(),
+  };
+}
+
 function callbacks(): UseGitCallbacks {
   return {
     refreshVault: vi.fn().mockResolvedValue(undefined),
@@ -22,11 +36,10 @@ function callbacks(): UseGitCallbacks {
     setDraft: vi.fn<(draft: string) => void>(),
     setViewMode: vi.fn(),
     setDistillTab: vi.fn(),
-    setActiveUnresolvedTarget: vi.fn(),
-    setSelectedUnresolvedTargets: vi.fn<(targets: Set<string>) => void>(),
     activePath: "Home.md",
     runUnresolvedLinksScan: vi.fn<() => Promise<UnresolvedLinkGroup[]>>().mockResolvedValue([]),
     draftStubNote: vi.fn<(target: string, sources: UnresolvedLinkSource[]) => Promise<void>>().mockResolvedValue(undefined),
+    unresolved: mockUnresolved(),
   };
 }
 

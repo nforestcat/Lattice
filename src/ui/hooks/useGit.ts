@@ -1,6 +1,8 @@
 import { useState, useRef } from "react";
 import { vaultApi } from "../../api";
 import type { GitStatus, GitFileChange, NoteDocument, UnresolvedLinkGroup, UnresolvedLinkSource } from "../../api/types";
+import { normalizeRef } from "../../core/normalizeRef";
+import type { UnresolvedLinksState } from "./useUnresolvedLinks";
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 type DistillTab = "paste" | "chat" | "auditor" | "git";
@@ -12,15 +14,10 @@ export interface UseGitCallbacks {
   setDraft: (draft: string) => void;
   setViewMode: (mode: ViewMode) => void;
   setDistillTab: (tab: DistillTab) => void;
-  setActiveUnresolvedTarget: (target: string | null) => void;
-  setSelectedUnresolvedTargets: (targets: Set<string>) => void;
   activePath: string | null;
   runUnresolvedLinksScan: () => Promise<UnresolvedLinkGroup[]>;
   draftStubNote: (target: string, sources: UnresolvedLinkSource[]) => Promise<void>;
-}
-
-function normalizeRef(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
+  unresolved: UnresolvedLinksState;
 }
 
 function errorMessage(error: unknown): string {
@@ -35,12 +32,16 @@ export function useGit(callbacks: UseGitCallbacks) {
     setDraft,
     setViewMode,
     setDistillTab,
-    setActiveUnresolvedTarget,
-    setSelectedUnresolvedTargets,
     activePath,
     runUnresolvedLinksScan,
     draftStubNote,
+    unresolved,
   } = callbacks;
+  const {
+    unresolvedLinks,
+    setActiveUnresolvedTarget,
+    setSelectedUnresolvedTargets,
+  } = unresolved;
 
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [gitChanges, setGitChanges] = useState<GitFileChange[]>([]);
@@ -51,8 +52,6 @@ export function useGit(callbacks: UseGitCallbacks) {
   const [isGitLoading, setIsGitLoading] = useState<boolean>(false);
   const [gitOutputLog, setGitOutputLog] = useState<string | null>(null);
   const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
-  const [unresolvedLinks, setUnresolvedLinks] = useState<UnresolvedLinkGroup[]>([]);
-  const [isScanningUnresolved, setIsScanningUnresolved] = useState(false);
   const [pendingPullWarning, setPendingPullWarning] = useState<{ dirtyFiles: GitFileChange[] } | null>(null);
   const [stashRetainedRef, setStashRetainedRef] = useState<string | null>(null);
   const [mergeHeadExists, setMergeHeadExists] = useState<boolean>(false);
@@ -379,8 +378,6 @@ export function useGit(callbacks: UseGitCallbacks) {
     isGitLoading,
     gitOutputLog, setGitOutputLog,
     auditorSubTab, setAuditorSubTab,
-    unresolvedLinks, setUnresolvedLinks,
-    isScanningUnresolved, setIsScanningUnresolved,
     refreshGitWorkspace,
     handleGitStageFile,
     handleGitUnstageFile,
