@@ -58,6 +58,7 @@ export function useGit(callbacks: UseGitCallbacks) {
   const [mergeHeadExists, setMergeHeadExists] = useState<boolean>(false);
   const [forceFreshConflictResolver, setForceFreshConflictResolver] = useState<boolean>(false);
   const gitRequestCounter = useRef(0);
+  const commitInFlightRef = useRef<{ message: string; promise: Promise<string[]> } | null>(null);
 
   async function refreshGitWorkspace(intendedSelection?: { path: string; staged: boolean }) {
     const requestId = ++gitRequestCounter.current;
@@ -160,10 +161,20 @@ export function useGit(callbacks: UseGitCallbacks) {
 
   // ponytail: returns normalized staged paths on success, empty on failure
   async function handleGitCommit(message: string): Promise<string[]> {
-    if (!message.trim()) {
+    const trimmed = message.trim();
+    if (!trimmed) {
       setGitOutputLog("Error: Commit message cannot be empty.");
       return [];
     }
+    // ponytail: concurrency guard before any async work or state mutation
+    if (commitInFlightRef.current !== null) {
+      if (commitInFlightRef.current.message === trimmed) {
+        return commitInFlightRef.current.promise;
+      }
+      setGitOutputLog("Commit already in progress.");
+      return [];
+    }
+    const promise = (async () => {
     setIsGitLoading(true);
     try {
       const changes = await vaultApi.getGitChanges();
@@ -175,7 +186,7 @@ export function useGit(callbacks: UseGitCallbacks) {
         setIsGitLoading(false);
         return [];
       }
-      const output = await vaultApi.gitCommit(message);
+      const output = await vaultApi.gitCommit(trimmed);
       setGitOutputLog(output);
       setCommitMessage("");
       setSelectedGitFile(null);
@@ -193,6 +204,13 @@ export function useGit(callbacks: UseGitCallbacks) {
       return [];
     } finally {
       setIsGitLoading(false);
+    }
+    })();
+    commitInFlightRef.current = { message: trimmed, promise };
+    try {
+      return await promise;
+    } finally {
+      commitInFlightRef.current = null;
     }
   }
 
