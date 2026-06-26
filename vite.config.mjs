@@ -37,6 +37,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    exclude: ["**/.claude/**", "**/node_modules/**", "**/dist/**"]
+    exclude: ["**/.claude/**", "**/node_modules/**", "**/dist/**"],
+    // ponytail: cap forks so jsdom workers don't OOM under full-suite pressure
+    pool: "forks",
+    poolOptions: { forks: { maxForks: 4 } }
   }
 });
