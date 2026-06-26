@@ -100,6 +100,80 @@ describe("useGit commit flow", () => {
     expect(paths).toEqual(["notes/test.md"]);
   });
 
+  it("shares one promise when the same commit message fires twice concurrently", async () => {
+    let resolveCommit: (value: string) => void;
+    const commitPromise = new Promise<string>((r) => { resolveCommit = r; });
+    const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit").mockReturnValue(commitPromise);
+    vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue(gitStatus());
+    vi.spyOn(vaultApi, "getGitChanges")
+      .mockResolvedValue([{ path: "notes/a.md", staged: true, status: "modified" }]);
+    vi.spyOn(vaultApi, "gitMergeHeadExists").mockResolvedValue(false);
+    const { result } = renderHook(() => useGit(callbacks()));
+
+    let paths1: string[] = [];
+    let paths2: string[] = [];
+    await act(async () => {
+      const p1 = result.current.handleGitCommit("same msg");
+      const p2 = result.current.handleGitCommit("same msg");
+      resolveCommit!("Committed ok");
+      paths1 = await p1;
+      paths2 = await p2;
+    });
+
+    expect(gitCommitSpy).toHaveBeenCalledTimes(1);
+    expect(paths1).toEqual(["notes/a.md"]);
+    expect(paths2).toEqual(["notes/a.md"]);
+  });
+
+  it("returns empty paths when a different commit message fires during in-flight commit", async () => {
+    let resolveCommit: (value: string) => void;
+    const commitPromise = new Promise<string>((r) => { resolveCommit = r; });
+    const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit").mockReturnValue(commitPromise);
+    vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue(gitStatus());
+    vi.spyOn(vaultApi, "getGitChanges")
+      .mockResolvedValue([{ path: "notes/a.md", staged: true, status: "modified" }]);
+    vi.spyOn(vaultApi, "gitMergeHeadExists").mockResolvedValue(false);
+    const { result } = renderHook(() => useGit(callbacks()));
+
+    let paths1: string[] = [];
+    let paths2: string[] = [];
+    await act(async () => {
+      const p1 = result.current.handleGitCommit("first msg");
+      const p2 = result.current.handleGitCommit("different msg");
+      resolveCommit!("Committed ok");
+      paths1 = await p1;
+      paths2 = await p2;
+    });
+
+    expect(gitCommitSpy).toHaveBeenCalledTimes(1);
+    expect(paths1).toEqual(["notes/a.md"]);
+    expect(paths2).toEqual([]);
+  });
+
+  it("allows sequential commits after the first completes", async () => {
+    const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit")
+      .mockResolvedValueOnce("Committed 1")
+      .mockResolvedValueOnce("Committed 2");
+    vi.spyOn(vaultApi, "getGitStatus").mockResolvedValue(gitStatus());
+    vi.spyOn(vaultApi, "getGitChanges")
+      .mockResolvedValue([{ path: "notes/a.md", staged: true, status: "modified" }]);
+    vi.spyOn(vaultApi, "gitMergeHeadExists").mockResolvedValue(false);
+    const { result } = renderHook(() => useGit(callbacks()));
+
+    let paths1: string[] = [];
+    let paths2: string[] = [];
+    await act(async () => {
+      paths1 = await result.current.handleGitCommit("first");
+    });
+    await act(async () => {
+      paths2 = await result.current.handleGitCommit("second");
+    });
+
+    expect(gitCommitSpy).toHaveBeenCalledTimes(2);
+    expect(paths1).toEqual(["notes/a.md"]);
+    expect(paths2).toEqual(["notes/a.md"]);
+  });
+
   it("returns staged paths even when post-commit vault refresh fails", async () => {
     // Given: Git commit succeeds, but vault refresh fails afterward.
     const gitCommitSpy = vi.spyOn(vaultApi, "gitCommit").mockResolvedValue("Committed abc123");
