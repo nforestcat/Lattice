@@ -35,8 +35,16 @@ export default defineConfig({
     }
   },
   test: {
-    environment: "jsdom",
+    environment: "happy-dom",
     globals: true,
-    exclude: ["**/.claude/**", "**/node_modules/**", "**/dist/**"]
+    pool: "threads",
+    poolOptions: {
+      threads: {
+        minThreads: 1,
+        maxThreads: 4
+      }
+    },
+    include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
+    exclude: ["**/node_modules/**", "**/dist/**"]
   }
 });
