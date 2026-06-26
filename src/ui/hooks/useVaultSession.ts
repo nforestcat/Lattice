@@ -1,7 +1,10 @@
 import { vaultApi } from "../../api";
 import { isDesktopRuntime, pickVaultFolder } from "../../api/dialog";
-import type { ContextBundleCandidate, LlmConfig, NoteDocument, VaultConfig, VaultSnapshot } from "../../api/types";
-import type { GraphData, NoteMeta } from "../../core/types";
+import type { ContextBundle, ContextBundleCandidate, LlmConfig, NoteDocument, Snapshot, VaultConfig, VaultSnapshot } from "../../api/types";
+import type { GitFileChange, GitStatus } from "../../api/gitTypes";
+import type { VectorCache } from "../../api/embeddings";
+import type { MetadataSuggestions } from "./useLlm";
+import type { GraphData, NoteContext, NoteMeta } from "../../core/types";
 import {
   PRESETS as SHARED_PRESETS,
   DEFAULT_LLM_CONFIG,
@@ -37,12 +40,12 @@ export interface UseVaultSessionParams {
   setVaultConfig: (c: VaultConfig) => void;
   vaultConfigRef: React.MutableRefObject<VaultConfig>;
   updateVaultConfig: (updates: Partial<VaultConfig>) => Promise<void>;
-  setContext: (c: any) => void;
-  setSnapshots: (s: any[]) => void;
+  setContext: (c: NoteContext | null) => void;
+  setSnapshots: (s: Snapshot[]) => void;
   runHealthAudit: () => void;
 
   // useContextBundle
-  setContextBundle: (b: any) => void;
+  setContextBundle: (b: ContextBundle | null) => void;
   setContextCandidates: (c: ContextBundleCandidate[]) => void;
   setSelectedContextPaths: (p: Set<string>) => void;
   setBundlePreset: (p: PresetType) => void;
@@ -54,17 +57,17 @@ export interface UseVaultSessionParams {
   // useLlm
   llmConfig: LlmConfig;
   setLlmConfig: (c: LlmConfig) => void;
-  setMetadataSuggestions: (s: any) => void;
+  setMetadataSuggestions: (s: MetadataSuggestions | null) => void;
 
   // useEmbeddings
-  setEmbeddingsCache: (value: any) => void;
+  setEmbeddingsCache: (value: VectorCache | ((prev: VectorCache) => VectorCache)) => void;
 
   // useSearch
   setResults: (notes: NoteMeta[]) => void;
 
   // useGit
-  setGitStatus: (s: any) => void;
-  setGitChanges: (c: any[]) => void;
+  setGitStatus: (s: GitStatus | null) => void;
+  setGitChanges: (c: GitFileChange[]) => void;
   setSelectedGitFile: (f: string | null) => void;
   setActiveDiff: (d: string | null) => void;
   setCommitMessage: (m: string) => void;
