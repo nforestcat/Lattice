@@ -451,11 +451,12 @@ pub(crate) fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>
     let mut edits = Vec::new();
     let mut start_idx = 0;
 
-    let tag_re = Regex::new(r"(?i)<propose_edit\s+([^>]+)>").unwrap();
+    let tag_re = Regex::new(r"(?i)<propose_edit\s+([^>]+)>")
+        .expect("infallible: hardcoded regex literal");
     let close_tag = "</propose_edit>";
 
     while let Some(cap) = tag_re.captures(&raw_text[start_idx..]) {
-        let matched = cap.get(0).unwrap();
+        let Some(matched) = cap.get(0) else { break };
         let tag_end = start_idx + matched.end();
 
         let slice_after_tag = &raw_text[tag_end..];
@@ -467,7 +468,8 @@ pub(crate) fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>
         let inner_content = &raw_text[tag_end..closing_tag_start];
         start_idx = closing_tag_start + close_tag.len();
 
-        let attrs_str = cap.get(1).unwrap().as_str();
+        let Some(attrs_match) = cap.get(1) else { break };
+        let attrs_str = attrs_match.as_str();
         let edit_type_val = get_attribute_value(attrs_str, "type");
         let path = get_attribute_value(attrs_str, "path").unwrap_or_default();
         let new_path = get_attribute_value(attrs_str, "new_path")
@@ -477,7 +479,7 @@ pub(crate) fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>
             continue;
         }
 
-        let edit_type = edit_type_val.unwrap().to_lowercase();
+        let edit_type = edit_type_val.expect("checked is_none above").to_lowercase();
         if edit_type != "create" && edit_type != "update" && edit_type != "merge" && edit_type != "delete" {
             continue;
         }

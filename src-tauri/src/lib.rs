@@ -35,7 +35,7 @@ fn save_api_key_in_keyring(provider: &str, key: &str) -> Result<(), String> {
     let key_trimmed = key.trim();
     
     if key_trimmed.is_empty() {
-        let mut guard = FALLBACK_KEYS.lock().unwrap();
+        let mut guard = FALLBACK_KEYS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(map) = guard.as_mut() {
             map.remove(provider);
         }
@@ -47,14 +47,14 @@ fn save_api_key_in_keyring(provider: &str, key: &str) -> Result<(), String> {
                 let _ = entry.delete_password();
             } else {
                 if entry.set_password(key_trimmed).is_err() {
-                    let mut guard = FALLBACK_KEYS.lock().unwrap();
+                    let mut guard = FALLBACK_KEYS.lock().unwrap_or_else(|e| e.into_inner());
                     let map = guard.get_or_insert_with(HashMap::new);
                     map.insert(provider.to_string(), key_trimmed.to_string());
                 }
             }
         }
         Err(_) => {
-            let mut guard = FALLBACK_KEYS.lock().unwrap();
+            let mut guard = FALLBACK_KEYS.lock().unwrap_or_else(|e| e.into_inner());
             let map = guard.get_or_insert_with(HashMap::new);
             if key_trimmed.is_empty() {
                 map.remove(provider);
@@ -72,7 +72,7 @@ fn get_api_key_from_keyring(provider: &str) -> Option<String> {
             return Some(pass);
         }
     }
-    let guard = FALLBACK_KEYS.lock().unwrap();
+    let guard = FALLBACK_KEYS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_ref() {
         return map.get(provider).cloned();
     }
@@ -106,7 +106,7 @@ fn get_api_key_from_keyring(provider: &str) -> Option<String> {
 
 
 fn migrate_config(mut config: VaultConfig) -> VaultConfig {
-    if config.version.is_none() || config.version.unwrap() < 1 {
+    if config.version.map_or(true, |v| v < 1) {
         config.version = Some(1);
     }
     if config.context_limit.is_none() {
@@ -270,7 +270,7 @@ fn make_title_regex(title: &str) -> Result<Regex, String> {
 }
 
 fn clean_wiki_links(text: &str) -> String {
-    let link_re = Regex::new(r"\[\[.*?\]\]").unwrap();
+    let link_re = Regex::new(r"\[\[.*?\]\]").expect("infallible literal");
     link_re.replace_all(text, |caps: &regex::Captures| {
         let len = caps[0].len();
         " ".repeat(len)
@@ -331,21 +331,21 @@ fn get_attribute_value(attrs_str: &str, name: &str) -> Option<String> {
     let pattern = format!(r#"(?i){}\s*=\s*["']([^"']*)["']"#, regex::escape(name));
     let re = Regex::new(&pattern).ok()?;
     re.captures(attrs_str)
-        .map(|cap| cap.get(1).unwrap().as_str().to_string())
+        .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
 }
 
 fn get_tag_content(inner_content: &str, tag_name: &str) -> Option<String> {
     let open_pattern = format!(r#"(?i)<{}\s*>"#, tag_name);
     let open_re = Regex::new(&open_pattern).ok()?;
     let open_cap = open_re.captures(inner_content)?;
-    let open_match = open_cap.get(0).unwrap();
+    let open_match = open_cap.get(0)?;
     let content_start = open_match.end();
 
     let close_pattern = format!(r#"(?i)</{}>"#, tag_name);
     let close_re = Regex::new(&close_pattern).ok()?;
     let remainder = &inner_content[content_start..];
     let close_cap = close_re.captures(remainder)?;
-    let close_match = close_cap.get(0).unwrap();
+    let close_match = close_cap.get(0)?;
     let content_end = content_start + close_match.start();
 
     let mut val = inner_content[content_start..content_end].to_string();
@@ -462,7 +462,7 @@ fn read_core_plugins(value: Option<&serde_json::Value>) -> Vec<String> {
 fn parse_note(path: String, raw: String, modified_at: Option<String>) -> ParsedNote {
     let (frontmatter, content) = parse_frontmatter(&raw);
     let title = content.lines().find_map(|line| line.strip_prefix("# ").map(str::trim)).unwrap_or_else(|| path.trim_end_matches(".md")).to_string();
-    let tags = Regex::new(r"(^|\s)#([\p{L}\p{N}_/-]+)").unwrap().captures_iter(&content).map(|cap| cap[2].to_string()).collect();
+    let tags = Regex::new(r"(^|\s)#([\p{L}\p{N}_/-]+)").expect("infallible literal").captures_iter(&content).map(|cap| cap[2].to_string()).collect();
     let content_hash = revision_of(&raw);
     let links = parse_links(&path, &content);
     ParsedNote {
@@ -489,7 +489,7 @@ fn parse_frontmatter(raw: &str) -> (HashMap<String, String>, String) {
 }
 
 fn parse_links(source_path: &str, content: &str) -> Vec<NoteLink> {
-    let link_re = Regex::new(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]").unwrap();
+    let link_re = Regex::new(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]").expect("infallible literal");
     let lines: Vec<&str> = content.lines().collect();
     let section_start = lines.iter().position(|line| line.trim().eq_ignore_ascii_case("## Links"));
     let section_end = section_start.map(|start| lines.iter().enumerate().skip(start + 1).find(|(_, line)| line.trim_start().starts_with('#')).map(|(index, _)| index).unwrap_or(lines.len()));
@@ -537,7 +537,7 @@ fn extract_excerpt(content: &str, length: usize) -> String {
         }
     }
     // Remove title heading (# Heading)
-    let re_heading = Regex::new(r"(?m)^#\s+.+$").unwrap();
+    let re_heading = Regex::new(r"(?m)^#\s+.+$").expect("infallible literal");
     let body_without_heading = re_heading.replace_all(body, "");
     
     // Clean up whitespace/multiple newlines
@@ -858,7 +858,10 @@ fn render_context_bundle(
         }
 
         if mode == "full" {
-            let context = note_context(notes, &note.meta.path).unwrap();
+            let context = match note_context(notes, &note.meta.path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
             let find_note_title = |path: &str| {
                 notes.iter().find(|n| n.meta.path == path).map(|n| n.meta.title.clone()).unwrap_or_else(|| {
                     path.split(['/', '\\']).next_back().unwrap_or(path).trim_end_matches(".md").to_string()
@@ -1401,10 +1404,10 @@ pub(crate) fn reindex_after_mutation(state: &mut VaultState, root: &Path) -> Res
 const MIN_EXTRACT_CHARS: usize = 200;
 
 fn strip_html_tags(html: &str) -> String {
-    let re = Regex::new(r"<[^>]+>").unwrap();
+    let re = Regex::new(r"<[^>]+>").expect("infallible literal");
     let stripped = re.replace_all(html, " ");
     // collapse whitespace
-    let ws = Regex::new(r"\s+").unwrap();
+    let ws = Regex::new(r"\s+").expect("infallible literal");
     ws.replace_all(stripped.as_ref(), " ").trim().to_string()
 }
 

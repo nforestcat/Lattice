@@ -1,5 +1,8 @@
 import type { AiProvenance } from "../api/types";
 
+// ponytail: const cap, raise N if audit trail needs more
+const MAX_AI_EDITS = 20;
+
 type FrontmatterEntry = {
   id: string;
   run: string | null;
@@ -63,7 +66,15 @@ export function stampAiProvenance(content: string, prov: AiProvenance, editId: s
     return content;
   }
 
-  const newBlock = existingBlock.trimEnd() + `\n${entryLine}`;
+  const appendedBlock = existingBlock.trimEnd() + `\n${entryLine}`;
+  // ponytail: cap at 20 entries per note, raise if audit trail needs more
+  const lines = appendedBlock.split("\n");
+  const header = lines[0];
+  const entries = lines.slice(1);
+  const capped = entries.length > MAX_AI_EDITS
+    ? entries.slice(entries.length - MAX_AI_EDITS)
+    : entries;
+  const newBlock = [header, ...capped].join("\n");
   const newYaml = yaml.replace(aiEditsMatch[0], newBlock + "\n");
   return serializeFrontmatter(newYaml, body);
 }
