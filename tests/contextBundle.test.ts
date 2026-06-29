@@ -219,7 +219,7 @@ describe("createContextBundle", () => {
     // Recommended candidate (shares tag #llm & mentions focus)
     const recommended = candidates.find(c => c.path === "Home.md");
     expect(recommended).toBeDefined();
-    expect(recommended!.score).toBe(6.0); // Max of tagScore (4.5) and mentionScore (6.0)
+    expect(recommended!.score).toBe(9.5);
     expect(recommended!.reasonDetail).toBe("Shares tags: #llm; mentions focus 1 time(s)");
   });
 

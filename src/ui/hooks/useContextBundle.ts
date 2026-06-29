@@ -10,6 +10,7 @@ import {
   simplePromptHash,
   errorMessage,
 } from "./contextShared";
+import { pruneRecommendedCandidates } from "../contextPrune";
 
 export interface UseContextBundleCallbacks {
   activePath: string | null;
@@ -70,69 +71,36 @@ export function useContextBundle(callbacks: UseContextBundleCallbacks) {
 
   async function autoPruneCandidates() {
     if (!activePath) return;
-    let nextPaths = new Set(selectedContextPaths);
-    const selectedNotes = contextCandidates.filter((candidate) => nextPaths.has(candidate.path));
-    const recommendedSelected = selectedNotes
-      .filter((candidate) => candidate.reason === "Recommended")
-      .sort((a, b) => a.score - b.score);
-
-    let prunedCount = 0;
-    let currentBundle: ContextBundle;
+    let pruned;
     try {
-      currentBundle = await vaultApi.getContextBundle(activePath, {
-        selectedPaths: Array.from(nextPaths),
-        purpose: bundlePurpose,
-        mode: bundleMode,
-        preset: bundlePreset
+      pruned = await pruneRecommendedCandidates({
+        activePath,
+        selectedContextPaths,
+        contextCandidates,
+        contextLimit,
+        bundlePurpose,
+        bundleMode,
+        bundlePreset,
+        getContextBundle: (path, options) => vaultApi.getContextBundle(path, options),
       });
     } catch (e) {
       setStatus(errorMessage(e));
       return;
     }
 
-    let currentTokens = currentBundle.estimatedTokens;
-
-    for (const note of recommendedSelected) {
-      if (currentTokens <= contextLimit) {
-        break;
-      }
-      nextPaths.delete(note.path);
-      prunedCount++;
-      try {
-        currentBundle = await vaultApi.getContextBundle(activePath, {
-          selectedPaths: Array.from(nextPaths),
-          purpose: bundlePurpose,
-          mode: bundleMode,
-          preset: bundlePreset
-        });
-        currentTokens = currentBundle.estimatedTokens;
-      } catch (e) {
-        setStatus(errorMessage(e));
-        return;
-      }
-    }
-
-    setSelectedContextPaths(nextPaths);
-    setContextBundle(currentBundle);
+    setSelectedContextPaths(pruned.nextPaths);
+    setContextBundle(pruned.currentBundle);
 
     if (activePath) {
       const currentSelected = vaultConfigRef.current.selectedPaths ?? {};
       const nextSelected = {
         ...currentSelected,
-        [activePath]: Array.from(nextPaths)
+        [activePath]: Array.from(pruned.nextPaths)
       };
       void updateVaultConfig({ selectedPaths: nextSelected });
     }
 
-    if (prunedCount > 0 && currentTokens <= contextLimit) {
-      setStatus(`Auto-pruned ${prunedCount} recommended note(s) to fit under the limit (Final: ${currentTokens.toLocaleString()} tokens).`);
-    } else if (prunedCount > 0) {
-      setStatus(`Auto-pruned ${prunedCount} recommended note(s), but bundle still exceeds the limit (Final: ${currentTokens.toLocaleString()} tokens).`);
-    } else if (currentTokens > contextLimit) {
-      setStatus("No recommended notes to prune; try Short mode or deselect required notes.");
-    } else {
-      setStatus("No recommended notes to prune or already under limit.");
-    }
+    setStatus(pruned.status);
   }
 
   async function switchToShortMode() {

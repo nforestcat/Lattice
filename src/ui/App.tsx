@@ -33,6 +33,8 @@ import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
 import { useIngestQueue } from "./hooks/useIngestQueue";
+import { deleteManagedGraphLinkAfterConfirmation } from "./graphLinkActions";
+import { getDisplayedContextCandidates } from "./contextCandidates";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { applyProposedEditToVault } from "./proposedEditApply";
 import { findAmbiguousUpdateAnchor } from "./proposedEditGuards";
@@ -868,11 +870,15 @@ export function App() {
   }
 
   async function deleteGraphLink(sourcePath: string, targetPath: string) {
-    if (!(await askConfirm(`Remove managed graph link to "${targetPath}"?`, "Delete Link"))) {
+    const result = await deleteManagedGraphLinkAfterConfirmation(
+      sourcePath,
+      targetPath,
+      (source, target) => vaultApi.deleteManagedGraphLink(source, target),
+    );
+    if (!result) {
       return;
     }
 
-    const result = await vaultApi.deleteManagedGraphLink(sourcePath, targetPath);
     setGraph(result.graph);
     if (sourcePath === activePath) {
       setDocument(result.note);
@@ -1038,35 +1044,7 @@ export function App() {
   }, [contextCandidates, selectedContextPaths]);
 
   const displayedCandidates = useMemo(() => {
-    let list = [...contextCandidates];
-    if (filterBy === "selected") {
-      list = list.filter((c) => selectedContextPaths.has(c.path));
-    } else if (filterBy !== "all") {
-      list = list.filter((c) => c.reason.toLowerCase() === filterBy);
-    }
-
-    list.sort((a, b) => {
-      if (sortBy === "score") {
-        return b.score - a.score;
-      } else if (sortBy === "title") {
-        return a.title.localeCompare(b.title);
-      } else if (sortBy === "reason") {
-        const reasonOrder: Record<string, number> = {
-          focus: 0,
-          outgoing: 1,
-          backlink: 2,
-          recommended: 3
-        };
-        const orderA = reasonOrder[a.reason.toLowerCase()] ?? 99;
-        const orderB = reasonOrder[b.reason.toLowerCase()] ?? 99;
-        if (orderA !== orderB) {
-          return orderA - orderB;
-        }
-        return b.score - a.score;
-      }
-      return 0;
-    });
-    return list;
+    return getDisplayedContextCandidates(contextCandidates, selectedContextPaths, sortBy, filterBy);
   }, [contextCandidates, selectedContextPaths, sortBy, filterBy]);
 
   useEffect(() => {

@@ -1,6 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const testExclude = [
+  "**/.claude/**", "**/node_modules/**", "**/dist/**",
+  "**/.review/**", "**/.omo/**", "**/.omc/**", "**/.clone/**"
+];
+
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
@@ -35,8 +40,28 @@ export default defineConfig({
     }
   },
   test: {
-    environment: "jsdom",
     globals: true,
-    exclude: ["**/.claude/**", "**/node_modules/**", "**/dist/**"]
+    exclude: testExclude,
+    projects: [
+      {
+        test: {
+          name: "node",
+          environment: "node",
+          globals: true,
+          exclude: [...testExclude, "tests/proposedEditApply.test.ts"],
+          include: ["tests/**/*.test.ts", "src/**/*.test.ts", "tests/contextRefresh.test.tsx"]
+        }
+      },
+      {
+        test: {
+          name: "dom",
+          environment: "happy-dom",
+          globals: true,
+          exclude: [...testExclude, "tests/contextRefresh.test.tsx"],
+          setupFiles: ["tests/setupDom.ts"],
+          include: ["tests/**/*.test.tsx", "src/**/*.test.tsx", "tests/proposedEditApply.test.ts"]
+        }
+      }
+    ]
   }
 });
