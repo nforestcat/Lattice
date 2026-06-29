@@ -9,6 +9,7 @@ import {
   ProvenanceBlock,
   ReviewQueueItemHeader,
   ReviewQueuePreview,
+  RiskBlock,
 } from "./reviewQueue/ReviewQueueBlocks";
 
 type QueueActionHandler = (id: string) => void | Promise<void>;
@@ -99,6 +100,9 @@ export function ReviewQueueItemCard({
       <div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>{item.title}</div>
 
       <ReviewQueuePreview original={item.original} proposed={effectiveProposed} reason={item.reason} />
+
+      {/* RiskBlock: independent of diffPreviewOpen toggle */}
+      <RiskBlock path={item.path} destructive={item.suggestionKind === "merge_or_delete"} />
 
       {needsDiffPreview && suggestion && diffPreviewOpen && (
         <div style={{ display: "flex", gap: 8 }}>
