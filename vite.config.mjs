@@ -45,6 +45,9 @@ export default defineConfig({
       }
     },
     include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
-    exclude: ["**/node_modules/**", "**/dist/**"]
+    exclude: [
+      "**/node_modules/**", "**/dist/**",
+      "**/.claude/**", "**/.review/**", "**/.omo/**", "**/.omc/**", "**/.clone/**"
+    ]
   }
 });
