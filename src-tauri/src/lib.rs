@@ -360,7 +360,7 @@ fn get_tag_content(inner_content: &str, tag_name: &str) -> Option<String> {
 }
 
 
-fn scan_vault(root: &Path) -> Result<Vec<ParsedNote>, String> {
+fn scan_vault_raw(root: &Path) -> Result<Vec<ParsedNote>, String> {
     let mut notes = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok).filter(|entry| entry.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md"))) {
         let path = entry.path();
@@ -372,7 +372,11 @@ fn scan_vault(root: &Path) -> Result<Vec<ParsedNote>, String> {
         let modified_at = entry.metadata().ok().and_then(|meta| meta.modified().ok()).map(|_| Utc::now().to_rfc3339());
         notes.push(parse_note(rel, content, modified_at));
     }
-    Ok(resolve_links(notes))
+    Ok(notes)
+}
+
+fn scan_vault(root: &Path) -> Result<Vec<ParsedNote>, String> {
+    Ok(resolve_links(scan_vault_raw(root)?))
 }
 
 fn vault_snapshot(root: &Path, notes: &[ParsedNote]) -> VaultSnapshot {
@@ -1395,7 +1399,38 @@ fn normalize_ref(value: &str) -> String {
 }
 
 pub(crate) fn reindex_after_mutation(state: &mut VaultState, root: &Path) -> Result<(), String> {
-    state.notes = scan_vault(root)?;
+    let t0 = std::time::Instant::now();
+    let raw = scan_vault_raw(root)?;
+    let t_parse = t0.elapsed();
+    state.notes = resolve_links(raw);
+    let t_total = t0.elapsed();
+    eprintln!(
+        "reindex(full): {} notes, parse {:?}, resolve {:?}, total {:?}",
+        state.notes.len(), t_parse, t_total - t_parse, t_total
+    );
+    Ok(())
+}
+
+// ponytail: incremental reindex — re-parse only changed files, full resolve.
+// Full reindex_after_mutation stays for structural ops (rename/move/delete dirs).
+pub(crate) fn reindex_changed_files(state: &mut VaultState, root: &Path, changed: &[&str]) -> Result<(), String> {
+    let t0 = std::time::Instant::now();
+    state.notes.retain(|n| !changed.contains(&n.meta.path.as_str()));
+    for rel_path in changed {
+        let full = root.join(rel_path);
+        if full.is_file() {
+            let content = fs::read_to_string(&full).map_err(|e| e.to_string())?;
+            let modified_at = full.metadata().ok().and_then(|m| m.modified().ok()).map(|_| Utc::now().to_rfc3339());
+            state.notes.push(parse_note(rel_path.to_string(), content, modified_at));
+        }
+    }
+    let t_parse = t0.elapsed();
+    state.notes = resolve_links(std::mem::take(&mut state.notes));
+    let t_total = t0.elapsed();
+    eprintln!(
+        "reindex({}): {} notes, parse {:?}, resolve {:?}, total {:?}",
+        changed.len(), state.notes.len(), t_parse, t_total - t_parse, t_total
+    );
     Ok(())
 }
 
@@ -2414,5 +2449,38 @@ mod tests {
         assert_eq!(snapshots[0].id, "a.md:100", "entry with blob should survive");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bench_reindex_parse_vs_resolve() {
+        for count in [1000, 3000, 5000] {
+            let root = temp_test_dir(&format!("bench-{}", count));
+            for i in 0..count {
+                let dir = root.join(format!("folder{}", i % 50));
+                fs::create_dir_all(&dir).unwrap();
+                // ponytail: notes with wikilinks so resolve_links does real work
+                fs::write(dir.join(format!("note{}.md", i)), format!(
+                    "# Note {}\n\nSome content here.\n\n[[Note {}]] [[Note {}]]\n",
+                    i, (i + 1) % count, (i + 7) % count
+                )).unwrap();
+            }
+
+            let t0 = std::time::Instant::now();
+            let raw = scan_vault_raw(&root).unwrap();
+            let t_parse = t0.elapsed();
+            let notes = resolve_links(raw);
+            let t_resolve = t0.elapsed() - t_parse;
+
+            eprintln!(
+                "BENCH {}: {} notes, parse {:?} ({:.0}%), resolve {:?} ({:.0}%), total {:?}",
+                count, notes.len(),
+                t_parse, t_parse.as_secs_f64() / (t_parse + t_resolve).as_secs_f64() * 100.0,
+                t_resolve, t_resolve.as_secs_f64() / (t_parse + t_resolve).as_secs_f64() * 100.0,
+                t_parse + t_resolve,
+            );
+
+            assert_eq!(notes.len(), count);
+            let _ = fs::remove_dir_all(&root);
+        }
     }
 }
