@@ -110,6 +110,37 @@ describe("ReviewQueueItemCard capabilities", () => {
     }
   });
 
+  it("renders diff (이전/이후) for drafted proposed_edit with original", () => {
+    renderCard(makeItem({
+      kind: "proposed_edit" as ReviewItemKind,
+      status: "drafted",
+      original: "old content",
+      proposed: "new content",
+    }));
+    expect(screen.getByText("이전")).toBeTruthy();
+    expect(screen.getByText("이후")).toBeTruthy();
+  });
+
+  it("renders destructive pill for merge_or_delete suggestion kind", () => {
+    renderCard(makeItem({
+      kind: "duplicate_warning" as ReviewItemKind,
+      status: "drafted",
+      suggestionKind: "merge_or_delete" as any,
+    }));
+    expect(screen.getByTestId("risk-destructive-pill")).toBeTruthy();
+    expect(screen.getByText("파괴적 변경 (merge/delete)")).toBeTruthy();
+  });
+
+  it("does not show diff for previewable suggestion until toggle clicked", () => {
+    renderCard(makeItem({
+      kind: "orphan_note" as ReviewItemKind,
+      status: "drafted",
+      suggestionKind: "link_candidates" as any,
+    }));
+    expect(screen.queryByText("이전")).toBeNull();
+    expect(screen.queryByText("이후")).toBeNull();
+  });
+
   it("shows failure message when a failure exists", () => {
     renderCard(makeItem({
       kind: "inbox_capture",

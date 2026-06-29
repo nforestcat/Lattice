@@ -104,6 +104,8 @@ export function ReviewQueuePreview({ original, proposed, reason }: ReviewQueuePr
               borderRadius: 4,
               fontSize: 12,
               overflowX: "auto",
+              overflowY: "auto",
+              maxHeight: 240,
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               color: "#1e293b",
@@ -149,6 +151,40 @@ export function ProvenanceBlock({ provenance }: { readonly provenance?: AiProven
   );
 }
 
+type RiskBlockProps = {
+  readonly path?: string;
+  readonly destructive: boolean;
+};
+
+export function RiskBlock({ path, destructive }: RiskBlockProps) {
+  if (path == null && !destructive) return null;
+
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      {destructive && (
+        <span
+          data-testid="risk-destructive-pill"
+          style={{
+            background: "#fee2e2",
+            color: "#991b1b",
+            borderRadius: 4,
+            padding: "1px 7px",
+            fontSize: 11,
+            fontWeight: 600,
+          }}
+        >
+          파괴적 변경 (merge/delete)
+        </span>
+      )}
+      {path != null && (
+        <span style={{ fontSize: 11, color: "#64748b" }}>
+          영향 파일: {path}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function DiffBlock({
   label,
   value,
@@ -173,6 +209,8 @@ export function DiffBlock({
           borderRadius: 4,
           fontSize: 12,
           overflowX: "auto",
+          overflowY: "auto",
+          maxHeight: 240,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           ...styles,
