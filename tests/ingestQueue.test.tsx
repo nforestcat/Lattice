@@ -1,20 +1,25 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { vaultApi } from "../src/api";
-import type { EntryMutationResult, IngestDuplicateCheck, IngestRaw, IngestResult } from "../src/api/types";
+import type {
+  EntryMutationResult,
+  IngestDuplicateCheck,
+  IngestRaw,
+  IngestResult,
+  SaveResult,
+} from "../src/api/types";
 import { useIngestQueue } from "../src/ui/hooks/useIngestQueue";
 
 const RAW: IngestRaw = {
   title: "Source Article",
-  text: "Long source text that has already been converted into a durable note draft.",
+  text: "Durable source text.",
   sourceRef: "https://example.com/source",
   sourceType: "url",
-  ingestDate: "2026-06-17",
 };
 
 const RESULT: IngestResult = {
   title: "Source Article",
-  markdown: "---\ntags: [research]\n---\n\n# Source Article\n\nUseful detail.",
+  markdown: "# Source Article\n\nUseful detail.",
   tags: ["research"],
 };
 
@@ -28,70 +33,213 @@ const EMPTY_MUTATION: EntryMutationResult = {
   selectedPath: null,
 };
 
-function IngestQueueHarness({ onIngested }: { readonly onIngested: (path: string) => void }) {
-  const queue = useIngestQueue({
-    onIngested,
-    setVault: () => {},
-  });
+const CREATED_MUTATION: EntryMutationResult = {
+  vault: { rootPath: "Demo Vault", notes: [], tree: [] },
+  selectedPath: "Ingested/Source Article.md",
+};
 
-  return (
-    <div>
-      <button onClick={() => queue.enqueueIngest(RESULT, RAW, DUPLICATE_CHECK)}>
-        enqueue
-      </button>
-      {queue.ingestItems.map((item) => (
-        <div key={item.id}>
-          <div>{item.title}</div>
-          <button onClick={() => queue.updateIngestItem(item.id, { appendTargetPath: "Research/Existing.md" })}>
-            append existing
-          </button>
-          <button onClick={() => void queue.applyIngestItem(item.id)}>apply</button>
-        </div>
-      ))}
-    </div>
-  );
+const SAVED: SaveResult = {
+  saved: true,
+  revision: "rev-next",
+  conflict: false,
+  snapshotId: null,
+  gitCommit: null,
+};
+
+const UNSAVED_CONFLICT: SaveResult = {
+  saved: false,
+  revision: "rev-existing",
+  conflict: true,
+  snapshotId: "snapshot-conflict",
+  gitCommit: null,
+};
+
+function renderQueue(onIngested = vi.fn()) {
+  const setVault = vi.fn();
+  const hook = renderHook(() => useIngestQueue({ onIngested, setVault }));
+  let itemId = "";
+  act(() => {
+    itemId = hook.result.current.enqueueIngest(RESULT, RAW, DUPLICATE_CHECK);
+  });
+  return { ...hook, itemId, onIngested, setVault };
 }
 
-describe("useIngestQueue", () => {
-  it("appends a reviewed ingest draft to an existing note when append target is selected", async () => {
-    // Given: a drafted ingest item has been reviewed with an append target.
-    const onIngested = vi.fn();
-    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("useIngestQueue source executor", () => {
+  it("creates, saves, publishes the vault, and notifies in durable mutation order", async () => {
+    // Given
+    const events: string[] = [];
+    vi.spyOn(vaultApi, "createNote").mockImplementation(async () => {
+      events.push("create");
+      return CREATED_MUTATION;
+    });
+    vi.spyOn(vaultApi, "saveNote").mockImplementation(async () => {
+      events.push("save");
+      return SAVED;
+    });
+    const onIngested = vi.fn(async () => {
+      events.push("onIngested");
+    });
+    const setVault = vi.fn(() => {
+      events.push("setVault");
+    });
+    const { result } = renderHook(() => useIngestQueue({ onIngested, setVault }));
+    let itemId = "";
+    act(() => {
+      itemId = result.current.enqueueIngest(RESULT, RAW, DUPLICATE_CHECK);
+    });
+
+    // When
+    let applied;
+    await act(async () => {
+      applied = await result.current.applyIngestItem(itemId);
+    });
+
+    // Then
+    expect(applied).toEqual({
+      changedPaths: ["Ingested/Source Article.md"],
+      warnings: [],
+    });
+    expect(events).toEqual(["create", "save", "setVault", "onIngested"]);
+  });
+
+  it("appends with the latest revision and preserves existing content formatting", async () => {
+    // Given
+    vi.spyOn(vaultApi, "readNote").mockResolvedValue({
       path: "Research/Existing.md",
       content: "# Existing\n\nOriginal content.",
       revision: "rev-existing",
     });
-    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
-      saved: true,
-      revision: "rev-next",
-      conflict: false,
-      snapshotId: null,
-      gitCommit: null,
-    });
-    const createNoteSpy = vi.spyOn(vaultApi, "createNote").mockResolvedValue(EMPTY_MUTATION);
-
-    render(<IngestQueueHarness onIngested={onIngested} />);
-    fireEvent.click(screen.getByRole("button", { name: "enqueue" }));
-    await screen.findByText("Source Article");
-    fireEvent.click(screen.getByRole("button", { name: "append existing" }));
-
-    // When: the reviewed queue item is applied.
-    fireEvent.click(screen.getByRole("button", { name: "apply" }));
-
-    // Then: the existing note is updated and no new ingest note is created.
-    await waitFor(() => {
-      expect(readNoteSpy).toHaveBeenCalledWith("Research/Existing.md");
-      expect(saveNoteSpy).toHaveBeenCalledWith(
-        "Research/Existing.md",
-        expect.stringContaining("### Ingested Source (Source Article)"),
-        "rev-existing"
-      );
-      expect(createNoteSpy).not.toHaveBeenCalled();
-      expect(onIngested).toHaveBeenCalledWith("Research/Existing.md");
+    const saveNote = vi.spyOn(vaultApi, "saveNote").mockResolvedValue(SAVED);
+    const createNote = vi.spyOn(vaultApi, "createNote").mockResolvedValue(EMPTY_MUTATION);
+    const queue = renderQueue();
+    act(() => {
+      queue.result.current.updateIngestItem(queue.itemId, {
+        appendTargetPath: "Research/Existing.md",
+      });
     });
 
-    readNoteSpy.mockRestore();
-    saveNoteSpy.mockRestore();
-    createNoteSpy.mockRestore();
+    // When
+    let applied;
+    await act(async () => {
+      applied = await queue.result.current.applyIngestItem(queue.itemId);
+    });
+
+    // Then
+    expect(applied).toEqual({ changedPaths: ["Research/Existing.md"], warnings: [] });
+    expect(saveNote).toHaveBeenCalledWith(
+      "Research/Existing.md",
+      expect.stringContaining("Original content.\n\n### Ingested Source (Source Article)"),
+      "rev-existing",
+    );
+    expect(createNote).not.toHaveBeenCalled();
+  });
+
+  it("fails append without post-write notification when save resolves unsaved", async () => {
+    // Given
+    vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: "Research/Existing.md",
+      content: "# Existing\n\nOriginal content.",
+      revision: "rev-existing",
+    });
+    vi.spyOn(vaultApi, "saveNote").mockResolvedValue(UNSAVED_CONFLICT);
+    const queue = renderQueue();
+    act(() => {
+      queue.result.current.updateIngestItem(queue.itemId, {
+        appendTargetPath: "Research/Existing.md",
+      });
+    });
+
+    // When / Then
+    await act(async () => {
+      await expect(queue.result.current.applyIngestItem(queue.itemId)).rejects.toMatchObject({
+        code: "save_not_durable",
+        path: "Research/Existing.md",
+      });
+    });
+    expect(queue.onIngested).not.toHaveBeenCalled();
+    expect(queue.setVault).not.toHaveBeenCalled();
+  });
+
+  it("rolls back only a newly created note when its initial save fails", async () => {
+    // Given
+    const saveError = new Error("save failed");
+    vi.spyOn(vaultApi, "createNote").mockResolvedValue(CREATED_MUTATION);
+    vi.spyOn(vaultApi, "saveNote").mockRejectedValue(saveError);
+    const deleteEntry = vi.spyOn(vaultApi, "deleteEntry").mockResolvedValue(EMPTY_MUTATION);
+    const queue = renderQueue();
+
+    // When / Then
+    await act(async () => {
+      await expect(queue.result.current.applyIngestItem(queue.itemId)).rejects.toBe(saveError);
+    });
+    expect(deleteEntry).toHaveBeenCalledWith("Ingested/Source Article.md");
+    expect(queue.onIngested).not.toHaveBeenCalled();
+    expect(queue.setVault).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a newly created note when initial save resolves unsaved", async () => {
+    // Given
+    vi.spyOn(vaultApi, "createNote").mockResolvedValue(CREATED_MUTATION);
+    vi.spyOn(vaultApi, "saveNote").mockResolvedValue(UNSAVED_CONFLICT);
+    const deleteEntry = vi.spyOn(vaultApi, "deleteEntry").mockResolvedValue(EMPTY_MUTATION);
+    const queue = renderQueue();
+
+    // When / Then
+    await act(async () => {
+      await expect(queue.result.current.applyIngestItem(queue.itemId)).rejects.toMatchObject({
+        code: "save_not_durable",
+        path: "Ingested/Source Article.md",
+      });
+    });
+    expect(deleteEntry).toHaveBeenCalledTimes(1);
+    expect(deleteEntry).toHaveBeenCalledWith("Ingested/Source Article.md");
+    expect(queue.onIngested).not.toHaveBeenCalled();
+    expect(queue.setVault).not.toHaveBeenCalled();
+  });
+
+  it("returns the durable path and a warning when notification fails after save", async () => {
+    // Given
+    vi.spyOn(vaultApi, "createNote").mockResolvedValue(CREATED_MUTATION);
+    vi.spyOn(vaultApi, "saveNote").mockResolvedValue(SAVED);
+    const deleteEntry = vi.spyOn(vaultApi, "deleteEntry").mockResolvedValue(EMPTY_MUTATION);
+    const queue = renderQueue(vi.fn().mockRejectedValue(new Error("refresh failed")));
+
+    // When
+    let applied;
+    await act(async () => {
+      applied = await queue.result.current.applyIngestItem(queue.itemId);
+    });
+
+    // Then
+    expect(applied).toEqual({
+      changedPaths: ["Ingested/Source Article.md"],
+      warnings: [{
+        code: "post_action_failed",
+        message: "refresh failed",
+        path: "Ingested/Source Article.md",
+      }],
+    });
+    expect(deleteEntry).not.toHaveBeenCalled();
+  });
+
+  it("allows a second executor invocation because lifecycle deduplication is external", async () => {
+    // Given
+    const createNote = vi.spyOn(vaultApi, "createNote").mockResolvedValue(CREATED_MUTATION);
+    const saveNote = vi.spyOn(vaultApi, "saveNote").mockResolvedValue(SAVED);
+    const queue = renderQueue();
+
+    // When
+    await act(async () => {
+      await queue.result.current.applyIngestItem(queue.itemId);
+      await queue.result.current.applyIngestItem(queue.itemId);
+    });
+
+    // Then
+    expect(createNote).toHaveBeenCalledTimes(2);
+    expect(saveNote).toHaveBeenCalledTimes(2);
   });
 });

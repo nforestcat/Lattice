@@ -1,6 +1,11 @@
 import { useCallback, useState } from "react";
 import type { ReactCodeMirrorRef } from "@uiw/react-codemirror";
-import type { BacklinkSuggestion, VaultSnapshot } from "../../api/types";
+import type {
+  BacklinkSuggestion,
+  SourceMutationResult,
+  SourceMutationWarning,
+  VaultSnapshot,
+} from "../../api/types";
 import type { NoteMeta } from "../../core/types";
 import { vaultApi } from "../../api";
 
@@ -109,33 +114,65 @@ export function useLinkSuggestions(callbacks: UseLinkSuggestionsCallbacks) {
     try {
       const suggestions = await vaultApi.getBacklinkSuggestions(path);
       setBacklinkSuggestions(suggestions);
-    } catch (e) {
-      console.error("Failed to fetch backlink suggestions", e);
+    } catch (error) {
+      console.error(
+        "Failed to fetch backlink suggestions",
+        error instanceof Error ? error : new Error(String(error)),
+      );
     } finally {
       setIsLoadingBacklinkSuggestions(false);
     }
   }
 
-  async function applyBacklinkSuggestion(suggestion: BacklinkSuggestion, refreshContext: (path: string) => Promise<void>, runHealthAudit: () => Promise<void>): Promise<boolean> {
+  async function applyBacklinkSuggestion(
+    suggestion: BacklinkSuggestion,
+    refreshContext: (path: string) => Promise<void>,
+    runHealthAudit: () => Promise<void>,
+  ): Promise<SourceMutationResult> {
     setStatus(`Applying backlink suggestion from ${suggestion.sourceTitle}...`);
     try {
       await vaultApi.applyBacklinkSuggestion(suggestion);
-      setStatus(`Applied backlink suggestion!`);
-      if (vault) {
+    } catch (error) {
+      console.error("Failed to apply backlink suggestion", error);
+      setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+
+    const warnings: SourceMutationWarning[] = [];
+    const recordWarning = (error: unknown) => {
+      warnings.push({
+        code: "post_action_failed",
+        message: error instanceof Error ? error.message : String(error),
+        path: suggestion.sourcePath,
+      });
+    };
+    setStatus("Applied backlink suggestion!");
+    if (vault) {
+      try {
         const nextVault = await vaultApi.openVault(vault.rootPath);
         setVault(nextVault);
+      } catch (error) {
+        recordWarning(error instanceof Error ? error : new Error(String(error)));
       }
-      if (activePath) {
-        await refreshContext(activePath);
-        await refreshBacklinkSuggestions(activePath);
-      }
-      void runHealthAudit();
-      return true;
-    } catch (e) {
-      console.error("Failed to apply backlink suggestion", e);
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
-      return false;
     }
+    if (activePath) {
+      try {
+        await refreshContext(activePath);
+      } catch (error) {
+        recordWarning(error instanceof Error ? error : new Error(String(error)));
+      }
+      try {
+        setBacklinkSuggestions(await vaultApi.getBacklinkSuggestions(activePath));
+      } catch (error) {
+        recordWarning(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+    try {
+      await runHealthAudit();
+    } catch (error) {
+      recordWarning(error instanceof Error ? error : new Error(String(error)));
+    }
+    return { changedPaths: [suggestion.sourcePath], warnings };
   }
 
   return {

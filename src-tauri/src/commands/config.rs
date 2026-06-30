@@ -152,6 +152,22 @@ pub(crate) fn append_ai_audit(record: serde_json::Value, state: tauri::State<App
 
 #[cfg(not(test))]
 #[tauri::command]
+pub(crate) fn persist_review_decisions(
+    decisions: Vec<ReviewDecisionRecord>,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
+    let root = guard.root_path.as_ref().ok_or("No vault is open")?.clone();
+    let note_paths: HashSet<String> = guard.notes.iter().map(|n| n.meta.path.clone()).collect();
+    let mut to_persist = decisions;
+    compact_review_decisions(&mut to_persist, &note_paths);
+    persist_review_decisions_to_disk(&root, &to_persist)?;
+    guard.review_decisions = to_persist;
+    Ok(())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
 pub(crate) fn load_embeddings_cache(state: tauri::State<AppState>) -> Result<String, String> {
     let guard = state.inner.lock().map_err(|_| "State lock poisoned")?;
     let root = guard.root_path.as_ref().ok_or("No vault is open")?;
@@ -314,7 +330,7 @@ pub(crate) fn apply_backlink_suggestion(suggestion: BacklinkSuggestion, state: t
     };
     
     fs::write(&source_full_path, &new_content).map_err(|e| e.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&suggestion.source_path])?;
     
     if guard.auto_git_enabled {
         let _ = commit_after_mutation(&root, &[&suggestion.source_path]);
@@ -377,7 +393,7 @@ pub(crate) fn apply_note_metadata(
     new_content.push_str(&updated_body);
     
     fs::write(&full_path, &new_content).map_err(|e| e.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&path])?;
     
     if guard.auto_git_enabled {
         let _ = commit_after_mutation(&root, &[&path]);
@@ -435,11 +451,12 @@ pub(crate) fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>
     let mut edits = Vec::new();
     let mut start_idx = 0;
 
-    let tag_re = Regex::new(r"(?i)<propose_edit\s+([^>]+)>").unwrap();
+    let tag_re = Regex::new(r"(?i)<propose_edit\s+([^>]+)>")
+        .expect("infallible: hardcoded regex literal");
     let close_tag = "</propose_edit>";
 
     while let Some(cap) = tag_re.captures(&raw_text[start_idx..]) {
-        let matched = cap.get(0).unwrap();
+        let Some(matched) = cap.get(0) else { break };
         let tag_end = start_idx + matched.end();
 
         let slice_after_tag = &raw_text[tag_end..];
@@ -451,7 +468,8 @@ pub(crate) fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>
         let inner_content = &raw_text[tag_end..closing_tag_start];
         start_idx = closing_tag_start + close_tag.len();
 
-        let attrs_str = cap.get(1).unwrap().as_str();
+        let Some(attrs_match) = cap.get(1) else { break };
+        let attrs_str = attrs_match.as_str();
         let edit_type_val = get_attribute_value(attrs_str, "type");
         let path = get_attribute_value(attrs_str, "path").unwrap_or_default();
         let new_path = get_attribute_value(attrs_str, "new_path")
@@ -461,7 +479,7 @@ pub(crate) fn parse_proposed_edits(raw_text: String) -> Result<Vec<ProposedEdit>
             continue;
         }
 
-        let edit_type = edit_type_val.unwrap().to_lowercase();
+        let edit_type = edit_type_val.expect("checked is_none above").to_lowercase();
         if edit_type != "create" && edit_type != "update" && edit_type != "merge" && edit_type != "delete" {
             continue;
         }

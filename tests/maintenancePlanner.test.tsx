@@ -2,270 +2,291 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { vaultApi } from "../src/api";
 import { sendChatMessage } from "../src/api/llm";
-import type { LlmConfig, ReviewQueueItem } from "../src/api/types";
+import type {
+  ContextBundleCandidate,
+  LlmConfig,
+  ReviewQueueItem,
+  SaveResult,
+} from "../src/api/types";
 import { useMaintenancePlanner } from "../src/ui/hooks/useMaintenancePlanner";
 
-vi.mock("../src/api/llm", () => ({
-  sendChatMessage: vi.fn(),
-}));
+vi.mock("../src/api/llm", () => ({ sendChatMessage: vi.fn() }));
 
-const llmConfig: LlmConfig = {
-  provider: "custom",
-  apiKey: "test-key",
-  model: "test-model",
-  baseUrl: "http://localhost:1234/v1",
-};
+const LLM_CONFIG: LlmConfig = { provider: "custom", apiKey: "test-key", model: "test-model", baseUrl: "http://localhost:1234/v1" };
+const SAVED: SaveResult = { saved: true, revision: "rev-2", conflict: false, snapshotId: null, gitCommit: null };
+const UNSAVED_CONFLICT: SaveResult = { saved: false, revision: "rev-1", conflict: true, snapshotId: "snapshot-conflict", gitCommit: null };
 
-function missingSummaryItem(): ReviewQueueItem {
+function item(
+  suggestionKind: ReviewQueueItem["suggestionKind"],
+  kind: ReviewQueueItem["kind"] = "weak_backlinks",
+): ReviewQueueItem {
   return {
-    id: "health-Notes/Long.md-missingSummary",
-    sourceId: "Notes/Long.md",
-    kind: "missing_summary",
-    status: "new",
-    path: "Notes/Long.md",
-    title: "Long Note: missingSummary",
+    id: `health-Notes/Target.md-${suggestionKind}`,
+    sourceId: "Notes/Target.md",
+    kind,
+    status: "drafted",
+    path: "Notes/Target.md",
+    title: "Target",
     gitStaged: false,
     createdAt: 0,
-    sourceRef: {
-      path: "Notes/Long.md",
-      title: "Long Note",
-      score: 70,
-      issues: ["missingSummary"],
-      isOrphan: false,
-      isStale: false,
-      isTooBroad: false,
-      isDuplicated: false,
-      missingSummary: true,
-      weakBacklinks: false,
-    },
-    suggestionKind: "summary",
+    suggestionKind,
   };
 }
 
-describe("useMaintenancePlanner", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.mocked(sendChatMessage).mockReset();
-  });
+function candidate(path: string): ContextBundleCandidate {
+  return { path, title: path, reason: "Recommended", reasonDetail: "", score: 1, excerpt: "", tokenEstimate: 0, selected: false, characterCount: 0 };
+}
 
-  it("builds maintenance prompts from the note content instead of the health report shell", async () => {
-    const readNoteSpy = vi.spyOn(vaultApi, "readNote").mockResolvedValue({
-      path: "Notes/Long.md",
-      content: "# Long Note\nActual body that the planner must summarize.",
-      revision: "rev-current",
+function hydrate(
+  result: ReturnType<typeof useMaintenancePlanner>,
+  reviewItem: ReviewQueueItem,
+): void {
+  act(() => {
+    result.hydrate({
+      [reviewItem.id]: {
+        proposed: "Generated suggestion",
+        provenance: { source: "maintenance_planner", model: "test-model" },
+        generatedAt: "2026-06-23T00:00:00.000Z",
+      },
+    });
+  });
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.mocked(sendChatMessage).mockReset();
+});
+
+describe("useMaintenancePlanner", () => {
+  it("generates a suggestion from current note content", async () => {
+    // Given
+    const reviewItem = item("summary", "missing_summary");
+    vi.spyOn(vaultApi, "readNote").mockResolvedValue({
+      path: reviewItem.path,
+      content: "# Target\nActual current body.",
+      revision: "rev-1",
     });
     vi.spyOn(vaultApi, "getVaultConfig").mockResolvedValue({});
-    const saveVaultConfigSpy = vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue(undefined);
-    vi.mocked(sendChatMessage).mockResolvedValue("A useful generated summary.");
+    vi.spyOn(vaultApi, "saveVaultConfig").mockResolvedValue(undefined);
+    vi.mocked(sendChatMessage).mockResolvedValue("A generated summary.");
     const { result } = renderHook(() => useMaintenancePlanner());
 
+    // When
     await act(async () => {
-      await result.current.generate(missingSummaryItem(), llmConfig);
+      await result.current.generate(reviewItem, LLM_CONFIG);
     });
 
-    expect(readNoteSpy).toHaveBeenCalledWith("Notes/Long.md");
+    // Then
     expect(sendChatMessage).toHaveBeenCalledWith(
-      llmConfig,
-      [
-        {
-          role: "user",
-          content: expect.stringContaining("Actual body that the planner must summarize."),
-        },
-      ],
+      LLM_CONFIG,
+      [{ role: "user", content: expect.stringContaining("Actual current body.") }],
     );
-    expect(saveVaultConfigSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        maintenanceSuggestions: expect.objectContaining({
-          "health-Notes/Long.md-missingSummary": expect.objectContaining({
-            proposed: "A useful generated summary.",
-          }),
-          "Notes/Long.md::summary": expect.objectContaining({
-            proposed: "A useful generated summary.",
-          }),
-        }),
-      }),
-    );
-    await waitFor(() => expect(result.current.suggestions["health-Notes/Long.md-missingSummary"]).toBe("A useful generated summary."));
+    await waitFor(() => {
+      expect(result.current.suggestions[reviewItem.id]).toBe("A generated summary.");
+    });
   });
 
-  it("applies link_candidates suggestions by linking from candidate notes to the orphan", async () => {
-    vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
-      {
-        path: "Notes/Related.md",
-        title: "Related",
-        reason: "Recommended",
-        reasonDetail: "Related topic",
-        score: 8,
-        excerpt: "Related body",
-        tokenEstimate: 2,
-        selected: false,
-        characterCount: 12,
-      },
-    ]);
-    vi.spyOn(vaultApi, "readNote").mockResolvedValue({
-      path: "Notes/Related.md",
-      content: "# Related\nSome body.",
-      revision: "rev-1",
-    });
-    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
-      saved: true,
-      revision: "rev-2",
-      conflict: false,
-      snapshotId: null,
-      gitCommit: null,
-    });
-    const auditSpy = vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue(undefined);
-
-    const item: ReviewQueueItem = {
-      id: "health-Notes/Orphan.md-linkCandidates",
-      sourceId: "Notes/Orphan.md",
-      kind: "orphan_note",
-      status: "new",
-      path: "Notes/Orphan.md",
-      title: "Orphan Note",
-      gitStaged: false,
-      createdAt: 0,
-      suggestionKind: "link_candidates",
-    };
-
+  it("returns a structured full-success result after applying summary metadata", async () => {
+    // Given
+    const reviewItem = item("summary", "missing_summary");
+    vi.spyOn(vaultApi, "applyNoteMetadata").mockResolvedValue(undefined);
+    vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue(undefined);
     const { result } = renderHook(() => useMaintenancePlanner());
-    act(() => {
-      result.current.hydrate({
-        [item.id]: {
-          proposed: "Link to Other Note",
-          provenance: { source: "maintenance_planner" },
-          generatedAt: "2024-01-01T00:00:00.000Z",
-        },
-      });
-    });
+    hydrate(result.current, reviewItem);
 
-    let paths: string[] = [];
+    // When
+    let applied;
     await act(async () => {
-      paths = await result.current.apply(item);
+      applied = await result.current.apply(reviewItem);
     });
 
-    expect(paths).toEqual(["Notes/Related.md"]);
-    expect(saveNoteSpy).toHaveBeenCalledWith(
-      "Notes/Related.md",
-      expect.stringContaining("[[Notes/Orphan]]"),
-      "rev-1"
+    // Then
+    expect(applied).toEqual({ changedPaths: ["Notes/Target.md"], warnings: [] });
+    expect(vaultApi.applyNoteMetadata).toHaveBeenCalledWith(
+      "Notes/Target.md",
+      { summary: "Generated suggestion" },
+      [],
     );
-    expect(auditSpy).toHaveBeenCalledTimes(1);
-    expect(item.status).toBe("applied");
   });
 
-  it("applies backlinks_in suggestions sequentially across candidate notes", async () => {
+  it("fails when no candidate mutation succeeds", async () => {
+    // Given
+    const reviewItem = item("backlinks_in");
     vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
-      {
-        path: "Notes/A.md",
-        title: "A",
-        reason: "Recommended",
-        reasonDetail: "",
-        score: 1,
-        excerpt: "",
-        tokenEstimate: 0,
-        selected: false,
-        characterCount: 0,
-      },
-      {
-        path: "Notes/B.md",
-        title: "B",
-        reason: "Recommended",
-        reasonDetail: "",
-        score: 1,
-        excerpt: "",
-        tokenEstimate: 0,
-        selected: false,
-        characterCount: 0,
-      },
+      candidate("Notes/A.md"),
+      candidate("Notes/B.md"),
     ]);
-    vi.spyOn(vaultApi, "readNote").mockImplementation(async (path: string) => ({
+    vi.spyOn(vaultApi, "readNote").mockImplementation(async (path) => ({
       path,
-      content: `# ${path}\nBody`,
+      content: "# Candidate",
       revision: "rev-1",
     }));
-    const saveNoteSpy = vi.spyOn(vaultApi, "saveNote").mockResolvedValue({
-      saved: true,
-      revision: "rev-2",
-      conflict: false,
-      snapshotId: null,
-      gitCommit: null,
-    });
-    const auditSpy = vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue(undefined);
-
-    const item: ReviewQueueItem = {
-      id: "health-Notes/Target.md-backlinksIn",
-      sourceId: "Notes/Target.md",
-      kind: "weak_backlinks",
-      status: "new",
-      path: "Notes/Target.md",
-      title: "Target",
-      gitStaged: false,
-      createdAt: 0,
-      suggestionKind: "backlinks_in",
-    };
-
+    vi.spyOn(vaultApi, "saveNote").mockRejectedValue(new Error("save failed"));
     const { result } = renderHook(() => useMaintenancePlanner());
-    act(() => {
-      result.current.hydrate({
-        [item.id]: {
-          proposed: "Add links from A and B",
-          provenance: { source: "maintenance_planner" },
-          generatedAt: "2024-01-01T00:00:00.000Z",
-        },
+    hydrate(result.current, reviewItem);
+
+    // When / Then
+    await act(async () => {
+      await expect(result.current.apply(reviewItem)).rejects.toMatchObject({
+        code: "zero_changes",
+        warnings: [
+          { code: "partial_failure", path: "Notes/A.md" },
+          { code: "partial_failure", path: "Notes/B.md" },
+        ],
       });
     });
-
-    let paths: string[] = [];
-    await act(async () => {
-      paths = await result.current.apply(item);
-    });
-
-    expect(paths).toEqual(["Notes/A.md", "Notes/B.md"]);
-    expect(saveNoteSpy).toHaveBeenCalledTimes(2);
-    expect(auditSpy).toHaveBeenCalledTimes(2);
-    expect(item.status).toBe("applied");
   });
 
-  it("applies review_prompt suggestions by writing reviewRequestedAt metadata", async () => {
-    const applyMetaSpy = vi.spyOn(vaultApi, "applyNoteMetadata").mockResolvedValue(undefined);
-    const auditSpy = vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue(undefined);
-
-    const item: ReviewQueueItem = {
-      id: "health-Notes/Stale.md-reviewPrompt",
-      sourceId: "Notes/Stale.md",
-      kind: "stale_note",
-      status: "new",
-      path: "Notes/Stale.md",
-      title: "Stale Note",
-      gitStaged: false,
-      createdAt: 0,
-      suggestionKind: "review_prompt",
-    };
-
+  it("fails with zero changes when every candidate save resolves unsaved", async () => {
+    // Given
+    const reviewItem = item("backlinks_in");
+    vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      candidate("Notes/A.md"),
+      candidate("Notes/B.md"),
+    ]);
+    vi.spyOn(vaultApi, "readNote").mockImplementation(async (path) => ({
+      path,
+      content: "# Candidate",
+      revision: "rev-1",
+    }));
+    vi.spyOn(vaultApi, "saveNote").mockResolvedValue(UNSAVED_CONFLICT);
     const { result } = renderHook(() => useMaintenancePlanner());
-    act(() => {
-      result.current.hydrate({
-        [item.id]: {
-          proposed: "Review section X",
-          provenance: { source: "maintenance_planner" },
-          generatedAt: "2024-01-01T00:00:00.000Z",
-        },
+    hydrate(result.current, reviewItem);
+
+    // When / Then
+    await act(async () => {
+      await expect(result.current.apply(reviewItem)).rejects.toMatchObject({
+        code: "zero_changes",
+        warnings: [
+          {
+            code: "partial_failure",
+            message: expect.stringContaining("conflict=true"),
+            path: "Notes/A.md",
+          },
+          {
+            code: "partial_failure",
+            message: expect.stringContaining("conflict=true"),
+            path: "Notes/B.md",
+          },
+        ],
       });
     });
+  });
 
-    let paths: string[] = [];
+  it("returns successful paths and failed-target warnings after partial success", async () => {
+    // Given
+    const reviewItem = item("link_candidates", "orphan_note");
+    vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      candidate("Notes/A.md"),
+      candidate("Notes/B.md"),
+      candidate("Notes/C.md"),
+    ]);
+    vi.spyOn(vaultApi, "readNote").mockImplementation(async (path) => ({
+      path,
+      content: "# Candidate",
+      revision: "rev-1",
+    }));
+    vi.spyOn(vaultApi, "saveNote").mockImplementation(async (path) => {
+      if (path === "Notes/B.md") throw new Error("B save failed");
+      return SAVED;
+    });
+    vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue(undefined);
+    const { result } = renderHook(() => useMaintenancePlanner());
+    hydrate(result.current, reviewItem);
+
+    // When
+    let applied;
     await act(async () => {
-      paths = await result.current.apply(item);
+      applied = await result.current.apply(reviewItem);
     });
 
-    expect(paths).toEqual(["Notes/Stale.md"]);
-    expect(applyMetaSpy).toHaveBeenCalledWith(
-      "Notes/Stale.md",
-      expect.objectContaining({ reviewRequestedAt: expect.any(String) }),
-      []
-    );
-    expect(auditSpy).toHaveBeenCalledTimes(1);
-    expect(item.status).toBe("applied");
+    // Then
+    expect(applied).toEqual({
+      changedPaths: ["Notes/A.md", "Notes/C.md"],
+      warnings: [{
+        code: "partial_failure",
+        message: "B save failed",
+        path: "Notes/B.md",
+      }],
+    });
+  });
+
+  it("excludes unsaved candidate results from changed paths and returns warnings", async () => {
+    // Given
+    const reviewItem = item("link_candidates", "orphan_note");
+    vi.spyOn(vaultApi, "getContextBundleCandidates").mockResolvedValue([
+      candidate("Notes/A.md"),
+      candidate("Notes/B.md"),
+      candidate("Notes/C.md"),
+    ]);
+    vi.spyOn(vaultApi, "readNote").mockImplementation(async (path) => ({
+      path,
+      content: "# Candidate",
+      revision: "rev-1",
+    }));
+    vi.spyOn(vaultApi, "saveNote").mockImplementation(async (path) => {
+      if (path === "Notes/B.md") return UNSAVED_CONFLICT;
+      return SAVED;
+    });
+    vi.spyOn(vaultApi, "appendAiAudit").mockResolvedValue(undefined);
+    const { result } = renderHook(() => useMaintenancePlanner());
+    hydrate(result.current, reviewItem);
+
+    // When
+    let applied;
+    await act(async () => {
+      applied = await result.current.apply(reviewItem);
+    });
+
+    // Then
+    expect(applied).toEqual({
+      changedPaths: ["Notes/A.md", "Notes/C.md"],
+      warnings: [{
+        code: "partial_failure",
+        message: expect.stringContaining("snapshot-conflict"),
+        path: "Notes/B.md",
+      }],
+    });
+  });
+
+  it("keeps a durable path when its audit append fails", async () => {
+    // Given
+    const reviewItem = item("review_prompt", "stale_note");
+    vi.spyOn(vaultApi, "applyNoteMetadata").mockResolvedValue(undefined);
+    vi.spyOn(vaultApi, "appendAiAudit").mockRejectedValue(new Error("audit unavailable"));
+    const { result } = renderHook(() => useMaintenancePlanner());
+    hydrate(result.current, reviewItem);
+
+    // When
+    let applied;
+    await act(async () => {
+      applied = await result.current.apply(reviewItem);
+    });
+
+    // Then
+    expect(applied).toEqual({
+      changedPaths: ["Notes/Target.md"],
+      warnings: [{
+        code: "post_action_failed",
+        message: "audit unavailable",
+        path: "Notes/Target.md",
+      }],
+    });
+  });
+
+  it("rejects split before metadata mutation for a missing-summary item", async () => {
+    // Given
+    const reviewItem = item("split", "missing_summary");
+    const applyMetadata = vi.spyOn(vaultApi, "applyNoteMetadata");
+    const { result } = renderHook(() => useMaintenancePlanner());
+    hydrate(result.current, reviewItem);
+
+    // When / Then
+    await act(async () => {
+      await expect(result.current.apply(reviewItem)).rejects.toMatchObject({
+        code: "unsupported",
+      });
+    });
+    expect(applyMetadata).not.toHaveBeenCalled();
   });
 });

@@ -42,13 +42,16 @@ export default defineConfig({
   test: {
     globals: true,
     exclude: testExclude,
+    pool: "threads",
+    minWorkers: 1,
+    maxWorkers: 4,
     projects: [
       {
         test: {
           name: "node",
           environment: "node",
           globals: true,
-          exclude: [...testExclude, "tests/proposedEditApply.test.ts"],
+          exclude: [...testExclude, "tests/proposedEditApply.test.ts", "tests/contract/mockVault.contract.test.ts"],
           include: ["tests/**/*.test.ts", "src/**/*.test.ts", "tests/contextRefresh.test.tsx"]
         }
       },
@@ -59,7 +62,7 @@ export default defineConfig({
           globals: true,
           exclude: [...testExclude, "tests/contextRefresh.test.tsx"],
           setupFiles: ["tests/setupDom.ts"],
-          include: ["tests/**/*.test.tsx", "src/**/*.test.tsx", "tests/proposedEditApply.test.ts"]
+          include: ["tests/**/*.test.tsx", "src/**/*.test.tsx", "tests/proposedEditApply.test.ts", "tests/contract/mockVault.contract.test.ts"]
         }
       }
     ]

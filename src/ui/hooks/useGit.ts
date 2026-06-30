@@ -1,6 +1,8 @@
 import { useState, useRef } from "react";
 import { vaultApi } from "../../api";
 import type { GitStatus, GitFileChange, NoteDocument, UnresolvedLinkGroup, UnresolvedLinkSource } from "../../api/types";
+import { normalizeRef } from "../../core/normalizeRef";
+import type { UnresolvedLinksState } from "./useUnresolvedLinks";
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 type DistillTab = "paste" | "chat" | "auditor" | "git";
@@ -12,15 +14,10 @@ export interface UseGitCallbacks {
   setDraft: (draft: string) => void;
   setViewMode: (mode: ViewMode) => void;
   setDistillTab: (tab: DistillTab) => void;
-  setActiveUnresolvedTarget: (target: string | null) => void;
-  setSelectedUnresolvedTargets: (targets: Set<string>) => void;
   activePath: string | null;
   runUnresolvedLinksScan: () => Promise<UnresolvedLinkGroup[]>;
   draftStubNote: (target: string, sources: UnresolvedLinkSource[]) => Promise<void>;
-}
-
-function normalizeRef(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
+  unresolved: UnresolvedLinksState;
 }
 
 function errorMessage(error: unknown): string {
@@ -35,12 +32,16 @@ export function useGit(callbacks: UseGitCallbacks) {
     setDraft,
     setViewMode,
     setDistillTab,
-    setActiveUnresolvedTarget,
-    setSelectedUnresolvedTargets,
     activePath,
     runUnresolvedLinksScan,
     draftStubNote,
+    unresolved,
   } = callbacks;
+  const {
+    unresolvedLinks,
+    setActiveUnresolvedTarget,
+    setSelectedUnresolvedTargets,
+  } = unresolved;
 
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [gitChanges, setGitChanges] = useState<GitFileChange[]>([]);
@@ -51,13 +52,12 @@ export function useGit(callbacks: UseGitCallbacks) {
   const [isGitLoading, setIsGitLoading] = useState<boolean>(false);
   const [gitOutputLog, setGitOutputLog] = useState<string | null>(null);
   const [auditorSubTab, setAuditorSubTab] = useState<"health" | "links">("health");
-  const [unresolvedLinks, setUnresolvedLinks] = useState<UnresolvedLinkGroup[]>([]);
-  const [isScanningUnresolved, setIsScanningUnresolved] = useState(false);
   const [pendingPullWarning, setPendingPullWarning] = useState<{ dirtyFiles: GitFileChange[] } | null>(null);
   const [stashRetainedRef, setStashRetainedRef] = useState<string | null>(null);
   const [mergeHeadExists, setMergeHeadExists] = useState<boolean>(false);
   const [forceFreshConflictResolver, setForceFreshConflictResolver] = useState<boolean>(false);
   const gitRequestCounter = useRef(0);
+  const commitInFlightRef = useRef<{ message: string; promise: Promise<string[]> } | null>(null);
 
   async function refreshGitWorkspace(intendedSelection?: { path: string; staged: boolean }) {
     const requestId = ++gitRequestCounter.current;
@@ -158,24 +158,58 @@ export function useGit(callbacks: UseGitCallbacks) {
     }
   }
 
-  async function handleGitCommit(message: string) {
-    if (!message.trim()) {
+  // ponytail: returns normalized staged paths on success, empty on failure
+  async function handleGitCommit(message: string): Promise<string[]> {
+    const trimmed = message.trim();
+    if (!trimmed) {
       setGitOutputLog("Error: Commit message cannot be empty.");
-      return;
+      return [];
     }
+    // ponytail: concurrency guard before any async work or state mutation
+    if (commitInFlightRef.current !== null) {
+      if (commitInFlightRef.current.message === trimmed) {
+        return commitInFlightRef.current.promise;
+      }
+      setGitOutputLog("Commit already in progress.");
+      return [];
+    }
+    const promise = (async () => {
     setIsGitLoading(true);
     try {
-      const output = await vaultApi.gitCommit(message);
+      const changes = await vaultApi.getGitChanges();
+      const stagedPaths = changes
+        .filter((c) => c.staged)
+        .map((c) => c.path.replace(/\\/g, "/"));
+      if (stagedPaths.length === 0) {
+        setGitOutputLog("Nothing staged to commit.");
+        setIsGitLoading(false);
+        return [];
+      }
+      const output = await vaultApi.gitCommit(trimmed);
       setGitOutputLog(output);
       setCommitMessage("");
       setSelectedGitFile(null);
       setActiveDiff(null);
-      await refreshGitWorkspace();
-      await refreshVault(activePath);
+      // ponytail: refresh failure after successful commit is non-fatal
+      try {
+        await refreshGitWorkspace();
+        await refreshVault(activePath);
+      } catch (refreshErr) {
+        setGitOutputLog(`${output}\n⚠ Post-commit refresh: ${errorMessage(refreshErr)}`);
+      }
+      return stagedPaths;
     } catch (err) {
       setGitOutputLog(`Commit failed:\n${errorMessage(err)}`);
+      return [];
     } finally {
       setIsGitLoading(false);
+    }
+    })();
+    commitInFlightRef.current = { message: trimmed, promise };
+    try {
+      return await promise;
+    } finally {
+      commitInFlightRef.current = null;
     }
   }
 
@@ -362,8 +396,6 @@ export function useGit(callbacks: UseGitCallbacks) {
     isGitLoading,
     gitOutputLog, setGitOutputLog,
     auditorSubTab, setAuditorSubTab,
-    unresolvedLinks, setUnresolvedLinks,
-    isScanningUnresolved, setIsScanningUnresolved,
     refreshGitWorkspace,
     handleGitStageFile,
     handleGitUnstageFile,

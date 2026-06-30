@@ -12,11 +12,19 @@ pub(crate) fn open_vault(path: String, state: tauri::State<AppState>) -> Result<
     guard.notes = notes;
     guard.snapshots = load_recovery_index(&root);
     self_heal_recovery(&root, &mut guard.snapshots);
+
+    let mut decisions = load_review_decisions(&root);
+    let note_paths: std::collections::HashSet<String> =
+        guard.notes.iter().map(|n| n.meta.path.clone()).collect();
+    compact_review_decisions(&mut decisions, &note_paths);
+    guard.review_decisions = decisions.clone();
+
     Ok(VaultSnapshot {
         root_path: root.to_string_lossy().to_string(),
         notes: metas,
         tree,
         obsidian_settings: read_obsidian_settings(&root),
+        review_decisions: decisions,
     })
 }
 
@@ -55,7 +63,7 @@ pub(crate) fn save_note(path: String, content: String, base_revision: String, st
 
     let snapshot_id = snapshot(&mut guard, &root, &path, &current, "save");
     fs::write(&full_path, &content).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&path])?;
     let git_commit = if guard.auto_git_enabled { commit_after_mutation(&root, &[&path]).ok().flatten() } else { None };
     Ok(SaveResult {
         saved: true,
@@ -79,7 +87,7 @@ pub(crate) fn create_note(parent_path: Option<String>, title: String, state: tau
         fs::create_dir_all(parent_dir).map_err(|error| error.to_string())?;
     }
     fs::write(&full_path, format!("# {}\n", clean_title)).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&path])?;
     if guard.auto_git_enabled {
         let _ = commit_after_mutation(&root, &[&path]);
     }
@@ -191,7 +199,7 @@ pub(crate) fn capture_to_inbox(input: CaptureInput, state: tauri::State<AppState
         let title = path.trim_start_matches("Inbox/").trim_end_matches(".md");
         fs::write(&full_path, format!("# {}\n\n{}", title, capture)).map_err(|error| error.to_string())?;
     }
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&path])?;
     if guard.auto_git_enabled {
         let _ = commit_after_mutation(&root, &[&path]);
     }
@@ -219,7 +227,7 @@ pub(crate) fn mark_inbox_capture_processed(inbox_path: String, capture_id: Strin
     let full_path = resolve_vault_path(&root, &inbox_path)?;
     let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     fs::write(&full_path, move_inbox_capture_to_processed(&content, &capture_id)?).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&inbox_path])?;
     Ok(EntryMutationResult {
         vault: vault_snapshot(&root, &guard.notes),
         selected_path: Some(inbox_path),
@@ -242,7 +250,7 @@ pub(crate) fn promote_inbox_capture(input: PromoteInboxCaptureInput, state: taur
     let note_full_path = resolve_vault_path(&root, &note_path)?;
     fs::write(&note_full_path, format!("# {}\n\n{}\n", clean_title, capture.body.trim())).map_err(|error| error.to_string())?;
     fs::write(&inbox_full_path, move_inbox_capture_to_processed(&inbox_content, &input.capture_id)?).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&note_path, &input.inbox_path])?;
     if guard.auto_git_enabled {
         let _ = commit_after_mutation(&root, &[&note_path, &input.inbox_path]);
     }
@@ -282,8 +290,8 @@ pub(crate) fn append_inbox_capture(input: AppendInboxCaptureInput, state: tauri:
     
     fs::write(&target_full_path, format!("{}{}", target_content, append_text)).map_err(|error| error.to_string())?;
     fs::write(&inbox_full_path, move_inbox_capture_to_processed(&inbox_content, &input.capture_id)?).map_err(|error| error.to_string())?;
-    
-    reindex_after_mutation(&mut guard, &root)?;
+
+    reindex_changed_files(&mut guard, &root, &[&input.target_path, &input.inbox_path])?;
     if guard.auto_git_enabled {
         let _ = commit_after_mutation(&root, &[&input.target_path, &input.inbox_path]);
     }
@@ -352,7 +360,7 @@ fn mutate_graph_link(source_path: String, target_path: String, add: bool, state:
     let content = fs::read_to_string(&full_path).map_err(|error| error.to_string())?;
     let next = if add { add_managed_link(&content, &target_title) } else { remove_managed_link(&content, &target_title) };
     fs::write(&full_path, &next).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&source_path])?;
     Ok(LinkMutationResult {
         note: NoteDocument { path: source_path, revision: revision_of(&next), content: next },
         graph: build_graph(&guard.notes),
@@ -388,7 +396,7 @@ pub(crate) fn restore_snapshot(snapshot_id: String, state: tauri::State<AppState
         .or_else(|_| guard.snapshot_content.get(&snapshot_id).cloned().ok_or("Snapshot content not found".to_string()))?;
     let target_path = resolve_vault_path(&root, &snapshot.path)?;
     fs::write(target_path, &content).map_err(|error| error.to_string())?;
-    reindex_after_mutation(&mut guard, &root)?;
+    reindex_changed_files(&mut guard, &root, &[&snapshot.path])?;
     Ok(SaveResult {
         saved: true,
         revision: revision_of(&content),

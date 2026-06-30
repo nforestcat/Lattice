@@ -1,4 +1,124 @@
-import type { AiProvenance } from "../../../api/types";
+import type { AiProvenance, ReviewItemStatus } from "../../../api/types";
+
+type ReviewQueueItemHeaderProps = {
+  readonly kind: string;
+  readonly status: ReviewItemStatus;
+  readonly gitStaged?: boolean;
+};
+
+type ReviewQueuePreviewProps = {
+  readonly original?: string;
+  readonly proposed?: string;
+  readonly reason?: string;
+};
+
+const KIND_COLORS: Readonly<Record<string, string>> = {
+  inbox_capture: "#6366f1",
+  ingest_capture: "#0284c7",
+  ingest_draft: "#0ea5e9",
+  proposed_edit: "#f59e0b",
+  missing_summary: "#8b5cf6",
+  dead_link: "#ef4444",
+  backlink_suggestion: "#10b981",
+  duplicate_warning: "#f97316",
+  orphan_note: "#64748b",
+  stale_note: "#a16207",
+  too_broad: "#f59e0b",
+  weak_backlinks: "#0d9488",
+};
+
+const STATUS_COLORS: Readonly<Record<ReviewItemStatus, { readonly bg: string; readonly color: string }>> = {
+  drafted: { bg: "#e0e7ff", color: "#4338ca" },
+  approved: { bg: "#d1fae5", color: "#065f46" },
+  applied: { bg: "#f0fdf4", color: "#166534" },
+  committed: { bg: "#ecfdf5", color: "#14532d" },
+  rejected: { bg: "#fee2e2", color: "#991b1b" },
+};
+
+export function ReviewQueueItemHeader({ kind, status, gitStaged }: ReviewQueueItemHeaderProps) {
+  const statusStyle = STATUS_COLORS[status];
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <span
+        style={{
+          background: KIND_COLORS[kind] ?? "#64748b",
+          color: "#fff",
+          borderRadius: 4,
+          padding: "1px 7px",
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: "0.02em",
+        }}
+      >
+        {kind.replace(/_/g, " ")}
+      </span>
+      <span
+        style={{
+          background: statusStyle.bg,
+          color: statusStyle.color,
+          borderRadius: 4,
+          padding: "1px 7px",
+          fontSize: 11,
+          fontWeight: 600,
+        }}
+      >
+        {status}
+      </span>
+      {gitStaged && (
+        <span
+          style={{
+            background: "#f0fdf4",
+            color: "#166534",
+            border: "1px solid #bbf7d0",
+            borderRadius: 4,
+            padding: "1px 7px",
+            fontSize: 11,
+            fontWeight: 600,
+          }}
+        >
+          staged
+        </span>
+      )}
+    </div>
+  );
+}
+
+export function ReviewQueuePreview({ original, proposed, reason }: ReviewQueuePreviewProps) {
+  return (
+    <>
+      {original != null ? (
+        <div style={{ display: "flex", gap: 8 }}>
+          <DiffBlock label="이전" value={original} tone="remove" />
+          <DiffBlock label="이후" value={proposed ?? ""} tone="add" />
+        </div>
+      ) : proposed != null ? (
+        <div>
+          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>제안</div>
+          <pre
+            style={{
+              margin: 0,
+              padding: "8px 10px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 4,
+              fontSize: 12,
+              overflowX: "auto",
+              overflowY: "auto",
+              maxHeight: 240,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              color: "#1e293b",
+            }}
+          >
+            {proposed}
+          </pre>
+        </div>
+      ) : null}
+      {reason && <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>{reason}</div>}
+    </>
+  );
+}
 
 export function ProvenanceBlock({ provenance }: { readonly provenance?: AiProvenance }) {
   if (provenance === undefined) {
@@ -31,6 +151,40 @@ export function ProvenanceBlock({ provenance }: { readonly provenance?: AiProven
   );
 }
 
+type RiskBlockProps = {
+  readonly path?: string;
+  readonly destructive: boolean;
+};
+
+export function RiskBlock({ path, destructive }: RiskBlockProps) {
+  if (path == null && !destructive) return null;
+
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      {destructive && (
+        <span
+          data-testid="risk-destructive-pill"
+          style={{
+            background: "#fee2e2",
+            color: "#991b1b",
+            borderRadius: 4,
+            padding: "1px 7px",
+            fontSize: 11,
+            fontWeight: 600,
+          }}
+        >
+          파괴적 변경 (merge/delete)
+        </span>
+      )}
+      {path != null && (
+        <span style={{ fontSize: 11, color: "#64748b" }}>
+          영향 파일: {path}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function DiffBlock({
   label,
   value,
@@ -55,6 +209,8 @@ export function DiffBlock({
           borderRadius: 4,
           fontSize: 12,
           overflowX: "auto",
+          overflowY: "auto",
+          maxHeight: 240,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           ...styles,

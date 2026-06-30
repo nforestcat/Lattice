@@ -1,23 +1,82 @@
 import { useState } from "react";
 import { vaultApi } from "../../api";
 import { sendChatMessage, type ChatMessage } from "../../api/llm";
-import type { LlmConfig, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource, VaultSnapshot } from "../../api/types";
-
-function normalizeRef(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
-}
+import type {
+  LlmConfig,
+  SaveResult,
+  SourceMutationResult,
+  SourceMutationWarning,
+  StubDraftReview,
+  UnresolvedLinkGroup,
+  UnresolvedLinkSource,
+  VaultSnapshot,
+} from "../../api/types";
+import { normalizeRef } from "../../core/normalizeRef";
+import type { UnresolvedLinksState } from "./useUnresolvedLinks";
 
 export interface UseStubDraftingCallbacks {
-  llmConfig: LlmConfig;
-  vault: VaultSnapshot | null;
-  activePath: string | null;
-  setStatus: (status: string) => void;
-  refreshVault: (path: string | null) => Promise<void>;
-  unresolvedLinks: UnresolvedLinkGroup[];
-  setUnresolvedLinks: (links: UnresolvedLinkGroup[]) => void;
-  setIsScanningUnresolved: (scanning: boolean) => void;
-  activeUnresolvedTarget: string | null;
-  setActiveUnresolvedTarget: (target: string | null) => void;
+  readonly llmConfig: LlmConfig;
+  readonly vault: VaultSnapshot | null;
+  readonly activePath: string | null;
+  readonly setStatus: (status: string) => void;
+  readonly refreshVault: (path: string | null) => Promise<void>;
+  readonly unresolved: UnresolvedLinksState;
+}
+
+class StubDraftApplyError extends Error {
+  readonly code: "draft_not_ready" | "missing_created_path" | "save_not_durable";
+  readonly path: string | undefined;
+  readonly saveResult: SaveResult | undefined;
+
+  constructor(
+    code: StubDraftApplyError["code"],
+    message: string,
+    details?: { readonly path: string; readonly saveResult: SaveResult },
+  ) {
+    super(message);
+    this.name = "StubDraftApplyError";
+    this.code = code;
+    this.path = details?.path;
+    this.saveResult = details?.saveResult;
+  }
+}
+
+function warningFor(error: unknown, path: string): SourceMutationWarning {
+  return {
+    code: "post_action_failed",
+    message: error instanceof Error ? error.message : String(error),
+    path,
+  };
+}
+
+function durableSaveResult(path: string, result: SaveResult): void {
+  if (result.saved) return;
+  throw new StubDraftApplyError(
+    "save_not_durable",
+    `Save did not complete for ${path}: conflict=${result.conflict}, snapshot=${result.snapshotId ?? "none"}`,
+    { path, saveResult: result },
+  );
+}
+
+async function requestStubDraft(
+  config: LlmConfig,
+  target: string,
+  sources: readonly UnresolvedLinkSource[],
+): Promise<string> {
+  const sourceInfo = sources
+    .map((source) => `Note: "${source.title}"\nContext Excerpt:\n${source.excerpt}`)
+    .join("\n\n");
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: "You are an expert wiki editor. Please write a short, concise, and high-quality stub note (in Markdown) defining the term. Do not include a heading for the title, just write the body text with appropriate formatting.",
+    },
+    {
+      role: "user",
+      content: `We have an unresolved wiki link to the note "${target}". It is referenced in the following contexts:\n\n${sourceInfo}\n\nPlease write a concise defining stub note (in Markdown) for "${target}" based on this context.`,
+    },
+  ];
+  return sendChatMessage(config, messages);
 }
 
 export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
@@ -27,31 +86,35 @@ export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
     activePath,
     setStatus,
     refreshVault,
+    unresolved,
+  } = callbacks;
+  const {
     unresolvedLinks,
     setUnresolvedLinks,
+    isScanningUnresolved: _,
     setIsScanningUnresolved,
+    selectedUnresolvedTargets,
+    setSelectedUnresolvedTargets,
     activeUnresolvedTarget,
     setActiveUnresolvedTarget,
-  } = callbacks;
-
+  } = unresolved;
   const [draftingTarget, setDraftingTarget] = useState<string | null>(null);
   const [draftedContent, setDraftedContent] = useState<string | null>(null);
-  const [selectedUnresolvedTargets, setSelectedUnresolvedTargets] = useState<Set<string>>(new Set());
   const [bulkDrafts, setBulkDrafts] = useState<Record<string, StubDraftReview>>({});
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
-  async function runUnresolvedLinksScan() {
+  async function runUnresolvedLinksScan(): Promise<UnresolvedLinkGroup[]> {
     setIsScanningUnresolved(true);
     setUnresolvedLinks([]);
     setDraftingTarget(null);
     setDraftedContent(null);
     try {
-      const list = await vaultApi.getUnresolvedLinks();
-      setUnresolvedLinks(list);
-      setStatus(`Scan complete: found ${list.length} unresolved link(s)`);
-      return list;
-    } catch (err) {
-      console.error(err);
+      const links = await vaultApi.getUnresolvedLinks();
+      setUnresolvedLinks(links);
+      setStatus(`Scan complete: found ${links.length} unresolved link(s)`);
+      return links;
+    } catch (error) {
+      console.error(error instanceof Error ? error : new Error(String(error)));
       setStatus("Failed to scan unresolved links");
       return [];
     } finally {
@@ -59,223 +122,141 @@ export function useStubDrafting(callbacks: UseStubDraftingCallbacks) {
     }
   }
 
-  async function draftStubNote(targetTitle: string, sources: UnresolvedLinkSource[]) {
-    const config = llmConfig;
-    if (!config.provider || (!config.apiKey && config.provider !== "ollama" && config.provider !== "lm-studio")) {
+  async function draftStubNote(
+    target: string,
+    sources: readonly UnresolvedLinkSource[],
+  ): Promise<void> {
+    if (
+      !llmConfig.provider
+      || (
+        !llmConfig.apiKey
+        && llmConfig.provider !== "ollama"
+        && llmConfig.provider !== "lm-studio"
+      )
+    ) {
       setStatus("Please configure LLM settings first");
       return;
     }
-
-    setBulkDrafts(prev => ({
-      ...prev,
-      [targetTitle]: { content: "", status: "drafting", approved: true }
+    setBulkDrafts((previous) => ({
+      ...previous,
+      [target]: { content: "", status: "drafting" },
     }));
-    setSelectedUnresolvedTargets(prev => {
-      const next = new Set(prev);
-      next.add(targetTitle);
-      return next;
-    });
-
+    setSelectedUnresolvedTargets((previous) => new Set(previous).add(target));
     try {
-      const sourceInfo = sources.map(s => `Note: "${s.title}"\nContext Excerpt:\n${s.excerpt}`).join("\n\n");
-      const systemPrompt = "You are an expert wiki editor. Please write a short, concise, and high-quality stub note (in Markdown) defining the term. Do not include a heading for the title, just write the body text with appropriate formatting.";
-      const userPrompt = `We have an unresolved wiki link to the note "${targetTitle}". It is referenced in the following contexts:\n\n${sourceInfo}\n\nPlease write a concise defining stub note (in Markdown) for "${targetTitle}" based on this context.`;
-
-      const payload: ChatMessage[] = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ];
-
-      const response = await sendChatMessage(config, payload);
-      setBulkDrafts(prev => ({
-        ...prev,
-        [targetTitle]: { content: response, status: "done", approved: true }
+      const content = await requestStubDraft(llmConfig, target, sources);
+      setBulkDrafts((previous) => ({
+        ...previous,
+        [target]: { content, status: "done" },
       }));
-      setStatus(`Drafted AI stub for "${targetTitle}"`);
-    } catch (err) {
-      console.error(err);
-      setBulkDrafts(prev => ({
-        ...prev,
-        [targetTitle]: { content: "", status: "error", approved: false }
+      setStatus(`Drafted AI stub for "${target}"`);
+    } catch (error) {
+      console.error(error instanceof Error ? error : new Error(String(error)));
+      setBulkDrafts((previous) => ({
+        ...previous,
+        [target]: { content: "", status: "error" },
       }));
       setStatus("Failed to draft AI stub");
     }
   }
 
-  async function runBulkDrafting() {
-    // Preserve approved drafts so user edits are not overwritten, but allow rejected drafts to be regenerated.
-    const targets = Array.from(selectedUnresolvedTargets).filter(t => {
-      const draft = bulkDrafts[t];
-      return !(draft?.status === "done" && draft.approved);
-    });
+  async function runBulkDrafting(): Promise<void> {
+    const targets = [...selectedUnresolvedTargets].filter(
+      (target) => bulkDrafts[target]?.status !== "done",
+    );
     if (targets.length === 0) {
       setStatus("No new stubs to draft");
       return;
     }
-
     setIsBulkProcessing(true);
     setStatus(`Bulk drafting ${targets.length} stub(s)...`);
-
-    const nextDrafts = { ...bulkDrafts };
-    for (const t of targets) {
-      nextDrafts[t] = { content: "", status: "drafting", approved: true };
-    }
-    setBulkDrafts(nextDrafts);
-
-    const config = llmConfig;
-
     for (const target of targets) {
-      const item = unresolvedLinks.find(x => x.target === target);
-      if (!item) continue;
-
-      try {
-        const sourceInfo = item.sources.map(s => `Note: "${s.title}"\nContext Excerpt:\n${s.excerpt}`).join("\n\n");
-        const systemPrompt = "You are an expert wiki editor. Please write a short, concise, and high-quality stub note (in Markdown) defining the term. Do not include a heading for the title, just write the body text with appropriate formatting.";
-        const userPrompt = `We have an unresolved wiki link to the note "${target}". It is referenced in the following contexts:\n\n${sourceInfo}\n\nPlease write a concise defining stub note (in Markdown) for "${target}" based on this context.`;
-
-        const payload: ChatMessage[] = [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ];
-
-        const response = await sendChatMessage(config, payload);
-        setBulkDrafts(prev => ({
-          ...prev,
-          [target]: { content: response, status: "done", approved: true }
-        }));
-      } catch (err) {
-        console.error(err);
-        setBulkDrafts(prev => ({
-          ...prev,
-          [target]: { content: "", status: "error", approved: false }
-        }));
-      }
+      const group = unresolvedLinks.find((candidate) => candidate.target === target);
+      if (group) await draftStubNote(target, group.sources);
     }
-
     setIsBulkProcessing(false);
     setStatus("Finished bulk drafting stubs");
   }
 
-  async function createSelectedStubs() {
-    const targets = Array.from(selectedUnresolvedTargets).filter(t => {
-      const draft = bulkDrafts[t];
-      return draft?.status === "done" && draft?.approved;
-    });
-    if (targets.length === 0) return;
-
-    setStatus(`Creating ${targets.length} note(s)...`);
-    let successCount = 0;
-    const createdTargets: string[] = [];
+  async function applyStubDraft(target: string): Promise<SourceMutationResult> {
+    const draft = bulkDrafts[target];
+    if (!draft || draft.status !== "done") {
+      throw new StubDraftApplyError(
+        "draft_not_ready",
+        `Generated stub draft is not ready: ${target}`,
+      );
+    }
+    const created = await vaultApi.createNote(null, target);
+    const createdPath = created.selectedPath;
+    if (!createdPath) {
+      throw new StubDraftApplyError(
+        "missing_created_path",
+        `Created stub path is missing: ${target}`,
+      );
+    }
     try {
-      for (const target of targets) {
-        const draft = bulkDrafts[target];
-        if (!draft || draft.status !== "done" || !draft.approved) continue;
-
-        try {
-          const result = await vaultApi.createNote(null, target);
-          const newPath = result.selectedPath;
-          if (newPath) {
-            const createdDoc = await vaultApi.readNote(newPath);
-            const saveResult = await vaultApi.saveNote(newPath, draft.content, createdDoc.revision);
-            if (!saveResult.saved) {
-              throw new Error("Failed to save stub content");
-            }
-            successCount++;
-            createdTargets.push(target);
-
-            // Clear activeUnresolvedTarget if this created note was the active ghost
-            if (activeUnresolvedTarget && normalizeRef(target) === activeUnresolvedTarget) {
-              setActiveUnresolvedTarget(null);
-            }
-          }
-        } catch (err) {
-          console.error(`Failed to create stub for ${target}:`, err);
-        }
+      const document = await vaultApi.readNote(createdPath);
+      durableSaveResult(
+        createdPath,
+        await vaultApi.saveNote(createdPath, draft.content, document.revision),
+      );
+    } catch (error) {
+      try {
+        await vaultApi.deleteEntry(createdPath);
+      } catch (rollbackError) {
+        if (rollbackError instanceof Error) console.warn("Failed to rollback stub note", rollbackError.message);
+        else console.warn("Failed to rollback stub note", String(rollbackError));
       }
+      throw error;
+    }
 
-      setStatus(`Successfully created ${successCount} stub note(s).`);
+    setBulkDrafts((previous) => {
+      const next = { ...previous };
+      delete next[target];
+      return next;
+    });
+    setSelectedUnresolvedTargets((previous) => {
+      const next = new Set(previous);
+      next.delete(target);
+      return next;
+    });
+    if (activeUnresolvedTarget && normalizeRef(target) === activeUnresolvedTarget) {
+      setActiveUnresolvedTarget(null);
+    }
 
-      // Keep rejected/unprocessed targets in selection, remove successfully created ones
-      const remainingTargets = new Set(selectedUnresolvedTargets);
-      createdTargets.forEach(t => remainingTargets.delete(t));
-      setSelectedUnresolvedTargets(remainingTargets);
-
-      // Clean up successfully created drafts
-      const remainingDrafts = { ...bulkDrafts };
-      createdTargets.forEach(t => delete remainingDrafts[t]);
-      setBulkDrafts(remainingDrafts);
-
-      if (vault) {
+    const warnings: SourceMutationWarning[] = [];
+    if (vault) {
+      try {
         await refreshVault(activePath);
+      } catch (error) {
+        warnings.push(
+          warningFor(error instanceof Error ? error : new Error(String(error)), createdPath),
+        );
       }
-      void runUnresolvedLinksScan();
-    } catch (err) {
-      console.error(err);
-      setStatus("Failed to create selected stub notes");
     }
-  }
-
-  function handleSelectAllToggle() {
-    const allSelected = unresolvedLinks.every(item => selectedUnresolvedTargets.has(item.target));
-    if (allSelected) {
-      setSelectedUnresolvedTargets(new Set());
-    } else {
-      setSelectedUnresolvedTargets(new Set(unresolvedLinks.map(item => item.target)));
+    setIsScanningUnresolved(true);
+    try {
+      setUnresolvedLinks(await vaultApi.getUnresolvedLinks());
+    } catch (error) {
+      warnings.push(
+        warningFor(error instanceof Error ? error : new Error(String(error)), createdPath),
+      );
+    } finally {
+      setIsScanningUnresolved(false);
     }
+    setStatus(`Created stub note "${target}"`);
+    return { changedPaths: [createdPath], warnings };
   }
 
-  function approveDraft(target: string) {
-    setBulkDrafts(prev => prev[target] ? {
-      ...prev,
-      [target]: { ...prev[target], approved: true }
-    } : prev);
+  function handleSelectAllToggle(): void {
+    const allSelected = unresolvedLinks.every((item) =>
+      selectedUnresolvedTargets.has(item.target)
+    );
+    setSelectedUnresolvedTargets(
+      allSelected
+        ? new Set()
+        : new Set(unresolvedLinks.map((item) => item.target)),
+    );
   }
 
-  function rejectDraft(target: string) {
-    setBulkDrafts(prev => prev[target] ? {
-      ...prev,
-      [target]: { ...prev[target], approved: false }
-    } : prev);
-  }
-
-  function approveAllDrafts() {
-    setBulkDrafts(prev => {
-      const next = { ...prev };
-      for (const k of Object.keys(next)) {
-        if (next[k].status === "done") {
-          next[k] = { ...next[k], approved: true };
-        }
-      }
-      return next;
-    });
-  }
-
-  function rejectAllDrafts() {
-    setBulkDrafts(prev => {
-      const next = { ...prev };
-      for (const k of Object.keys(next)) {
-        if (next[k].status === "done") {
-          next[k] = { ...next[k], approved: false };
-        }
-      }
-      return next;
-    });
-  }
-
-  return {
-    draftingTarget, setDraftingTarget,
-    draftedContent, setDraftedContent,
-    selectedUnresolvedTargets, setSelectedUnresolvedTargets,
-    bulkDrafts, setBulkDrafts,
-    isBulkProcessing,
-    runUnresolvedLinksScan,
-    draftStubNote,
-    runBulkDrafting,
-    createSelectedStubs,
-    handleSelectAllToggle,
-    approveDraft,
-    rejectDraft,
-    approveAllDrafts,
-    rejectAllDrafts,
-  };
+  return { draftingTarget, setDraftingTarget, draftedContent, setDraftedContent, bulkDrafts, setBulkDrafts, isBulkProcessing, runUnresolvedLinksScan, draftStubNote, runBulkDrafting, applyStubDraft, handleSelectAllToggle };
 }

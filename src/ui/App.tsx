@@ -2,16 +2,14 @@ import { markdown } from "@codemirror/lang-markdown";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
-import { askConfirm, askInput, isDesktopRuntime, pickVaultFolder } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource } from "../api/types";
-import { sendChatMessage, type ChatMessage } from "../api/llm";
+import { askConfirm, askInput, isDesktopRuntime } from "../api/dialog";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource, SourceMutationResult } from "../api/types";
 import { canUseEmbeddings, getEmbedding } from "../api/embeddings";
-import type { InboxCaptureBlock } from "../core/capture";
 import type { GraphData, NoteMeta } from "../core/types";
-import { estimateTokens } from "../core/contextBundle";
 import { renderMarkdownPreview } from "./markdownPreview";
-import { getStartupVaultPath, rememberVaultPath } from "./vaultStartup";
-import { loadNoteContext, loadVaultOverview } from "./contextRefresh";
+import { getStartupVaultPath } from "./vaultStartup";
+import { computeHash, apiKeysCache, hasTauriInternals, readStoredLlmApiKey, saveStoredLlmApiKey } from "./llmSecrets";
+import { DEFAULT_NOTE_TEMPLATES, BUILTIN_TEMPLATES } from "./noteTemplates";
 import { GraphView } from "./components/GraphView";
 import { DistillWorkspace } from "./components/DistillWorkspace";
 import { Sidebar } from "./components/Sidebar";
@@ -29,6 +27,8 @@ import { useContextBundle } from "./hooks/useContextBundle";
 import { useLlm } from "./hooks/useLlm";
 import { usePromptHistory } from "./hooks/usePromptHistory";
 import { useStubDrafting } from "./hooks/useStubDrafting";
+import { useUnresolvedLinks } from "./hooks/useUnresolvedLinks";
+import { useVaultSession } from "./hooks/useVaultSession";
 import { useLinkSuggestions } from "./hooks/useLinkSuggestions";
 import { useInbox } from "./hooks/useInbox";
 import { useReviewQueue } from "./hooks/useReviewQueue";
@@ -58,120 +58,14 @@ export type PresetType = SharedPresetType;
 export const PRESETS = SHARED_PRESETS;
 export { normalizeVaultConfigShared as normalizeVaultConfig };
 
-export const DEFAULT_NOTE_TEMPLATES: NoteTemplate[] = [
-  {
-    name: "Meeting Notes",
-    description: "Template for recording meetings, attendees, action items, and notes.",
-    prompt: "A meeting notes document. Include frontmatter with 'type: meeting', 'date', and 'participants'. The body should have sections for 'Agenda', 'Discussion Notes', and 'Action Items' (with checkboxes)."
-  },
-  {
-    name: "Project Spec",
-    description: "Template for drafting technical specs, requirements, and milestones.",
-    prompt: "A project spec document. Include frontmatter with 'type: project', 'status: planning', and 'owner'. The body should have sections for 'Background', 'Proposed Changes', and 'Milestones'."
-  },
-  {
-    name: "Daily Log",
-    description: "Template for documenting daily progress, blockers, and goals.",
-    prompt: "A daily log entry. Include frontmatter with 'type: log' and 'date'. The body should have sections for 'Completed Today', 'Blockers', and 'Goals for Tomorrow'."
-  }
-];
-
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 
-async function computeHash(content: string): Promise<string> {
-  if (typeof crypto === "undefined" || !crypto.subtle) {
-    let hash = 0;
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(16).padStart(12, "0").slice(0, 12);
-  }
-  const msgBuffer = new TextEncoder().encode(content);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-  return hashHex.slice(0, 12);
+function sourceMutationResult(paths: readonly string[] | false): SourceMutationResult {
+  return {
+    changedPaths: paths === false ? [] : paths,
+    warnings: [],
+  };
 }
-
-function llmApiKeyStorageKey(provider: LlmProvider): string {
-  return `lattice:llm-api-key:${provider}`;
-}
-
-const apiKeysCache: Record<string, string> = {};
-
-function readStoredLlmApiKey(provider: LlmProvider): string {
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
-    return apiKeysCache[provider] || "";
-  }
-  if (typeof window === "undefined") {
-    return "";
-  }
-  try {
-    return window.localStorage.getItem(llmApiKeyStorageKey(provider)) || "";
-  } catch {
-    return "";
-  }
-}
-
-function saveStoredLlmApiKey(provider: LlmProvider, apiKey: string): void {
-  const key = apiKey.trim();
-  apiKeysCache[provider] = key;
-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
-    void vaultApi.saveApiKey(provider, key);
-    return;
-  }
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    if (key) {
-      window.localStorage.setItem(llmApiKeyStorageKey(provider), key);
-    } else {
-      window.localStorage.removeItem(llmApiKeyStorageKey(provider));
-    }
-  } catch {
-    // localStorage may be unavailable in hardened or test environments.
-  }
-}
-
-function hydrateLlmConfigSecrets(config: LlmConfig): LlmConfig {
-  return { ...config, apiKey: readStoredLlmApiKey(config.provider) || config.apiKey || "" };
-}
-
-export const BUILTIN_TEMPLATES: PromptTemplate[] = [
-  {
-    id: "summarize",
-    name: "Summarize",
-    template: "Provide a clear and concise summary of the key concepts, main ideas, and critical details from the provided context. Structure the response with bullet points for readability.",
-    isSystem: true
-  },
-  {
-    id: "code-review",
-    name: "Code Review",
-    template: "Perform a detailed code review of the source code in the context. Analyze code quality, potential bugs, performance bottlenecks, and adherence to clean coding best practices. Propose concrete improvements.",
-    isSystem: true
-  },
-  {
-    id: "critique",
-    name: "Design Critique",
-    template: "Critically analyze the design, architecture, or approach described in the context. Point out structural weaknesses, hidden assumptions, scalability concerns, and trade-offs. Recommend alternative solutions.",
-    isSystem: true
-  },
-  {
-    id: "todo",
-    name: "Extract TODOs",
-    template: "Scan the provided context and extract all explicit and implicit action items, TODOs, bugs to fix, or future extension ideas. Organize them by priority or component.",
-    isSystem: true
-  },
-  {
-    id: "document",
-    name: "Documentation",
-    template: "Generate comprehensive documentation for the concepts, components, or APIs present in the context. Use clear markdown headers, code block examples, and explanations of inputs and outputs.",
-    isSystem: true
-  }
-];
 
 
 async function hashPromptContent(content: string): Promise<string> {
@@ -244,7 +138,6 @@ export function App() {
   const previewScrollRef = useRef<HTMLElement | null>(null);
   const isSyncingScroll = useRef(false);
   const pendingPreviewLineRef = useRef<number | null>(null);
-  const [activeUnresolvedTarget, setActiveUnresolvedTarget] = useState<string | null>(null);
   const [includeContext, setIncludeContext] = useState(true);
 
   const allTags = useMemo(() => Array.from(new Set(vault?.notes.flatMap((note) => note.tags) ?? [])).sort(), [vault]);
@@ -338,21 +231,44 @@ export function App() {
     runSearch,
   } = search;
 
-  const runUnresolvedLinksScanRef = useRef<() => Promise<UnresolvedLinkGroup[]>>(async () => []);
-  const draftStubNoteRef = useRef<(target: string, sources: UnresolvedLinkSource[]) => Promise<void>>(async () => {});
+  const unresolved = useUnresolvedLinks();
+  const {
+    unresolvedLinks,
+    isScanningUnresolved,
+    selectedUnresolvedTargets,
+    activeUnresolvedTarget,
+    setActiveUnresolvedTarget,
+  } = unresolved;
+
+  const stub = useStubDrafting({
+    llmConfig,
+    vault,
+    activePath,
+    setStatus,
+    refreshVault: (path) => refreshVault(path),
+    unresolved,
+  });
+  const {
+    bulkDrafts, setBulkDrafts,
+    isBulkProcessing,
+    runUnresolvedLinksScan,
+    draftStubNote,
+    runBulkDrafting,
+    applyStubDraft,
+    handleSelectAllToggle,
+  } = stub;
 
   const git = useGit({
-    refreshVault,
+    refreshVault: (path) => refreshVault(path),
     setActivePath,
     setDocument,
     setDraft,
     setViewMode,
     setDistillTab,
-    setActiveUnresolvedTarget,
-    setSelectedUnresolvedTargets: (targets) => stub.setSelectedUnresolvedTargets(targets),
     activePath,
-    runUnresolvedLinksScan: () => runUnresolvedLinksScanRef.current(),
-    draftStubNote: (target, sources) => draftStubNoteRef.current(target, sources),
+    runUnresolvedLinksScan,
+    draftStubNote,
+    unresolved,
   });
   const {
     gitStatus, setGitStatus,
@@ -364,8 +280,6 @@ export function App() {
     isGitLoading,
     gitOutputLog, setGitOutputLog,
     auditorSubTab, setAuditorSubTab,
-    unresolvedLinks, setUnresolvedLinks,
-    isScanningUnresolved, setIsScanningUnresolved,
     refreshGitWorkspace,
     handleGitStageFile,
     handleGitUnstageFile,
@@ -389,35 +303,6 @@ export function App() {
     draftUnresolvedTarget,
     toggleAutoGit,
   } = git;
-
-  const stub = useStubDrafting({
-    llmConfig,
-    vault,
-    activePath,
-    setStatus,
-    refreshVault,
-    unresolvedLinks,
-    setUnresolvedLinks,
-    setIsScanningUnresolved,
-    activeUnresolvedTarget,
-    setActiveUnresolvedTarget,
-  });
-  const {
-    selectedUnresolvedTargets, setSelectedUnresolvedTargets,
-    bulkDrafts, setBulkDrafts,
-    isBulkProcessing,
-    runUnresolvedLinksScan,
-    draftStubNote,
-    runBulkDrafting,
-    createSelectedStubs,
-    handleSelectAllToggle,
-    approveDraft,
-    rejectDraft,
-    approveAllDrafts,
-    rejectAllDrafts,
-  } = stub;
-  runUnresolvedLinksScanRef.current = runUnresolvedLinksScan;
-  draftStubNoteRef.current = draftStubNote;
 
   const {
     linkSuggestions, setLinkSuggestions,
@@ -466,20 +351,18 @@ export function App() {
     backlinkSuggestions,
     ingestItems: ingestQueue.ingestItems,
     gitStagedPaths,
-    onApplyInboxCapture: (id) => markInboxCaptureProcessed(id),
-    onApplyProposedEdit: (id) => applyProposedEditFromQueue(id),
+    onApplyInboxCapture: async (id) =>
+      sourceMutationResult(await markInboxCaptureProcessed(id)),
+    onApplyProposedEdit: async (id) =>
+      sourceMutationResult(await applyProposedEditFromQueue(id)),
     onApplyBacklinkSuggestion: async (id) => {
       const suggestion = backlinkSuggestions.find((item) => item.id === id);
       if (!suggestion) {
-        return false;
+        return { changedPaths: [], warnings: [] };
       }
-      return await applyBacklinkSuggestion(suggestion) ? [suggestion.sourcePath] : false;
+      return applyBacklinkSuggestion(suggestion);
     },
     onApplyIngestCapture: (id) => ingestQueue.applyIngestItem(id),
-    onApproveStubDraft: (target) => approveDraft(target),
-    onRejectStubDraft: (target) => rejectDraft(target),
-    onApproveIngestCapture: (id) => { ingestQueue.approveIngestItem(id); },
-    onRejectIngestCapture: (id) => { ingestQueue.rejectIngestItem(id); },
     onUpdateIngestCapture: (id, patch) => { ingestQueue.updateIngestItem(id, patch); },
   });
 
@@ -527,27 +410,36 @@ export function App() {
   const updateSemanticRecommendations = (path: string, config: LlmConfig, notes: NoteMeta[]) =>
     updateSemanticRecommendationsBase(path, config, notes, setContextCandidates);
 
+  const session = useVaultSession({
+    vault, setVault,
+    activePath, setActivePath,
+    document, setDocument,
+    draft, setDraft,
+    setViewMode, setStatus,
+    vaultConfig, setVaultConfig, vaultConfigRef, updateVaultConfig,
+    setContext, setSnapshots, runHealthAudit,
+    setContextBundle, setContextCandidates, setSelectedContextPaths,
+    setBundlePreset, setBundlePurpose, setBundleMode, setContextLimit, PRESETS,
+    llmConfig, setLlmConfig, setMetadataSuggestions,
+    setEmbeddingsCache,
+    setResults,
+    setGitStatus, setGitChanges, setSelectedGitFile, setActiveDiff, setCommitMessage, setGitOutputLog,
+    updateLinkSuggestions, updateSemanticRecommendations,
+    refreshBacklinkSuggestions,
+    setInboxCaptures,
+    pruneExpiredPromptRuns,
+    setActiveUnresolvedTarget,
+    setGraph, setIsCustomLimit, setPromptInstruction, setArchiveStatus,
+  });
+  const {
+    openVault, chooseVaultFolder,
+    refreshVault, selectNote, selectNoteAfterMutation,
+    refreshVaultOverview, refreshContext, refreshContextAfterMutation,
+    saveActiveNote, clearActiveNoteState, refreshArchiveStatus,
+  } = session;
+
   const applyBacklinkSuggestion = (suggestion: BacklinkSuggestion) =>
     applyBacklinkSuggestionBase(suggestion, refreshContextAfterMutation, runHealthAudit);
-
-  function clearActiveNoteState() {
-    setActivePath(null);
-    setDocument(null);
-    setDraft("");
-    setContext(null);
-    setContextCandidates([]);
-    setSelectedContextPaths(new Set());
-    setInboxCaptures([]);
-  }
-
-  const refreshArchiveStatus = async () => {
-    try {
-      const status = await vaultApi.getArchiveStatus();
-      setArchiveStatus(status);
-    } catch (e) {
-      console.error("Failed to load archive status", e);
-    }
-  };
 
   const handlePromptInstructionChange = (val: string) => {
     setPromptInstruction(val);
@@ -563,7 +455,7 @@ export function App() {
 
   useEffect(() => {
     async function init() {
-      if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+      if (hasTauriInternals()) {
         const providers: LlmProvider[] = ["openai", "anthropic", "gemini", "ollama", "lm-studio", "custom"];
         for (const provider of providers) {
           try {
@@ -660,191 +552,6 @@ export function App() {
 
     return () => clearTimeout(timer);
   }, [draft, activePath, document?.path, document?.content, llmConfig, vault?.notes]);
-
-  async function openVault(path: string) {
-    const nextVault = await vaultApi.openVault(path);
-    setVault(nextVault);
-    setResults(nextVault.notes);
-    clearActiveNoteState();
-    setStatus(`Opened ${nextVault.rootPath}`);
-
-    let loadedConfig: VaultConfig = {};
-    let runtimeLlmConfig: LlmConfig = DEFAULT_LLM_CONFIG;
-    try {
-      const rawConfig = await vaultApi.getVaultConfig();
-      loadedConfig = normalizeVaultConfigShared(rawConfig);
-      const rawLlmConfig = rawConfig?.llmConfig;
-      if (rawLlmConfig && typeof rawLlmConfig === "object" && typeof rawLlmConfig.apiKey === "string" && rawLlmConfig.apiKey.trim()) {
-        const provider = loadedConfig.llmConfig?.provider || DEFAULT_LLM_CONFIG.provider;
-        saveStoredLlmApiKey(provider, rawLlmConfig.apiKey);
-        await vaultApi.saveVaultConfig(sanitizeVaultConfig(loadedConfig));
-      }
-      vaultConfigRef.current = loadedConfig;
-      setVaultConfig(loadedConfig);
-
-      const limit = loadedConfig.contextLimit ?? 8000;
-      setContextLimit(limit);
-      setIsCustomLimit(limit !== 8000 && limit !== 32000 && limit !== 128000 && limit !== 200000);
-
-      const preset = normalizePreset(loadedConfig.bundlePreset);
-      setBundlePreset(preset);
-
-      const purpose = typeof loadedConfig.bundlePurpose === "string" ? loadedConfig.bundlePurpose : PRESETS[preset].purpose;
-      setBundlePurpose(purpose);
-
-      const mode = normalizeBundleMode(loadedConfig.bundleMode, PRESETS[preset].mode);
-      setBundleMode(mode);
-
-      const llmCfg = hydrateLlmConfigSecrets(loadedConfig.llmConfig || DEFAULT_LLM_CONFIG);
-      runtimeLlmConfig = llmCfg;
-      setLlmConfig(llmCfg);
-
-      const rawCache = await vaultApi.loadEmbeddingsCache();
-      try {
-        setEmbeddingsCache(rawCache ? JSON.parse(rawCache) : {});
-      } catch (e) {
-        setEmbeddingsCache({});
-      }
-
-      if (loadedConfig.archiveRetentionPolicy && loadedConfig.archiveRetentionPolicy !== "none") {
-        void pruneExpiredPromptRuns(loadedConfig.archiveRetentionPolicy, loadedConfig, false);
-      }
-    } catch (e) {
-      console.error("Failed to load vault config", e);
-    }
-
-    if (nextVault.obsidianSettings?.detected) {
-      setStatus("Imported Obsidian settings");
-    }
-    const noteSelection = nextVault.notes[0]
-      ? selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes, runtimeLlmConfig)
-      : Promise.resolve();
-    await Promise.all([noteSelection, refreshVaultOverview()]);
-    setGitChanges([]);
-    setSelectedGitFile(null);
-    setActiveDiff(null);
-    setCommitMessage("");
-    setGitOutputLog(null);
-    void refreshArchiveStatus();
-    void runHealthAudit();
-  }
-
-  async function chooseVaultFolder() {
-    const selectedPath = await pickVaultFolder();
-    if (!selectedPath) {
-      setStatus("Vault selection cancelled");
-      return;
-    }
-
-    rememberVaultPath(window.localStorage, selectedPath);
-    await openVault(selectedPath);
-  }
-
-  async function refreshVault(selectedPath: string | null) {
-    const nextVault = await vaultApi.openVault(vault?.rootPath ?? "Demo Vault");
-    setVault(nextVault);
-    setResults(nextVault.notes);
-    const noteSelection = selectedPath
-      ? selectNote(selectedPath, undefined, nextVault.notes, undefined, true)
-      : Promise.resolve();
-    if (!selectedPath) {
-      clearActiveNoteState();
-    }
-    await Promise.all([noteSelection, refreshVaultOverview()]);
-    void refreshArchiveStatus();
-    void runHealthAudit();
-  }
-
-  async function selectNote(path: string, currentConfig?: VaultConfig, currentNotes?: NoteMeta[], currentLlmConfig?: LlmConfig, preserveViewMode = false) {
-    setActiveUnresolvedTarget(null);
-    const note = await vaultApi.readNote(path);
-    setActivePath(path);
-    setDocument(note);
-    setDraft(note.content);
-    if (!preserveViewMode) {
-      setViewMode("split");
-    }
-    await refreshContext(path, currentConfig, currentNotes, currentLlmConfig, note);
-  }
-
-  async function selectNoteAfterMutation(path: string): Promise<void> {
-    await Promise.all([selectNote(path), refreshVaultOverview()]);
-  }
-
-  async function refreshVaultOverview(): Promise<void> {
-    const { graph: nextGraph, gitStatus: nextGitStatus } = await loadVaultOverview(vaultApi);
-    setGraph(nextGraph);
-    setGitStatus(nextGitStatus);
-  }
-
-  async function refreshContextAfterMutation(path: string): Promise<void> {
-    await Promise.all([refreshContext(path), refreshVaultOverview()]);
-  }
-
-  function normalizeRef(value: string): string {
-    return value.replace(/\\/g, "/").replace(/\.md$/i, "").trim().toLowerCase();
-  }
-
-  async function refreshContext(
-    path: string,
-    currentConfig?: VaultConfig,
-    currentNotes?: NoteMeta[],
-    currentLlmConfig?: LlmConfig,
-    currentDocument?: NoteDocument,
-  ) {
-    setMetadataSuggestions(null);
-    setContextBundle(null);
-    const {
-      context: nextContext,
-      snapshots: nextSnapshots,
-      candidates,
-      inboxCaptures: nextInboxCaptures,
-    } = await loadNoteContext(vaultApi, path, isInboxPath(path));
-    setContext(nextContext);
-    setSnapshots(nextSnapshots);
-    setContextCandidates(candidates);
-
-    const configToUse = currentConfig ?? vaultConfigRef.current;
-    const saved = configToUse.selectedPaths?.[path];
-    if (saved && Array.isArray(saved)) {
-      setSelectedContextPaths(new Set(saved));
-    } else {
-      setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
-    }
-
-    const savedPrompt = configToUse.promptInstructions?.[path] || "";
-    setPromptInstruction(savedPrompt);
-
-    setInboxCaptures(nextInboxCaptures);
-
-    try {
-      const note = currentDocument ?? await vaultApi.readNote(path);
-      const notesForSuggestions = currentNotes ?? vault?.notes ?? [];
-      updateLinkSuggestions(note.content, notesForSuggestions);
-      void updateSemanticRecommendations(path, currentLlmConfig ?? llmConfig, notesForSuggestions);
-    } catch (e) {
-      console.error("Failed to read note for suggestions/semantics", e);
-    }
-    void refreshBacklinkSuggestions(path);
-  }
-
-  async function saveActiveNote() {
-    if (!document) {
-      return;
-    }
-
-    const result = await vaultApi.saveNote(document.path, draft, document.revision);
-    if (result.conflict) {
-      setStatus("Conflict detected. Snapshot created before overwriting.");
-      await refreshContextAfterMutation(document.path);
-      return;
-    }
-
-    setDocument({ ...document, content: draft, revision: result.revision });
-    setStatus(result.gitCommit ? `Saved and committed ${result.gitCommit}` : "Saved");
-    await refreshContextAfterMutation(document.path);
-    void runHealthAudit();
-  }
 
   async function restoreSnapshot(snapshotId: string) {
     await vaultApi.restoreSnapshot(snapshotId);
@@ -1332,18 +1039,14 @@ export function App() {
               unresolvedLinks={unresolvedLinks}
               isScanningUnresolved={isScanningUnresolved}
               selectedUnresolvedTargets={selectedUnresolvedTargets}
-              setSelectedUnresolvedTargets={setSelectedUnresolvedTargets}
+              setSelectedUnresolvedTargets={unresolved.setSelectedUnresolvedTargets}
               bulkDrafts={bulkDrafts}
               setBulkDrafts={setBulkDrafts}
               isBulkProcessing={isBulkProcessing}
               runUnresolvedLinksScan={runUnresolvedLinksScan}
               handleSelectAllToggle={handleSelectAllToggle}
               runBulkDrafting={runBulkDrafting}
-              createSelectedStubs={createSelectedStubs}
-              approveDraft={approveDraft}
-              rejectDraft={rejectDraft}
-              approveAllDrafts={approveAllDrafts}
-              rejectAllDrafts={rejectAllDrafts}
+              applyStubDraft={applyStubDraft}
               draftStubNote={draftStubNote}
               onSelectNote={selectNote}
               onRefreshVault={async () => { await refreshVault(activePath); }}
@@ -1487,7 +1190,8 @@ export function App() {
           onNavigateNote: selectNote,
           onInsertLinkAtCursor: insertWikiLinkAtCursor,
           onApplyWikiLinkSuggestion: applyWikiLinkSuggestion,
-          onApplyBacklinkSuggestion: applyBacklinkSuggestion,
+          onApplyBacklinkSuggestion: async (suggestion) =>
+            (await applyBacklinkSuggestion(suggestion)).changedPaths.length > 0,
         }}
         vault={vault}
         context={context}

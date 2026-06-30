@@ -100,7 +100,8 @@ export function createTauriVaultApi(): VaultApi {
     getApiKey: (provider: string) => invoke<string>("get_api_key", { provider }),
     fetchProviderModels: (provider: string, baseUrl?: string) => invoke<string[]>("fetch_provider_models", { provider, baseUrl }),
     getWikiHealthReport: () => invoke<NoteHealthReport[]>("get_wiki_health_report"),
-    appendAiAudit: (record) => invoke<void>("append_ai_audit", { record })
+    appendAiAudit: (record) => invoke<void>("append_ai_audit", { record }),
+    persistReviewDecisions: (decisions) => invoke<void>("persist_review_decisions", { decisions })
   };
 }
 

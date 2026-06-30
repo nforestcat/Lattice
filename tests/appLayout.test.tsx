@@ -1,12 +1,31 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, normalizeVaultConfig } from "../src/ui/App";
 import { vaultApi } from "../src/api";
 import * as llmApi from "../src/api/llm";
 
+type MockEditorRef = {
+  current: {
+    view: {
+      readonly state: {
+        readonly selection: { readonly main: { readonly from: number; readonly to: number } };
+        update: (transaction: unknown) => unknown;
+      };
+      dispatch: (transaction: { readonly changes: { readonly from: number; readonly to: number; readonly insert: string } }) => void;
+      focus: () => void;
+    };
+  } | null;
+};
+
+type MockCodeMirrorProps = {
+  readonly ref?: MockEditorRef;
+  readonly value?: string;
+  readonly onChange?: (value: string) => void;
+};
+
 vi.mock("@uiw/react-codemirror", () => {
   return {
-    default: (props: any) => {
+    default: (props: MockCodeMirrorProps) => {
       if (props.ref && typeof props.ref === "object") {
         props.ref.current = {
           view: {
@@ -16,10 +35,10 @@ vi.mock("@uiw/react-codemirror", () => {
               const to = editor?.selectionEnd ?? from;
               return {
                 selection: { main: { from, to } },
-                update: (transaction: any) => transaction
+                update: (transaction: unknown) => transaction
               };
             },
-            dispatch: (transaction: any) => {
+            dispatch: (transaction) => {
               const value = props.value || "";
               const { from, to, insert } = transaction.changes;
               const nextValue = `${value.slice(0, from)}${insert}${value.slice(to)}`;
@@ -1168,13 +1187,15 @@ describe("App layout", () => {
     // Click Draft Stub button
     const draftStubBtn = screen.getByRole("button", { name: "Draft Stub" });
     fireEvent.click(draftStubBtn);
-    // Verify draft stub loading, then draft content preview shows up
-    await waitFor(() => expect(screen.getByText("✓ Approved")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Generated")).toBeTruthy());
     const textarea = document.querySelector(".stubPreviewTextarea") as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
     expect(textarea.value).toBe("This is the drafted AI stub note content.");
 
-    // Click Create Selected button (since single stub drafting uses bulk creation flow)
+    expect(screen.getByRole("button", { name: "Create Approved (0)" })).toHaveProperty("disabled", true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve All" }));
+
     const createSelectedBtn = screen.getByRole("button", { name: "Create Approved (1)" });
     fireEvent.click(createSelectedBtn);
 
@@ -1289,12 +1310,16 @@ describe("App layout", () => {
     // Verify sendChatMessage is called
     await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalled());
     // Verify both drafts are loaded and textareas appear with the draft content
-    await waitFor(() => expect(screen.getAllByText("✓ Approved").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("Generated").length).toBe(2));
 
     const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
     expect(textareas.length).toBe(2);
     expect(textareas[0].value).toBe("This is the drafted AI stub note content.");
     expect(textareas[1].value).toBe("This is the drafted AI stub note content.");
+
+    expect(screen.getByRole("button", { name: "Create Approved (0)" })).toHaveProperty("disabled", true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve All" }));
 
     // Click "Create Selected" button to write them to the vault
     const createSelectedBtn = screen.getByRole("button", { name: "Create Approved (2)" });
@@ -1388,7 +1413,8 @@ describe("App layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Draft Selected (2)" }));
 
     await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(document.querySelectorAll(".reviewBadge.approved").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("Generated").length).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "Approve All" }));
     fireEvent.click(screen.getByRole("button", { name: "Create Approved (2)" }));
 
     await waitFor(() => {
@@ -1493,18 +1519,21 @@ describe("App layout", () => {
     const draftSelectedBtn = screen.getByRole("button", { name: "Draft Selected (2)" });
     fireEvent.click(draftSelectedBtn);
 
-    // Verify both drafts are loaded and marked Approved by default
-    await waitFor(() => expect(screen.getAllByText("✓ Approved").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByText("Generated").length).toBe(2));
 
-    // Find the cards. Card 1: Missing One, Card 2: Missing Two
-    // Reject Card 2 ("Missing Two")
-    const rejectButtons = screen.getAllByRole("button", { name: "Reject" });
-    expect(rejectButtons.length).toBe(2);
-    fireEvent.click(rejectButtons[1]); // Click reject on "Missing Two"
+    fireEvent.click(screen.getByRole("button", { name: "寃???湲곗뿴" }));
+    const missingOneTitle = await screen.findByText("Draft: Missing One");
+    const missingTwoTitle = await screen.findByText("Draft: Missing Two");
+    const missingOneCard = missingOneTitle.closest("[data-testid='review-queue-item']");
+    const missingTwoCard = missingTwoTitle.closest("[data-testid='review-queue-item']");
+    if (!(missingOneCard instanceof HTMLElement)) throw new Error("Missing One review card was not found.");
+    if (!(missingTwoCard instanceof HTMLElement)) throw new Error("Missing Two review card was not found.");
 
-    // Verify Card 2 changes to "✗ Rejected"
-    await waitFor(() => expect(screen.getByText("✗ Rejected")).toBeTruthy());
-    expect(screen.getByText("✓ Approved")).toBeTruthy(); // Missing One is still approved
+    fireEvent.click(within(missingOneCard).getByRole("button", { name: "Approve" }));
+    fireEvent.click(within(missingTwoCard).getByRole("button", { name: "Reject" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Wiki Auditor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dead Links Scanner" }));
 
     // Verify textareas - Missing Two textarea should be disabled
     const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
@@ -1590,10 +1619,12 @@ describe("App layout", () => {
     await waitFor(() => expect(screen.getByText("In other Notes (1)")).toBeTruthy());
     
     const suggestionsSection = document.querySelector(".linkSuggestionsSidebar");
-    expect(suggestionsSection).toBeTruthy();
-    expect(suggestionsSection!.textContent).toContain("Home");
-    expect(suggestionsSection!.textContent).toContain("Link Mention");
-    expect(suggestionsSection!.textContent).toContain("Explore Obsidian Replacement and Markdown Systems.");
+    if (!(suggestionsSection instanceof HTMLElement)) {
+      throw new Error("Link suggestions sidebar was not found.");
+    }
+    expect(suggestionsSection.textContent).toContain("Home");
+    expect(suggestionsSection.textContent).toContain("Link Mention");
+    expect(suggestionsSection.textContent).toContain("Explore Obsidian Replacement and Markdown Systems.");
 
     // Click "Link Mention" button
     const applyBtn = screen.getByRole("button", { name: "Link Mention" });
@@ -1910,8 +1941,10 @@ describe("App layout", () => {
     // Verify datalist option values
     await waitFor(() => {
       const datalist = document.getElementById("available-models-list");
-      expect(datalist).toBeTruthy();
-      const options = Array.from(datalist!.querySelectorAll("option")).map((opt: any) => opt.value);
+      if (!(datalist instanceof HTMLDataListElement)) {
+        throw new Error("Available models datalist was not found.");
+      }
+      const options = Array.from(datalist.querySelectorAll("option"), (opt) => opt.value);
       expect(options).toContain("llama3:latest");
       expect(options).toContain("mistral:latest");
     });
@@ -2025,10 +2058,12 @@ participants: Antigravity, User
 
     // Uncheck #project tag checkbox to hide "Obsidian Replacement" note
     const projectCheckbox = getFilterCheckbox("project");
-    expect(projectCheckbox).toBeTruthy();
-    expect(projectCheckbox!.checked).toBe(true);
-    fireEvent.click(projectCheckbox!);
-    expect(projectCheckbox!.checked).toBe(false);
+    if (!(projectCheckbox instanceof HTMLInputElement)) {
+      throw new Error("Project filter checkbox was not found.");
+    }
+    expect(projectCheckbox.checked).toBe(true);
+    fireEvent.click(projectCheckbox);
+    expect(projectCheckbox.checked).toBe(false);
 
     // Verify that "Obsidian Replacement" node is removed/hidden
     await waitFor(() => expect(getGraphNode("Projects/Obsidian Replacement.md")).toBeNull());

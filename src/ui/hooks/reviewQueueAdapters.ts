@@ -20,7 +20,7 @@ export function adaptInboxCapture(item: InboxCaptureBlock): ReviewQueueItem {
     id: item.id,
     sourceId: item.id,
     kind: "inbox_capture",
-    status: "new",
+    status: "drafted",
     path: item.relatedTitle ?? "Inbox",
     title: item.title,
     proposed: item.markdown,
@@ -33,17 +33,11 @@ export function adaptStubDraft(
   target: string,
   review: StubDraftReview
 ): ReviewQueueItem {
-  const status =
-    review.status === "drafting"
-      ? "drafted"
-      : review.approved
-      ? "approved"
-      : "new";
   return {
     id: `stub-${target}`,
     sourceId: target,
     kind: "ingest_draft",
-    status,
+    status: "drafted",
     path: target,
     title: `Draft: ${target}`,
     proposed: review.content,
@@ -53,7 +47,7 @@ export function adaptStubDraft(
 }
 
 export function adaptProposedEdit(edit: ProposedEdit): ReviewQueueItem {
-  const status = edit.applied ? "applied" : edit.checked ? "approved" : "new";
+  const status = edit.applied ? "applied" : edit.checked ? "approved" : "drafted";
   return {
     id: edit.id,
     sourceId: edit.id,
@@ -104,7 +98,7 @@ export function adaptHealthIssue(
     id: `health-${report.path}-${issue}`,
     sourceId: report.path,
     kind,
-    status: "new",
+    status: "drafted",
     path: report.path,
     title: `${report.title}: ${issue}`,
     gitStaged: false,
@@ -121,7 +115,7 @@ export function adaptBacklinkSuggestion(
     id: sug.id,
     sourceId: sug.id,
     kind: "backlink_suggestion",
-    status: "new",
+    status: "drafted",
     path: sug.sourcePath,
     title: `링크 제안: ${sug.sourceTitle} → ${sug.targetTitle}`,
     proposed: `[[${sug.targetTitle}]]`,
@@ -147,7 +141,7 @@ export function adaptIngestCapture(item: IngestQueueItem): ReviewQueueItem {
     id: item.id,
     sourceId: item.id,
     kind: "ingest_capture",
-    status: item.status === "drafted" ? "new" : item.status,
+    status: "drafted",
     path,
     title: item.title,
     proposed: item.markdown,

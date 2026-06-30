@@ -1,9 +1,10 @@
 import { useState } from "react";
-import type { AiProvenance, IngestQueueUpdate, ReviewQueueItem, ReviewItemStatus } from "../../api/types";
+import type { AiProvenance, IngestQueueUpdate, ReviewItemStatus } from "../../api/types";
+import type { ReviewWorkflowItem } from "../reviewWorkflow/ledger";
 import { ReviewQueueItemCard } from "./ReviewQueueItemCard";
 
 interface ReviewQueuePanelProps {
-  readonly items: ReviewQueueItem[];
+  readonly items: ReviewWorkflowItem[];
   readonly onApply: (id: string) => void | Promise<void>;
   readonly onApprove: (id: string) => void | Promise<void>;
   readonly onReject: (id: string) => void | Promise<void>;
@@ -19,7 +20,7 @@ interface ReviewQueuePanelProps {
 }
 
 const FILTER_TABS: Array<ReviewItemStatus | "all"> = [
-  "all", "new", "drafted", "approved", "applied", "rejected",
+  "all", "drafted", "approved", "applied", "committed", "rejected",
 ];
 
 export function ReviewQueuePanel({
@@ -39,9 +40,7 @@ export function ReviewQueuePanel({
 }: ReviewQueuePanelProps) {
   const [filter, setFilter] = useState<ReviewItemStatus | "all">("all");
 
-  const pendingCount = items.filter(
-    (i) => i.status === "new" || i.status === "drafted"
-  ).length;
+  const pendingCount = items.filter((i) => i.status === "drafted").length;
 
   const filtered =
     filter === "all" ? items : items.filter((i) => i.status === filter);
