@@ -10,6 +10,10 @@ use walkdir::WalkDir;
 
 mod models;
 use models::*;
+mod vault_config;
+pub(crate) use vault_config::{migrate_config, vault_config_from_json};
+mod recovery;
+pub(crate) use recovery::*;
 mod git_helpers;
 pub(crate) use git_helpers::*;
 mod commands;
@@ -105,104 +109,6 @@ fn get_api_key_from_keyring(provider: &str) -> Option<String> {
 
 
 
-fn migrate_config(mut config: VaultConfig) -> VaultConfig {
-    if config.version.map_or(true, |v| v < 1) {
-        config.version = Some(1);
-    }
-    if config.context_limit.is_none() {
-        config.context_limit = Some(8000);
-    }
-    if config.bundle_preset.is_none() {
-        config.bundle_preset = Some("ask".to_string());
-    }
-    if config.bundle_mode.is_none() {
-        config.bundle_mode = Some("standard".to_string());
-    }
-    if config.selected_paths.is_none() {
-        config.selected_paths = Some(HashMap::new());
-    }
-    if config.prompt_instructions.is_none() {
-        config.prompt_instructions = Some(HashMap::new());
-    }
-    if config.prompt_runs.is_none() {
-        config.prompt_runs = Some(Vec::new());
-    }
-    if config.prompt_templates.is_none() {
-        config.prompt_templates = Some(Vec::new());
-    }
-    config
-}
-
-fn vault_config_from_json(content: &str) -> VaultConfig {
-    let value: serde_json::Value = match serde_json::from_str(content) {
-        Ok(value) => value,
-        Err(_) => return VaultConfig::default(),
-    };
-    let Some(object) = value.as_object() else {
-        return VaultConfig::default();
-    };
-
-    VaultConfig {
-        version: object.get("version").and_then(serde_json::Value::as_u64).map(|value| value as usize),
-        context_limit: object.get("contextLimit").and_then(serde_json::Value::as_u64).map(|value| value as usize),
-        bundle_preset: object.get("bundlePreset").and_then(serde_json::Value::as_str).map(str::to_string),
-        bundle_purpose: object.get("bundlePurpose").and_then(serde_json::Value::as_str).map(str::to_string),
-        bundle_mode: object.get("bundleMode").and_then(serde_json::Value::as_str).map(str::to_string),
-        selected_paths: object.get("selectedPaths").and_then(string_array_map_from_value),
-        prompt_instructions: object.get("promptInstructions").and_then(string_map_from_value),
-        prompt_runs: object.get("promptRuns").and_then(|value| {
-            value.as_array().map(|runs| {
-                runs.iter()
-                    .filter_map(|run| serde_json::from_value::<PromptRun>(run.clone()).ok())
-                    .collect::<Vec<_>>()
-            })
-        }),
-        prompt_templates: object.get("promptTemplates").and_then(|value| {
-            value.as_array().map(|templates| {
-                templates.iter()
-                    .filter_map(|template| serde_json::from_value::<PromptTemplate>(template.clone()).ok())
-                    .collect::<Vec<_>>()
-            })
-        }),
-        llm_config: object.get("llmConfig").and_then(|value| serde_json::from_value::<LlmConfig>(value.clone()).ok()),
-        archive_retention_policy: object.get("archiveRetentionPolicy").and_then(serde_json::Value::as_str).map(str::to_string),
-        note_templates: object.get("noteTemplates").and_then(|value| {
-            value.as_array().map(|templates| {
-                templates.iter()
-                    .filter_map(|template| serde_json::from_value::<NoteTemplate>(template.clone()).ok())
-                    .collect::<Vec<_>>()
-            })
-        }),
-    }
-}
-
-fn string_map_from_value(value: &serde_json::Value) -> Option<HashMap<String, String>> {
-    value.as_object().map(|object| {
-        object
-            .iter()
-            .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string())))
-            .collect()
-    })
-}
-
-fn string_array_map_from_value(value: &serde_json::Value) -> Option<HashMap<String, Vec<String>>> {
-    value.as_object().map(|object| {
-        object
-            .iter()
-            .filter_map(|(key, value)| {
-                value.as_array().map(|items| {
-                    let paths = items.iter().filter_map(serde_json::Value::as_str).map(str::to_string).collect();
-                    (key.clone(), paths)
-                })
-            })
-            .collect()
-    })
-}
-
-
-
-
-
 
 
 fn prompt_run_archive_path(root: &Path, run_id: &str) -> Result<PathBuf, String> {
@@ -214,22 +120,6 @@ fn prompt_run_archive_path(root: &Path, run_id: &str) -> Result<PathBuf, String>
     Ok(root.join(".lattice").join("runs").join(format!("{}.md", run_id)))
 }
 
-
-fn recovery_dir(root: &Path) -> PathBuf {
-    root.join(".lattice").join("recovery")
-}
-
-fn recovery_index_path(root: &Path) -> PathBuf {
-    recovery_dir(root).join("index.json")
-}
-
-fn hex_encode_id(id: &str) -> String {
-    id.bytes().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn recovery_blob_path(root: &Path, id: &str) -> PathBuf {
-    recovery_dir(root).join("blobs").join(hex_encode_id(id))
-}
 
 fn embeddings_cache_path(root: &Path) -> PathBuf {
     root.join(".lattice").join("embeddings.json")
@@ -1208,122 +1098,6 @@ fn remove_managed_link(content: &str, target: &str) -> String {
             Some(line.to_string())
         }
     }).collect::<Vec<_>>().join("\n") + "\n"
-}
-
-fn snapshot(state: &mut VaultState, root: &Path, path: &str, content: &str, reason: &str) -> String {
-    let ts = Utc::now().timestamp_millis();
-    let mut id = format!("{}:{}", path, ts);
-    let mut counter = 1u32;
-    while state.snapshots.iter().any(|s| s.id == id) {
-        id = format!("{}:{}:{}", path, ts, counter);
-        counter += 1;
-    }
-    let record = SnapshotRecord {
-        id: id.clone(),
-        path: path.to_string(),
-        created_at: Utc::now().to_rfc3339(),
-        reason: reason.to_string(),
-    };
-    state.snapshots.insert(0, record);
-    state.snapshot_content.insert(id.clone(), content.to_string());
-
-    if let Err(e) = write_recovery_blob(root, &id, content) {
-        eprintln!("[lattice] recovery blob write failed: {}", e);
-    } else if let Err(e) = persist_recovery_index(root, &state.snapshots) {
-        eprintln!("[lattice] recovery index write failed: {}", e);
-    }
-
-    apply_retention(root, &mut state.snapshots);
-
-    id
-}
-
-fn write_recovery_blob(root: &Path, id: &str, content: &str) -> Result<(), String> {
-    let blob_path = recovery_blob_path(root, id);
-    if let Some(parent) = blob_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    fs::write(&blob_path, content).map_err(|e| e.to_string())
-}
-
-fn persist_recovery_index(root: &Path, snapshots: &[SnapshotRecord]) -> Result<(), String> {
-    let index_path = recovery_index_path(root);
-    if let Some(parent) = index_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(snapshots).map_err(|e| e.to_string())?;
-    let tmp_path = index_path.with_extension("json.tmp");
-    fs::write(&tmp_path, &json).map_err(|e| e.to_string())?;
-    fs::rename(&tmp_path, &index_path).map_err(|e| {
-        let _ = fs::remove_file(&tmp_path);
-        e.to_string()
-    })
-}
-
-fn load_recovery_index(root: &Path) -> Vec<SnapshotRecord> {
-    let index_path = recovery_index_path(root);
-    let content = match fs::read_to_string(&index_path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
-    let mut records: Vec<SnapshotRecord> = serde_json::from_str(&content).unwrap_or_default();
-    records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    records
-}
-
-fn load_recovery_content(root: &Path, id: &str) -> Result<String, String> {
-    let blob_path = recovery_blob_path(root, id);
-    fs::read_to_string(&blob_path).map_err(|e| format!("Blob read failed for {}: {}", id, e))
-}
-
-fn self_heal_recovery(root: &Path, snapshots: &mut Vec<SnapshotRecord>) {
-    let blobs_dir = recovery_dir(root).join("blobs");
-    let index_ids: HashSet<String> = snapshots.iter().map(|s| hex_encode_id(&s.id)).collect();
-
-    if let Ok(entries) = fs::read_dir(&blobs_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !index_ids.contains(&name) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
-
-    let original_len = snapshots.len();
-    snapshots.retain(|s| recovery_blob_path(root, &s.id).exists());
-    if snapshots.len() != original_len {
-        if let Err(e) = persist_recovery_index(root, snapshots) {
-            eprintln!("[lattice] self-heal index rewrite failed: {}", e);
-        }
-    }
-}
-
-const RETENTION_MAX_PER_PATH: usize = 50;
-
-fn apply_retention(root: &Path, snapshots: &mut Vec<SnapshotRecord>) {
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut to_remove = Vec::new();
-
-    for (i, s) in snapshots.iter().enumerate() {
-        let count = counts.entry(s.path.clone()).or_insert(0);
-        *count += 1;
-        if *count > RETENTION_MAX_PER_PATH {
-            to_remove.push(i);
-        }
-    }
-
-    if to_remove.is_empty() {
-        return;
-    }
-
-    for &i in to_remove.iter().rev() {
-        let removed = snapshots.remove(i);
-        let _ = fs::remove_file(recovery_blob_path(root, &removed.id));
-    }
-
-    if let Err(e) = persist_recovery_index(root, snapshots) {
-        eprintln!("[lattice] retention index rewrite failed: {}", e);
-    }
 }
 
 // ── Review Decision Persistence ───────────────────────────────────────────
