@@ -77,9 +77,22 @@ describe("App layout", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     window.fetch = originalFetch;
     vi.useRealTimers();
   });
+
+  function getGitFileItem(path: string): HTMLElement {
+    const item = Array.from(document.querySelectorAll<HTMLElement>(".gitFileItem"))
+      .find((candidate) => candidate.querySelector(".filePath")?.textContent === path);
+    if (!item) throw new Error(`Git file item was not found: ${path}`);
+    return item;
+  }
+
+  function getGitDiffContents(): Array<string | null> {
+    return Array.from(document.querySelectorAll(".gitDiffContent"))
+      .map((element) => element.textContent);
+  }
 
   it("starts in split mode with editor and preview visible together", async () => {
     render(<App />);
@@ -1196,13 +1209,13 @@ describe("App layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Approve All" }));
 
-    const createSelectedBtn = screen.getByRole("button", { name: "Create Approved (1)" });
+    const createSelectedBtn = await screen.findByRole("button", { name: "Create Approved (1)" });
     fireEvent.click(createSelectedBtn);
 
     // Verify vaultApi.createNote and saveNote were called
     await waitFor(() => {
       expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing Target");
-      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Target.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Target.md", "This is the drafted AI stub note content.", "rev-123");
     });
 
     // Cleanup spies
@@ -1322,15 +1335,15 @@ describe("App layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve All" }));
 
     // Click "Create Selected" button to write them to the vault
-    const createSelectedBtn = screen.getByRole("button", { name: "Create Approved (2)" });
+    const createSelectedBtn = await screen.findByRole("button", { name: "Create Approved (2)" });
     fireEvent.click(createSelectedBtn);
 
     // Verify createNote and saveNote were called for both
     await waitFor(() => {
       expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing One");
       expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing Two");
-      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
-      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "rev-123");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "rev-123");
     });
 
     // Cleanup spies
@@ -1415,11 +1428,11 @@ describe("App layout", () => {
     await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getAllByText("Generated").length).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "Approve All" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create Approved (2)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create Approved (2)" }));
 
     await waitFor(() => {
-      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
-      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "rev-123");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "rev-123");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Distill" }));
@@ -1428,6 +1441,7 @@ describe("App layout", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Create Approved (1)" })).toBeTruthy());
 
+    await waitFor(() => expect(document.querySelectorAll(".stubPreviewTextarea").length).toBe(1));
     const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
     expect(textareas.length).toBe(1);
     expect(textareas[0].value).toBe("This is the drafted AI stub note content.");
@@ -1521,7 +1535,7 @@ describe("App layout", () => {
 
     await waitFor(() => expect(screen.getAllByText("Generated").length).toBe(2));
 
-    fireEvent.click(screen.getByRole("button", { name: "寃???湲곗뿴" }));
+    fireEvent.click(screen.getByRole("button", { name: "검토 대기열" }));
     const missingOneTitle = await screen.findByText("Draft: Missing One");
     const missingTwoTitle = await screen.findByText("Draft: Missing Two");
     const missingOneCard = missingOneTitle.closest("[data-testid='review-queue-item']");
@@ -1536,6 +1550,7 @@ describe("App layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dead Links Scanner" }));
 
     // Verify textareas - Missing Two textarea should be disabled
+    await waitFor(() => expect(document.querySelectorAll(".stubPreviewTextarea").length).toBe(2));
     const textareas = Array.from(document.querySelectorAll(".stubPreviewTextarea")) as HTMLTextAreaElement[];
     expect(textareas.length).toBe(2);
     expect(textareas[0].disabled).toBe(false);
@@ -1549,8 +1564,8 @@ describe("App layout", () => {
     await waitFor(() => {
       expect(createNoteSpy).toHaveBeenCalledWith(null, "Missing One");
       expect(createNoteSpy).not.toHaveBeenCalledWith(null, "Missing Two");
-      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "");
-      expect(saveNoteSpy).not.toHaveBeenCalledWith("Missing Two.md", "This is the drafted AI stub note content.", "");
+      expect(saveNoteSpy).toHaveBeenCalledWith("Missing One.md", "This is the drafted AI stub note content.", "rev-123");
+      expect(saveNoteSpy.mock.calls.some(([path]) => path === "Missing Two.md")).toBe(false);
     });
 
     // Cleanup spies
@@ -2491,14 +2506,14 @@ participants: Antigravity, User
     expect(screen.getByText("StagedNote.md")).toBeTruthy();
 
     // Select ModifiedNote.md to load diff
-    const modifiedItem = screen.getByText("ModifiedNote.md");
-    fireEvent.click(modifiedItem);
+    fireEvent.click(getGitFileItem("ModifiedNote.md"));
 
     // Verify getGitDiff was called and rendering color styled lines
     await waitFor(() => {
       expect(getGitDiffSpy).toHaveBeenCalledWith("ModifiedNote.md", false);
-      expect(screen.getByText("+New Line")).toBeTruthy();
-      expect(screen.getByText("-Old Line")).toBeTruthy();
+      const diffContents = getGitDiffContents();
+      expect(diffContents).toContain("+New Line");
+      expect(diffContents).toContain("-Old Line");
     });
 
     // Test Stage All
@@ -2580,7 +2595,7 @@ participants: Antigravity, User
     fireEvent.click(screen.getByRole("button", { name: "Git Workspace" }));
 
     await waitFor(() => expect(screen.getByText("Docs.md")).toBeTruthy());
-    fireEvent.click(screen.getByText("Docs.md"));
+    fireEvent.click(getGitFileItem("Docs.md"));
 
     await waitFor(() => {
       expect(getGitDiffSpy).toHaveBeenCalledWith("Docs.md", false);
@@ -2728,7 +2743,13 @@ participants: Antigravity, User
     fireEvent.click(screen.getByRole("button", { name: "Generate Summary" }));
     await waitFor(() => expect(sendChatMessageSpy).toHaveBeenCalled());
 
-    const applyBtn = await screen.findByRole("button", { name: "Apply to Note" });
+    const summaryIssue = await screen.findByText(/missingSummary/);
+    const summaryCard = summaryIssue.closest("[data-testid='review-queue-item']");
+    if (!(summaryCard instanceof HTMLElement)) throw new Error("Summary review card was not found.");
+
+    fireEvent.click(within(summaryCard).getByRole("button", { name: "Approve" }));
+    await within(summaryCard).findByText("approved");
+    const applyBtn = await within(summaryCard).findByRole("button", { name: "Apply to Note" });
     fireEvent.click(applyBtn);
     await waitFor(() => expect(applyNoteMetadataSpy).toHaveBeenCalledWith("Home.md", { summary: "A concise summary." }, []));
 

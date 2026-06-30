@@ -35,7 +35,9 @@ export function supportsAction(
     kind: entry.item.kind,
     status: entry.status,
     suggestionKind: entry.item.suggestionKind,
-    hasGeneratedSuggestion: entry.item.proposed !== undefined,
+    hasGeneratedSuggestion:
+      entry.item.proposed !== undefined ||
+      (operation === "approve" && entry.item.suggestionKind !== undefined),
   });
   return capabilities[operation];
 }
