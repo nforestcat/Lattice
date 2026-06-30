@@ -2,13 +2,11 @@ import { markdown } from "@codemirror/lang-markdown";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { vaultApi } from "../api";
-import { askConfirm, askInput, isDesktopRuntime } from "../api/dialog";
-import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, LlmProvider, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource, SourceMutationResult } from "../api/types";
-import { canUseEmbeddings, getEmbedding } from "../api/embeddings";
+import { askConfirm, askInput } from "../api/dialog";
+import type { ContextBundle, ContextBundleCandidate, FileTreeNode, NoteDocument, VaultSnapshot, VaultConfig, PromptRun, PromptTemplate, ProposedEdit, LlmConfig, BacklinkSuggestion, NoteTemplate, StubDraftReview, UnresolvedLinkGroup, UnresolvedLinkSource, SourceMutationResult } from "../api/types";
 import type { GraphData, NoteMeta } from "../core/types";
 import { renderMarkdownPreview } from "./markdownPreview";
-import { getStartupVaultPath } from "./vaultStartup";
-import { computeHash, apiKeysCache, hasTauriInternals, readStoredLlmApiKey, saveStoredLlmApiKey } from "./llmSecrets";
+import { readStoredLlmApiKey, saveStoredLlmApiKey } from "./llmSecrets";
 import { DEFAULT_NOTE_TEMPLATES, BUILTIN_TEMPLATES } from "./noteTemplates";
 import { GraphView } from "./components/GraphView";
 import { DistillWorkspace } from "./components/DistillWorkspace";
@@ -36,6 +34,8 @@ import { useIngestQueue } from "./hooks/useIngestQueue";
 import { deleteManagedGraphLinkAfterConfirmation } from "./graphLinkActions";
 import { getDisplayedContextCandidates } from "./contextCandidates";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useBackgroundEmbeddingSync } from "./hooks/useBackgroundEmbeddingSync";
+import { useAppStartup } from "./hooks/useAppStartup";
 import { applyProposedEditToVault } from "./proposedEditApply";
 import { findAmbiguousUpdateAnchor } from "./proposedEditGuards";
 import {
@@ -407,8 +407,19 @@ export function App() {
     loadPromptDiff,
   } = promptHistory;
 
-  const updateSemanticRecommendations = (path: string, config: LlmConfig, notes: NoteMeta[]) =>
-    updateSemanticRecommendationsBase(path, config, notes, setContextCandidates);
+  const updateSemanticRecommendations = useCallback((path: string, config: LlmConfig, notes: readonly NoteMeta[]) => {
+    updateSemanticRecommendationsBase(path, config, [...notes], setContextCandidates);
+  }, [setContextCandidates, updateSemanticRecommendationsBase]);
+
+  useBackgroundEmbeddingSync({
+    activePath,
+    draft,
+    document,
+    llmConfig,
+    notes: vault?.notes,
+    setEmbeddingsCache,
+    updateSemanticRecommendations,
+  });
 
   const session = useVaultSession({
     vault, setVault,
@@ -453,25 +464,7 @@ export function App() {
     }
   };
 
-  useEffect(() => {
-    async function init() {
-      if (hasTauriInternals()) {
-        const providers: LlmProvider[] = ["openai", "anthropic", "gemini", "ollama", "lm-studio", "custom"];
-        for (const provider of providers) {
-          try {
-            const key = await vaultApi.getApiKey(provider);
-            if (key) {
-              apiKeysCache[provider] = key;
-            }
-          } catch (e) {
-            console.error(`Failed to load key for ${provider}`, e);
-          }
-        }
-      }
-      void openVault(getStartupVaultPath(window.localStorage, isDesktopRuntime()));
-    }
-    void init();
-  }, []);
+  useAppStartup({ openVault });
 
   useEffect(() => {
     let cancelled = false;
@@ -497,61 +490,6 @@ export function App() {
       updateLinkSuggestions(draft, vault.notes);
     }
   }, [draft, vault?.notes, updateLinkSuggestions]);
-
-  // Real-time Background Embedding Synchronization
-  useEffect(() => {
-    const config = llmConfig;
-    if (!canUseEmbeddings(config)) {
-      return;
-    }
-    if (!activePath || !draft) {
-      return;
-    }
-    if (!document || document.path !== activePath || draft === document.content) {
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        const hash = await computeHash(draft);
-        
-        let alreadyExists = false;
-        setEmbeddingsCache(prev => {
-          const cached = prev[activePath];
-          if (cached && cached.contentHash === hash) {
-            alreadyExists = true;
-          }
-          return prev;
-        });
-
-        if (alreadyExists) {
-          return;
-        }
-
-        const vector = await getEmbedding(config, draft);
-        if (vector && vector.length > 0) {
-          setEmbeddingsCache(prev => {
-            const nextCache = {
-              ...prev,
-              [activePath]: {
-                contentHash: hash,
-                vector
-              }
-            };
-            void vaultApi.saveEmbeddingsCache(JSON.stringify(nextCache));
-            return nextCache;
-          });
-
-          // Sync recommendation list in the background
-          void updateSemanticRecommendations(activePath, config, vault?.notes || []);
-        }
-      } catch (err) {
-        console.error("Background embedding sync error:", err);
-      }
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [draft, activePath, document?.path, document?.content, llmConfig, vault?.notes]);
 
   async function restoreSnapshot(snapshotId: string) {
     await vaultApi.restoreSnapshot(snapshotId);
