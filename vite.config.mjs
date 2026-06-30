@@ -43,7 +43,6 @@ export default defineConfig({
     globals: true,
     exclude: testExclude,
     pool: "threads",
-    minWorkers: 1,
     maxWorkers: 4,
     projects: [
       {
