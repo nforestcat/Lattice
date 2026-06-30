@@ -278,11 +278,10 @@ describe("useLinkSuggestions source executor", () => {
     }));
 
     // When
-    const applied = await result.current.applyBacklinkSuggestion(
-      suggestion,
-      vi.fn().mockResolvedValue(undefined),
-      runHealthAudit,
-    );
+    let applied: Awaited<ReturnType<typeof result.current.applyBacklinkSuggestion>> | undefined;
+    await act(async () => {
+      applied = await result.current.applyBacklinkSuggestion(suggestion, vi.fn().mockResolvedValue(undefined), runHealthAudit);
+    });
 
     // Then
     expect(applied).toEqual({

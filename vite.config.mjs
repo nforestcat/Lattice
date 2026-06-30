@@ -38,12 +38,7 @@ export default defineConfig({
     environment: "happy-dom",
     globals: true,
     pool: "threads",
-    poolOptions: {
-      threads: {
-        minThreads: 1,
-        maxThreads: 4
-      }
-    },
+    maxWorkers: 4,
     include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     exclude: [
       "**/node_modules/**", "**/dist/**",
