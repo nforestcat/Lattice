@@ -57,6 +57,7 @@ export function useGit(callbacks: UseGitCallbacks) {
   const [mergeHeadExists, setMergeHeadExists] = useState<boolean>(false);
   const [forceFreshConflictResolver, setForceFreshConflictResolver] = useState<boolean>(false);
   const gitRequestCounter = useRef(0);
+  const diffRequestCounter = useRef(0);
   const commitInFlightRef = useRef<{ message: string; promise: Promise<string[]> } | null>(null);
 
   async function refreshGitWorkspace(intendedSelection?: { path: string; staged: boolean }) {
@@ -133,13 +134,14 @@ export function useGit(callbacks: UseGitCallbacks) {
   }
 
   async function loadGitDiff(path: string, staged: boolean) {
+    const requestId = ++diffRequestCounter.current;
     setActiveDiff(null);
     try {
       const diff = await vaultApi.getGitDiff(path, staged);
-      if (selectedGitFile !== path) return;
+      if (diffRequestCounter.current !== requestId) return;
       setActiveDiff(diff);
     } catch (err) {
-      if (selectedGitFile !== path) return;
+      if (diffRequestCounter.current !== requestId) return;
       setActiveDiff(`Error loading diff: ${errorMessage(err)}`);
     }
   }

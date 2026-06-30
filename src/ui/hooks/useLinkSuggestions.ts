@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import type {
   BacklinkSuggestion,
@@ -27,6 +27,16 @@ function replaceUnlinkedMentions(content: string, text: string): string {
     .join("");
 }
 
+function sameLinkSuggestions(
+  left: readonly { text: string; path: string }[],
+  right: readonly { text: string; path: string }[],
+): boolean {
+  return left.length === right.length && left.every((item, index) => {
+    const other = right[index];
+    return item.text === other.text && item.path === other.path;
+  });
+}
+
 export interface UseLinkSuggestionsCallbacks {
   activePath: string | null;
   draft: string;
@@ -44,9 +54,9 @@ export function useLinkSuggestions(callbacks: UseLinkSuggestionsCallbacks) {
   const [backlinkSuggestions, setBacklinkSuggestions] = useState<BacklinkSuggestion[]>([]);
   const [isLoadingBacklinkSuggestions, setIsLoadingBacklinkSuggestions] = useState(false);
 
-  function updateLinkSuggestions(content: string, notes: NoteMeta[]) {
+  const updateLinkSuggestions = useCallback((content: string, notes: NoteMeta[]) => {
     if (!activePath) {
-      setLinkSuggestions([]);
+      setLinkSuggestions((previous) => previous.length === 0 ? previous : []);
       return;
     }
 
@@ -67,8 +77,8 @@ export function useLinkSuggestions(callbacks: UseLinkSuggestionsCallbacks) {
         suggestions.push({ text: title, path: note.path });
       }
     }
-    setLinkSuggestions(suggestions);
-  }
+    setLinkSuggestions((previous) => sameLinkSuggestions(previous, suggestions) ? previous : suggestions);
+  }, [activePath]);
 
   function applyWikiLinkSuggestion(text: string) {
     if (!draft) return;

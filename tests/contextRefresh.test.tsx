@@ -1,97 +1,97 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { vaultApi } from "../src/api";
-import { App } from "../src/ui/App";
+import { describe, expect, it, vi } from "vitest";
+import { loadNoteContext, loadVaultOverview } from "../src/ui/contextRefresh";
+import type { ContextBundleCandidate, GitStatus, Snapshot, VaultApi } from "../src/api/types";
+import type { NoteContext, GraphData } from "../src/core/types";
 
-vi.mock("@uiw/react-codemirror", () => ({
-  default: () => <textarea data-testid="mock-editor" />,
-}));
+type TestApi = Pick<
+  VaultApi,
+  "getContextBundleCandidates" | "getGitStatus" | "getGraph" | "getInboxCaptures" | "getNoteContext" | "listSnapshots"
+>;
 
-const originalFetch = window.fetch;
+const noteContext: NoteContext = {
+  note: {
+    path: "Projects/Obsidian Replacement.md",
+    title: "Obsidian Replacement",
+    content: "Build a local-first Markdown app",
+    tags: [],
+    frontmatter: {},
+    links: [],
+    modifiedAt: "2026-06-19T00:00:00.000Z",
+    contentHash: "context-refresh-test",
+  },
+  backlinks: [],
+  outgoingLinks: [],
+};
+
+const graph: GraphData = { nodes: [], edges: [], focusedPath: null };
+const gitStatus: GitStatus = {
+  isRepo: true,
+  autoGitEnabled: false,
+  branch: "main",
+  hasChanges: false,
+  hasConflicts: false,
+};
+const snapshots: Snapshot[] = [];
+const candidates: ContextBundleCandidate[] = [];
+
+function createApi(): TestApi {
+  return {
+    getContextBundleCandidates: vi.fn().mockResolvedValue(candidates),
+    getGitStatus: vi.fn().mockResolvedValue(gitStatus),
+    getGraph: vi.fn().mockResolvedValue(graph),
+    getInboxCaptures: vi.fn().mockResolvedValue([]),
+    getNoteContext: vi.fn().mockResolvedValue(noteContext),
+    listSnapshots: vi.fn().mockResolvedValue(snapshots),
+  };
+}
 
 describe("note context refresh", () => {
-  beforeEach(() => {
-    window.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: [{ embedding: [0.9, 0.8, 0.7] }],
-      embedding: [0.9, 0.8, 0.7],
-      models: [],
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }));
-  });
-
-  afterEach(() => {
-    window.fetch = originalFetch;
-    vi.restoreAllMocks();
-  });
-
   it("does not reload graph or git status when only the selected note changes", async () => {
-    // Given
-    const graphSpy = vi.spyOn(vaultApi, "getGraph");
-    const gitStatusSpy = vi.spyOn(vaultApi, "getGitStatus");
-    const backlinkSpy = vi.spyOn(vaultApi, "getBacklinkSuggestions");
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
-    await waitFor(() => expect(graphSpy).toHaveBeenCalled());
-    await waitFor(() => expect(gitStatusSpy).toHaveBeenCalled());
-    graphSpy.mockClear();
-    gitStatusSpy.mockClear();
-    backlinkSpy.mockClear();
+    const api = createApi();
 
-    // When
-    fireEvent.click(screen.getByText("Obsidian Replacement.md"));
-    await waitFor(() => expect(backlinkSpy).toHaveBeenCalledWith("Projects/Obsidian Replacement.md"));
+    await loadNoteContext(api, "Projects/Obsidian Replacement.md", false);
 
-    // Then
-    expect(graphSpy).not.toHaveBeenCalled();
-    expect(gitStatusSpy).not.toHaveBeenCalled();
+    expect(api.getNoteContext).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.listSnapshots).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.getContextBundleCandidates).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.getInboxCaptures).not.toHaveBeenCalled();
+    expect(api.getGraph).not.toHaveBeenCalled();
+    expect(api.getGitStatus).not.toHaveBeenCalled();
   });
 
   it("starts note-specific context requests in parallel", async () => {
-    // Given
-    const contextSpy = vi.spyOn(vaultApi, "getNoteContext");
-    const snapshotsSpy = vi.spyOn(vaultApi, "listSnapshots");
-    const candidatesSpy = vi.spyOn(vaultApi, "getContextBundleCandidates");
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Demo Vault")).toBeTruthy());
-
-    let resolveContext: (() => void) | undefined;
-    const pendingContext = new Promise<Awaited<ReturnType<typeof vaultApi.getNoteContext>>>((resolve) => {
-      resolveContext = () => resolve({
-        note: {
-          path: "Projects/Obsidian Replacement.md",
-          title: "Obsidian Replacement",
-          content: "Build a local-first Markdown app",
-          tags: [],
-          frontmatter: {},
-          links: [],
-          modifiedAt: "2026-06-19T00:00:00.000Z",
-          contentHash: "context-refresh-test",
-        },
-        backlinks: [],
-        outgoingLinks: [],
-      });
+    const api = createApi();
+    let resolveContext: ((value: NoteContext) => void) | undefined;
+    const pendingContext = new Promise<NoteContext>((resolve) => {
+      resolveContext = resolve;
     });
-    contextSpy.mockImplementationOnce(() => pendingContext);
-    contextSpy.mockClear();
-    snapshotsSpy.mockClear();
-    candidatesSpy.mockClear();
+    vi.mocked(api.getNoteContext).mockReturnValueOnce(pendingContext);
 
-    // When
-    fireEvent.click(screen.getByText("Obsidian Replacement.md"));
-    await waitFor(() => expect(contextSpy).toHaveBeenCalledWith("Projects/Obsidian Replacement.md"));
+    const result = loadNoteContext(api, "Projects/Obsidian Replacement.md", true);
 
-    // Then
-    expect(snapshotsSpy).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
-    expect(candidatesSpy).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.getNoteContext).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.listSnapshots).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.getContextBundleCandidates).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
+    expect(api.getInboxCaptures).toHaveBeenCalledWith("Projects/Obsidian Replacement.md");
 
-    const completeContext = resolveContext;
-    if (completeContext) {
-      await act(async () => {
-        completeContext();
-        await pendingContext;
-      });
-    }
+    resolveContext?.(noteContext);
+    await expect(result).resolves.toEqual({
+      context: noteContext,
+      snapshots,
+      candidates,
+      inboxCaptures: [],
+    });
+  });
+
+  it("loads the vault overview independently from note context", async () => {
+    const api = createApi();
+
+    await expect(loadVaultOverview(api)).resolves.toEqual({ graph, gitStatus });
+
+    expect(api.getGraph).toHaveBeenCalled();
+    expect(api.getGitStatus).toHaveBeenCalled();
+    expect(api.getNoteContext).not.toHaveBeenCalled();
+    expect(api.listSnapshots).not.toHaveBeenCalled();
+    expect(api.getContextBundleCandidates).not.toHaveBeenCalled();
   });
 });
