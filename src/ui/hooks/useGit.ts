@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { vaultApi } from "../../api";
 import type { GitStatus, GitFileChange, NoteDocument, UnresolvedLinkGroup, UnresolvedLinkSource } from "../../api/types";
 import { normalizeRef } from "../../core/normalizeRef";
+import { createGitPullOperations } from "./gitPullOperations";
 import type { UnresolvedLinksState } from "./useUnresolvedLinks";
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
@@ -235,104 +236,6 @@ export function useGit(callbacks: UseGitCallbacks) {
     }
   }
 
-  async function handleGitPull() {
-    setIsGitLoading(true);
-    try {
-      const preflight = await vaultApi.gitPullPreflight();
-      if (!preflight.isClean) {
-        setPendingPullWarning({ dirtyFiles: preflight.dirtyFiles });
-        return;
-      }
-      await handlePullAnyway();
-    } catch (err) {
-      setGitOutputLog(`Pull preflight failed:\n${errorMessage(err)}`);
-    } finally {
-      setIsGitLoading(false);
-    }
-  }
-
-  async function handlePullAnyway() {
-    setIsGitLoading(true);
-    try {
-      setPendingPullWarning(null);
-      setGitOutputLog("Pulling from remote repository...");
-      const output = await vaultApi.gitPull();
-      setGitOutputLog(output);
-      await refreshGitWorkspace();
-      await refreshVault(activePath);
-    } catch (err) {
-      setGitOutputLog(`Pull failed:\n${errorMessage(err)}`);
-    } finally {
-      setIsGitLoading(false);
-    }
-  }
-
-  function cancelPendingPull() {
-    setPendingPullWarning(null);
-  }
-
-  async function handleStashAndPull() {
-    setIsGitLoading(true);
-    try {
-      setPendingPullWarning(null);
-      setGitOutputLog("Stashing local changes...");
-      await vaultApi.gitStashPush();
-    } catch (err) {
-      setGitOutputLog(`Stash failed, pull aborted:\n${errorMessage(err)}`);
-      setIsGitLoading(false);
-      return;
-    }
-
-    try {
-      setGitOutputLog("Pulling from remote repository...");
-      const pullOutput = await vaultApi.gitPull();
-
-      const popResult = await vaultApi.gitStashPop(false);
-      if (popResult.status === "clean") {
-        setGitOutputLog(`${pullOutput}\nStash applied cleanly.`);
-        setStashRetainedRef(null);
-      } else {
-        setStashRetainedRef(popResult.stashRef);
-        setForceFreshConflictResolver(true);
-        setGitOutputLog(`${pullOutput}\nStash pop conflicted — stash retained as ${popResult.stashRef}.`);
-      }
-      await refreshGitWorkspace();
-      await refreshVault(activePath);
-    } catch (pullErr) {
-      try {
-        const restoreResult = await vaultApi.gitStashPop(true);
-        if (restoreResult.status === "clean") {
-          setStashRetainedRef(null);
-          setGitOutputLog(`Pull failed:\n${errorMessage(pullErr)}\nStashed changes restored.`);
-        } else {
-          const retainedRef = restoreResult.stashRef ?? "autostash entry";
-          setStashRetainedRef(retainedRef);
-          setForceFreshConflictResolver(true);
-          setGitOutputLog(`Pull failed:\n${errorMessage(pullErr)}\nStash restore conflicted — stash retained as ${retainedRef}.`);
-        }
-      } catch (popErr) {
-        setGitOutputLog(`Pull failed:\n${errorMessage(pullErr)}\nAlso failed to restore stash:\n${errorMessage(popErr)}`);
-      }
-      await refreshGitWorkspace();
-    } finally {
-      setIsGitLoading(false);
-    }
-  }
-
-  async function handleDropStash() {
-    if (gitStatus?.hasConflicts || mergeHeadExists) return;
-    setIsGitLoading(true);
-    try {
-      await vaultApi.gitStashDrop();
-      setStashRetainedRef(null);
-      setGitOutputLog("Stash dropped.");
-    } catch (err) {
-      setGitOutputLog(`Failed to drop stash:\n${errorMessage(err)}`);
-    } finally {
-      setIsGitLoading(false);
-    }
-  }
-
   async function handleGitPush() {
     setIsGitLoading(true);
     try {
@@ -386,7 +289,27 @@ export function useGit(callbacks: UseGitCallbacks) {
     setGitStatus(await vaultApi.getGitStatus());
   }
 
-  const canDropStash = !!stashRetainedRef && !gitStatus?.hasConflicts && !mergeHeadExists;
+  const {
+    canDropStash,
+    handleGitPull,
+    handlePullAnyway,
+    cancelPendingPull,
+    handleStashAndPull,
+    handleDropStash,
+  } = createGitPullOperations({
+    api: vaultApi,
+    activePath,
+    gitStatus,
+    mergeHeadExists,
+    stashRetainedRef,
+    refreshGitWorkspace,
+    refreshVault,
+    setIsGitLoading,
+    setGitOutputLog,
+    setPendingPullWarning,
+    setStashRetainedRef,
+    setForceFreshConflictResolver,
+  });
 
   return {
     gitStatus, setGitStatus,
