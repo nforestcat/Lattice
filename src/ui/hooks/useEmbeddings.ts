@@ -206,17 +206,17 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
         if (!cached || cached.contentHash !== note.contentHash) {
           try {
             const doc = await vaultApi.readNote(note.path);
-            // TODO: migrate to embedNote helper
-            const vector = await getEmbedding(config, doc.content);
-            if (vector.length > 0) {
-              cache[note.path] = {
-                contentHash: note.contentHash,
-                vector
-              };
-              cacheUpdated = true;
+            const result = await embedNote(config, doc.content);
+            if ("error" in result) {
+              console.error(`Semantic search: failed to embed note ${note.path}:`, result.error);
+              continue;
             }
+            // ponytail: cache-write stays per-caller (recommendation persists partial-then-halts,
+            // search persists once at the end) — mechanism is shared via embedNote, policy is not.
+            cache[note.path] = { contentHash: note.contentHash, vector: result.vector };
+            cacheUpdated = true;
           } catch (err) {
-            console.error(`Semantic search: failed to embed note ${note.path}:`, err);
+            console.error(`Semantic search: failed to read or embed note ${note.path}:`, err);
           }
         }
       }
