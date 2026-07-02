@@ -33,7 +33,7 @@ export function useModelDownload(): UseModelDownloadReturn {
     progress: null,
     error: null,
     downloaded: false,
-    modelSizeMb: 90,
+    modelSizeMb: 113,
   });
 
   const downloadingRef = useRef(false);
@@ -44,7 +44,7 @@ export function useModelDownload(): UseModelDownloadReturn {
       setState(prev => ({
         ...prev,
         downloaded: status.downloaded,
-        modelSizeMb: status.modelSizeMb || 90,
+        modelSizeMb: status.modelSizeMb || 113,
       }));
     } catch {
       // ignore status check failures

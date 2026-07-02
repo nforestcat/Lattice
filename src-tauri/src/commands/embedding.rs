@@ -1,13 +1,15 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-const MODEL_REVISION: &str = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41";
+// Multilingual (incl. Korean) symmetric sentence embedder, int8-quantized ONNX (~113MB).
+// Symmetric: no query:/passage: prefix split needed between search and indexing paths.
+const MODEL_REVISION: &str = "2c4055b12046f11709e9df2c122e59ffbdc2f900";
 const MODEL_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/onnx/model.onnx";
+    "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/onnx/model_quantized.onnx";
 const TOKENIZER_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer.json";
-const MODEL_SHA256: &str = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452";
-const TOKENIZER_SHA256: &str = "0527a6e09e4ddafb203ce57d0b33383aca4727268810f6db490723892d49585d";
+    "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/tokenizer.json";
+const MODEL_SHA256: &str = "66fc00f5f29afcaff34092e1bdd20008ca3918265a82fb9695a551e510cc4ebc";
+const TOKENIZER_SHA256: &str = "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441";
 
 fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), String> {
     let actual = format!("{:x}", Sha256::digest(bytes));
@@ -83,7 +85,10 @@ fn model_dir(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String
         .path()
         .app_data_dir()
         .map_err(|e| format!("Could not resolve app data dir: {}", e))?;
-    Ok(base.join("lattice").join("models").join("all-minilm-l6-v2"))
+    Ok(base
+        .join("lattice")
+        .join("models")
+        .join("paraphrase-multilingual-minilm-l12-v2"))
 }
 
 #[cfg(not(test))]
@@ -192,6 +197,11 @@ pub(crate) async fn download_local_embedding_model(
         })?;
     }
 
+    // ponytail: one-time cleanup of the superseded all-MiniLM-L6-v2 model dir
+    if let Some(parent) = dir.parent() {
+        let _ = std::fs::remove_dir_all(parent.join("all-minilm-l6-v2"));
+    }
+
     Ok(())
 }
 
@@ -218,14 +228,23 @@ pub(crate) async fn get_local_embedding(
     if (LOCAL_SESSION.get().is_none() || LOCAL_TOKENIZER.get().is_none())
         && (!model_path.exists() || !tokenizer_path.exists())
     {
-        return Err("Model not downloaded. Call download_local_embedding_model first.".to_string());
+        return Err(
+            "Local embedding model is not downloaded yet. Open the Distill Settings and download the offline model (~113 MB).".to_string(),
+        );
     }
 
     let tokenizer = match LOCAL_TOKENIZER.get() {
         Some(tokenizer) => tokenizer,
         None => {
-            let loaded = tokenizers::Tokenizer::from_file(&tokenizer_path)
+            let mut loaded = tokenizers::Tokenizer::from_file(&tokenizer_path)
                 .map_err(|e| format!("Could not load tokenizer: {}", e))?;
+            // Model position embeddings cap at 512 tokens; whole-note input can exceed that.
+            loaded
+                .with_truncation(Some(tokenizers::TruncationParams {
+                    max_length: 512,
+                    ..Default::default()
+                }))
+                .map_err(|e| format!("Could not configure truncation: {}", e))?;
             let _ = LOCAL_TOKENIZER.set(loaded);
             LOCAL_TOKENIZER.get().expect("tokenizer cached above")
         }
