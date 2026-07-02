@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { canUseEmbeddings, getEmbedding, cosineSimilarity } from "../src/api/embeddings";
+import {
+  canUseEmbeddings,
+  getEmbedding,
+  cosineSimilarity,
+  embeddingModelId,
+  parseEmbeddingsCache,
+  serializeEmbeddingsCache,
+  LOCAL_ONNX_MODEL_ID,
+} from "../src/api/embeddings";
 import type { LlmConfig } from "../src/api/types";
 
 describe("Vector Embeddings & Cosine Similarity", () => {
@@ -35,6 +43,39 @@ describe("Vector Embeddings & Cosine Similarity", () => {
     it("should return 0 if vector lengths differ or are empty", () => {
       expect(cosineSimilarity([1, 2], [1, 2, 3])).toBe(0);
       expect(cosineSimilarity([], [])).toBe(0);
+    });
+  });
+
+  describe("embeddings cache model identity", () => {
+    const entries = { "Home.md": { contentHash: "h1", vector: [0.1, 0.2] } };
+
+    it("round-trips entries written for the same model", () => {
+      const raw = serializeEmbeddingsCache("openai:text-embedding-3-small", entries);
+      expect(parseEmbeddingsCache(raw, "openai:text-embedding-3-small")).toEqual(entries);
+    });
+
+    it("discards entries written by a different model", () => {
+      const raw = serializeEmbeddingsCache("openai:text-embedding-3-small", entries);
+      expect(parseEmbeddingsCache(raw, LOCAL_ONNX_MODEL_ID)).toEqual({});
+    });
+
+    it("discards the legacy flat cache shape and corrupt JSON", () => {
+      expect(parseEmbeddingsCache(JSON.stringify(entries), "openai:text-embedding-3-small")).toEqual({});
+      expect(parseEmbeddingsCache("not json", "openai:text-embedding-3-small")).toEqual({});
+      expect(parseEmbeddingsCache("", "openai:text-embedding-3-small")).toEqual({});
+    });
+
+    it("derives a stable id from the embedding provider and model", () => {
+      expect(embeddingModelId(null)).toBe("");
+      expect(embeddingModelId({ provider: "openai", apiKey: "k", model: "gpt-4o" })).toBe(
+        "openai:text-embedding-3-small"
+      );
+      expect(
+        embeddingModelId({ provider: "openai", apiKey: "k", model: "gpt-4o", embeddingProvider: "local-onnx" })
+      ).toBe(LOCAL_ONNX_MODEL_ID);
+      expect(
+        embeddingModelId({ provider: "ollama", apiKey: "", model: "llama3", embeddingModel: "nomic-embed-text" })
+      ).toBe("ollama:nomic-embed-text");
     });
   });
 
