@@ -186,7 +186,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
 
     const config = llmConfig;
     if (!config || !canUseEmbeddings(config)) {
-      setSemanticSearchError("Please configure LLM API key / Ollama / LM Studio in the Distill Settings first.");
+      setSemanticSearchError("Semantic search needs an embedding provider. Choose 'Local (ONNX)' in the Distill Settings to download the offline model (~113 MB, no API key needed), or configure an API key / Ollama / LM Studio.");
       return;
     }
 

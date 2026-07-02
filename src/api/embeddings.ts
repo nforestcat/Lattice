@@ -47,7 +47,8 @@ function configForRemoteEmbedding(config: LlmConfig): LlmConfig {
   };
 }
 
-export const LOCAL_ONNX_MODEL_ID = "local-onnx:all-minilm-l6-v2";
+// Keep in sync with the model constants in src-tauri/src/commands/embedding.rs.
+export const LOCAL_ONNX_MODEL_ID = "local-onnx:paraphrase-multilingual-minilm-l12-v2";
 
 /** Stable identifier for the embedding model a config resolves to. Vectors from
  * different ids are incompatible and must never share a cache. */
