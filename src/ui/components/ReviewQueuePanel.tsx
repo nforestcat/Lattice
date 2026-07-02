@@ -6,6 +6,7 @@ import { ReviewQueueItemCard } from "./ReviewQueueItemCard";
 interface ReviewQueuePanelProps {
   readonly items: ReviewWorkflowItem[];
   readonly onApply: (id: string) => void | Promise<void>;
+  readonly onApplySelectedHunks?: (id: string, hunkIds: readonly string[]) => void | Promise<void>;
   readonly onApprove: (id: string) => void | Promise<void>;
   readonly onReject: (id: string) => void | Promise<void>;
   readonly generating?: Set<string>;
@@ -26,6 +27,7 @@ const FILTER_TABS: Array<ReviewItemStatus | "all"> = [
 export function ReviewQueuePanel({
   items,
   onApply,
+  onApplySelectedHunks,
   onApprove,
   onReject,
   generating,
@@ -111,6 +113,7 @@ export function ReviewQueuePanel({
               key={item.id}
               item={item}
               onApply={onApply}
+              onApplySelectedHunks={onApplySelectedHunks}
               onApprove={onApprove}
               onReject={onReject}
               generating={generating}
