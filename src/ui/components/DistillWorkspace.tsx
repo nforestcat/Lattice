@@ -60,6 +60,7 @@ interface DistillWorkspaceProps {
   proposedEdits: ProposedEdit[];
   setProposedEdits: React.Dispatch<React.SetStateAction<ProposedEdit[]>>;
   applyCheckedEdits: () => Promise<void>;
+  onApplySelectedProposedEditHunks: (id: string, hunkIds: readonly string[]) => Promise<void>;
 
   chatMessages: ChatMessage[];
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -118,6 +119,7 @@ export function DistillWorkspace({
   proposedEdits,
   setProposedEdits,
   applyCheckedEdits,
+  onApplySelectedProposedEditHunks,
   chatMessages,
   setChatMessages,
   chatInput,
@@ -428,6 +430,7 @@ export function DistillWorkspace({
             <ReviewQueuePanel
               items={[...reviewQueue.items]}
               onApply={handleQueueApply}
+              onApplySelectedHunks={onApplySelectedProposedEditHunks}
               onApprove={(id) => { void reviewQueue.approveItem(id); }}
               onReject={(id) => { void reviewQueue.rejectItem(id); }}
               generating={maintenancePlanner.generating}

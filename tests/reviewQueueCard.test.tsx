@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewQueueItemCard } from "../src/ui/components/ReviewQueueItemCard";
 import type { ReviewWorkflowItem } from "../src/ui/reviewWorkflow/ledger";
@@ -25,13 +26,17 @@ function makeItem(overrides: Partial<ReviewWorkflowItem>): ReviewWorkflowItem {
 
 const noop = vi.fn();
 
-function renderCard(item: ReviewWorkflowItem) {
+function renderCard(
+  item: ReviewWorkflowItem,
+  overrides: Partial<ComponentProps<typeof ReviewQueueItemCard>> = {},
+) {
   return render(
     <ReviewQueueItemCard
       item={item}
       onApply={noop}
       onApprove={noop}
       onReject={noop}
+      {...overrides}
     />,
   );
 }
@@ -125,7 +130,7 @@ describe("ReviewQueueItemCard capabilities", () => {
     renderCard(makeItem({
       kind: "duplicate_warning" as ReviewItemKind,
       status: "drafted",
-      suggestionKind: "merge_or_delete" as any,
+      suggestionKind: "merge_or_delete",
     }));
     expect(screen.getByTestId("risk-destructive-pill")).toBeTruthy();
     expect(screen.getByText("파괴적 변경 (merge/delete)")).toBeTruthy();
@@ -135,7 +140,7 @@ describe("ReviewQueueItemCard capabilities", () => {
     renderCard(makeItem({
       kind: "orphan_note" as ReviewItemKind,
       status: "drafted",
-      suggestionKind: "link_candidates" as any,
+      suggestionKind: "link_candidates",
     }));
     expect(screen.queryByText("이전")).toBeNull();
     expect(screen.queryByText("이후")).toBeNull();
@@ -158,5 +163,24 @@ describe("ReviewQueueItemCard capabilities", () => {
       },
     }));
     expect(screen.getByText("Apply completed without changing a path.")).toBeTruthy();
+  });
+
+  it("applies selected hunks for approved update proposed edits", () => {
+    const onApplySelectedHunks = vi.fn();
+    renderCard(
+      makeItem({
+        id: "edit-1",
+        kind: "proposed_edit",
+        status: "approved",
+        original: ["a", "old one", "", "b", "old two"].join("\n"),
+        proposed: ["a", "new one", "", "b", "new two"].join("\n"),
+      }),
+      { onApplySelectedHunks },
+    );
+
+    fireEvent.click(screen.getByLabelText("Select hunk 1"));
+    fireEvent.click(screen.getByText("Apply selected hunks"));
+
+    expect(onApplySelectedHunks).toHaveBeenCalledWith("edit-1", ["hunk-1"]);
   });
 });

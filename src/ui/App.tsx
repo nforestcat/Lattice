@@ -37,6 +37,7 @@ import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useBackgroundEmbeddingSync } from "./hooks/useBackgroundEmbeddingSync";
 import { useAppStartup } from "./hooks/useAppStartup";
 import { applyProposedEditToVault } from "./proposedEditApply";
+import { buildProposedEditHunkSelection } from "./proposedEditHunks";
 import { findAmbiguousUpdateAnchor } from "./proposedEditGuards";
 import {
   PRESETS as SHARED_PRESETS,
@@ -541,6 +542,62 @@ export function App() {
     return applySelectedProposedEdits(new Set([id]));
   }
 
+  async function applySelectedProposedEditHunks(id: string, hunkIds: readonly string[]): Promise<void> {
+    const editIndex = proposedEdits.findIndex((edit) => edit.id === id);
+    const edit = proposedEdits[editIndex];
+    if (edit === undefined) {
+      setStatus(`Proposed edit ${id} was not found.`);
+      return;
+    }
+
+    const selection = buildProposedEditHunkSelection(edit, hunkIds);
+    if (selection === null) {
+      setStatus("No selected hunk changes to apply.");
+      return;
+    }
+
+    if (selection.selectedCount === selection.totalCount) {
+      await reviewQueue.applyItem(id);
+      return;
+    }
+
+    const message = `Apply ${selection.selectedCount} of ${selection.totalCount} selected hunk(s) to ${edit.path}?`;
+    if (!(await askConfirm(message, "Apply Selected Hunks"))) {
+      return;
+    }
+
+    try {
+      const ambiguousAnchor = await findAmbiguousUpdateAnchor(
+        [selection.editToApply],
+        (path) => vaultApi.readNote(path),
+      );
+      if (ambiguousAnchor) {
+        setStatus(`Warning: anchor for "${ambiguousAnchor.path}" appears multiple times. Refine the proposed edit before applying.`);
+        return;
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setStatus(`Could not verify selected hunk anchor: ${errorMessage}`);
+      return;
+    }
+
+    try {
+      const appliedEdit = await applyProposedEditToVault(selection.editToApply);
+      const nextEdits = [...proposedEdits];
+      nextEdits[editIndex] = selection.remainingEdit ?? appliedEdit;
+      setProposedEdits(nextEdits);
+      setStatus(
+        selection.remainingEdit === null
+          ? "Applied all selected hunks."
+          : `Applied ${selection.selectedCount} hunk(s); ${selection.totalCount - selection.selectedCount} hunk(s) remain.`,
+      );
+      await refreshVault(activePath);
+    } catch (err) {
+      console.error("Failed to apply selected hunks", edit, err);
+      setStatus(`Error applying selected hunk(s) to ${edit.path}: ${errorMessage(err)}`);
+    }
+  }
+
   async function applyCheckedEdits() {
     await applySelectedProposedEdits(null);
   }
@@ -962,6 +1019,7 @@ export function App() {
               proposedEdits={proposedEdits}
               setProposedEdits={setProposedEdits}
               applyCheckedEdits={applyCheckedEdits}
+              onApplySelectedProposedEditHunks={applySelectedProposedEditHunks}
               chatMessages={chatMessages}
               setChatMessages={setChatMessages}
               chatInput={chatInput}
