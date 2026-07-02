@@ -3,7 +3,7 @@ import { vaultApi } from "../../api";
 import { isDesktopRuntime, pickVaultFolder } from "../../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, LlmConfig, NoteDocument, Snapshot, VaultConfig, VaultSnapshot } from "../../api/types";
 import type { GitFileChange, GitStatus } from "../../api/gitTypes";
-import type { VectorCache } from "../../api/embeddings";
+import { embeddingModelId, parseEmbeddingsCache, type VectorCache } from "../../api/embeddings";
 import type { MetadataSuggestions } from "./useLlm";
 import type { GraphData, NoteContext, NoteMeta } from "../../core/types";
 import {
@@ -301,11 +301,7 @@ export function useVaultSession(params: UseVaultSessionParams) {
       if (!isCurrent()) {
         return;
       }
-      try {
-        setEmbeddingsCache(rawCache ? JSON.parse(rawCache) : {});
-      } catch (e) {
-        setEmbeddingsCache({});
-      }
+      setEmbeddingsCache(parseEmbeddingsCache(rawCache, embeddingModelId(llmCfg)));
 
       if (loadedConfig.archiveRetentionPolicy && loadedConfig.archiveRetentionPolicy !== "none") {
         void pruneExpiredPromptRuns(loadedConfig.archiveRetentionPolicy, loadedConfig, false);

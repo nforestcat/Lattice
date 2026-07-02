@@ -1,6 +1,14 @@
 import { useState, useRef } from "react";
 import { vaultApi } from "../../api";
-import { canUseEmbeddings, getEmbedding, cosineSimilarity, type VectorCache } from "../../api/embeddings";
+import {
+  canUseEmbeddings,
+  getEmbedding,
+  cosineSimilarity,
+  embeddingModelId,
+  parseEmbeddingsCache,
+  serializeEmbeddingsCache,
+  type VectorCache,
+} from "../../api/embeddings";
 import type { LlmConfig, VaultSnapshot, ContextBundleCandidate } from "../../api/types";
 import type { NoteMeta } from "../../core/types";
 import { estimateTokens } from "../../core/contextBundle";
@@ -40,13 +48,8 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
 
     setEmbeddingStatus("Semantic indexing...");
     try {
-      const rawCache = await vaultApi.loadEmbeddingsCache();
-      let cache: VectorCache = {};
-      try {
-        cache = JSON.parse(rawCache);
-      } catch (e) {
-        cache = {};
-      }
+      const modelId = embeddingModelId(config);
+      const cache: VectorCache = parseEmbeddingsCache(await vaultApi.loadEmbeddingsCache(), modelId);
 
       let cacheUpdated = false;
       const notesToProcess = notes;
@@ -61,7 +64,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
           if ("error" in result) {
             console.error(`Failed to generate embedding for ${note.path}:`, result.error);
             if (cacheUpdated) {
-              await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+              await vaultApi.saveEmbeddingsCache(serializeEmbeddingsCache(modelId, cache));
             }
             setEmbeddingStatus("Embedding error (API unreachable)");
             return;
@@ -72,7 +75,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
       }
 
       if (cacheUpdated) {
-        await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+        await vaultApi.saveEmbeddingsCache(serializeEmbeddingsCache(modelId, cache));
       }
 
       if (activePathRef.current !== capturedPath) return;
@@ -190,13 +193,8 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
     setIsSearchingSemantic(true);
     setSemanticSearchError(null);
     try {
-      const rawCache = await vaultApi.loadEmbeddingsCache();
-      let cache: VectorCache = {};
-      try {
-        cache = rawCache ? JSON.parse(rawCache) : {};
-      } catch (e) {
-        cache = {};
-      }
+      const modelId = embeddingModelId(config);
+      const cache: VectorCache = parseEmbeddingsCache(await vaultApi.loadEmbeddingsCache(), modelId);
 
       const notesToProcess = vault?.notes || [];
       let cacheUpdated = false;
@@ -222,7 +220,7 @@ export function useEmbeddings(llmConfig: LlmConfig | null, vault: VaultSnapshot 
       }
 
       if (cacheUpdated) {
-        await vaultApi.saveEmbeddingsCache(JSON.stringify(cache));
+        await vaultApi.saveEmbeddingsCache(serializeEmbeddingsCache(modelId, cache));
       }
       setEmbeddingsCache(cache);
 

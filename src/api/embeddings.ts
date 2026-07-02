@@ -47,6 +47,37 @@ function configForRemoteEmbedding(config: LlmConfig): LlmConfig {
   };
 }
 
+export const LOCAL_ONNX_MODEL_ID = "local-onnx:all-minilm-l6-v2";
+
+/** Stable identifier for the embedding model a config resolves to. Vectors from
+ * different ids are incompatible and must never share a cache. */
+export function embeddingModelId(config: LlmConfig | null): string {
+  if (!config) return "";
+  const provider = config.embeddingProvider ?? config.provider;
+  if (provider === "local-onnx") return LOCAL_ONNX_MODEL_ID;
+  const model = config.embeddingModel || (provider === "openai" ? "text-embedding-3-small" : "all-minilm");
+  return `${provider}:${model}`;
+}
+
+/** Parse .lattice/embeddings.json. Entries are only returned when the cache was
+ * written by the same embedding model; anything else (legacy flat shape, model
+ * mismatch, corrupt JSON) yields an empty cache so notes reindex cleanly. */
+export function parseEmbeddingsCache(raw: string, modelId: string): VectorCache {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed) && typeof parsed.model === "string" && isRecord(parsed.entries)) {
+      return parsed.model === modelId ? (parsed.entries as VectorCache) : {};
+    }
+  } catch {
+    // fall through to empty cache
+  }
+  return {};
+}
+
+export function serializeEmbeddingsCache(modelId: string, entries: VectorCache): string {
+  return JSON.stringify({ model: modelId, entries });
+}
+
 export function canUseEmbeddings(config: LlmConfig | null): boolean {
   if (!config) return false;
   if (config.embeddingProvider === "local-onnx") return true;

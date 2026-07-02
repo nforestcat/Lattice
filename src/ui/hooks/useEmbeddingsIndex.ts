@@ -1,6 +1,11 @@
 import { useState, useCallback } from "react";
 import { vaultApi } from "../../api";
-import { type VectorCache, type EmbeddingsStatus } from "../../api/embeddings";
+import {
+  embeddingModelId,
+  parseEmbeddingsCache,
+  serializeEmbeddingsCache,
+  type EmbeddingsStatus,
+} from "../../api/embeddings";
 import { embedNote } from "./useEmbeddings";
 import type { LlmConfig, VaultSnapshot } from "../../api/types";
 
@@ -26,7 +31,7 @@ export function useEmbeddingsIndex(
 
   const refresh = useCallback(async () => {
     if (!vault) return;
-    const cache = parseJsonSafe<VectorCache>(await vaultApi.loadEmbeddingsCache(), {});
+    const cache = parseEmbeddingsCache(await vaultApi.loadEmbeddingsCache(), embeddingModelId(llmConfig));
     const status = parseJsonSafe<EmbeddingsStatus>(await vaultApi.loadEmbeddingsStatus(), {});
 
     let indexed = 0;
@@ -51,13 +56,14 @@ export function useEmbeddingsIndex(
     setStaleCount(stale);
     setFailedNotes(failed);
     setLastRefreshed(new Date());
-  }, [vault]);
+  }, [vault, llmConfig]);
 
   const reindex = useCallback(async () => {
     if (!llmConfig || !vault) return;
     setIsReindexing(true);
     try {
-      const cache = parseJsonSafe<VectorCache>(await vaultApi.loadEmbeddingsCache(), {});
+      const modelId = embeddingModelId(llmConfig);
+      const cache = parseEmbeddingsCache(await vaultApi.loadEmbeddingsCache(), modelId);
       const status = parseJsonSafe<EmbeddingsStatus>(await vaultApi.loadEmbeddingsStatus(), {});
 
       const toProcess = vault.notes.filter((note) => {
@@ -93,11 +99,11 @@ export function useEmbeddingsIndex(
       }
 
       // Re-read the cache before saving to merge with concurrent writes from useEmbeddings
-      const latestCache = parseJsonSafe<VectorCache>(await vaultApi.loadEmbeddingsCache(), {});
+      const latestCache = parseEmbeddingsCache(await vaultApi.loadEmbeddingsCache(), modelId);
       for (const [path, entry] of Object.entries(cache)) {
         latestCache[path] = entry;
       }
-      await vaultApi.saveEmbeddingsCache(JSON.stringify(latestCache));
+      await vaultApi.saveEmbeddingsCache(serializeEmbeddingsCache(modelId, latestCache));
       await vaultApi.saveEmbeddingsStatus(JSON.stringify(status));
       await refresh();
     } finally {

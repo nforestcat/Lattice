@@ -196,6 +196,12 @@ pub(crate) async fn download_local_embedding_model(
 }
 
 #[cfg(not(test))]
+static LOCAL_SESSION: std::sync::OnceLock<std::sync::Mutex<ort::session::Session>> =
+    std::sync::OnceLock::new();
+#[cfg(not(test))]
+static LOCAL_TOKENIZER: std::sync::OnceLock<tokenizers::Tokenizer> = std::sync::OnceLock::new();
+
+#[cfg(not(test))]
 #[tauri::command]
 pub(crate) async fn get_local_embedding(
     text: String,
@@ -209,12 +215,21 @@ pub(crate) async fn get_local_embedding(
     let model_path = dir.join("model.onnx");
     let tokenizer_path = dir.join("tokenizer.json");
 
-    if !model_path.exists() || !tokenizer_path.exists() {
+    if (LOCAL_SESSION.get().is_none() || LOCAL_TOKENIZER.get().is_none())
+        && (!model_path.exists() || !tokenizer_path.exists())
+    {
         return Err("Model not downloaded. Call download_local_embedding_model first.".to_string());
     }
 
-    let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-        .map_err(|e| format!("Could not load tokenizer: {}", e))?;
+    let tokenizer = match LOCAL_TOKENIZER.get() {
+        Some(tokenizer) => tokenizer,
+        None => {
+            let loaded = tokenizers::Tokenizer::from_file(&tokenizer_path)
+                .map_err(|e| format!("Could not load tokenizer: {}", e))?;
+            let _ = LOCAL_TOKENIZER.set(loaded);
+            LOCAL_TOKENIZER.get().expect("tokenizer cached above")
+        }
+    };
     let encoding = tokenizer
         .encode(text, true)
         .map_err(|e| format!("Tokenization failed: {}", e))?;
@@ -235,10 +250,21 @@ pub(crate) async fn get_local_embedding(
         return Err("Empty tokenization result".to_string());
     }
 
-    let mut session = Session::builder()
-        .map_err(|e| e.to_string())?
-        .commit_from_file(&model_path)
-        .map_err(|e| format!("Could not load ONNX model: {}", e))?;
+    let session_lock = match LOCAL_SESSION.get() {
+        Some(lock) => lock,
+        None => {
+            let session = Session::builder()
+                .map_err(|e| e.to_string())?
+                .commit_from_file(&model_path)
+                .map_err(|e| format!("Could not load ONNX model: {}", e))?;
+            let _ = LOCAL_SESSION.set(std::sync::Mutex::new(session));
+            LOCAL_SESSION.get().expect("session cached above")
+        }
+    };
+    // ponytail: one global session serializes inference; per-call model loads were the bottleneck
+    let mut session = session_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // Some exports omit token_type_ids; only supply inputs the model declares
     // so name mismatches don't error.

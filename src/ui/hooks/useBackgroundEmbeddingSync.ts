@@ -1,6 +1,13 @@
 import { useEffect, type Dispatch, type SetStateAction } from "react";
 import { vaultApi } from "../../api";
-import { canUseEmbeddings, getEmbedding, type VectorCache } from "../../api/embeddings";
+import {
+  canUseEmbeddings,
+  getEmbedding,
+  embeddingModelId,
+  parseEmbeddingsCache,
+  serializeEmbeddingsCache,
+  type VectorCache,
+} from "../../api/embeddings";
 import type { LlmConfig, NoteDocument } from "../../api/types";
 import type { NoteMeta } from "../../core/types";
 import { computeHash } from "../llmSecrets";
@@ -59,18 +66,16 @@ export function useBackgroundEmbeddingSync({
 
         const vector = await getEmbedding(config, draft);
         if (vector.length > 0) {
-          setEmbeddingsCache((prev) => {
-            const nextCache = {
-              ...prev,
-              [activePath]: {
-                contentHash: hash,
-                vector,
-              },
-            };
-            void vaultApi.saveEmbeddingsCache(JSON.stringify(nextCache));
-            return nextCache;
-          });
+          const entry = { contentHash: hash, vector };
+          // Merge into the on-disk cache instead of overwriting it with React
+          // state, so vectors from a previously configured model never leak
+          // into the current model's cache file.
+          const modelId = embeddingModelId(config);
+          const diskCache = parseEmbeddingsCache(await vaultApi.loadEmbeddingsCache(), modelId);
+          diskCache[activePath] = entry;
+          void vaultApi.saveEmbeddingsCache(serializeEmbeddingsCache(modelId, diskCache));
 
+          setEmbeddingsCache((prev) => ({ ...prev, [activePath]: entry }));
           updateSemanticRecommendations(activePath, config, notes ?? []);
         }
       } catch (err) {
