@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { vaultApi } from "../../api";
 import { isDesktopRuntime, pickVaultFolder } from "../../api/dialog";
 import type { ContextBundle, ContextBundleCandidate, LlmConfig, NoteDocument, Snapshot, VaultConfig, VaultSnapshot } from "../../api/types";
@@ -21,6 +22,16 @@ import type { InboxCaptureBlock } from "../../core/capture";
 
 type ViewMode = "split" | "edit" | "preview" | "graph" | "distill";
 type BundleMode = "short" | "standard" | "full";
+
+type LoadedContext = Awaited<ReturnType<typeof loadNoteContext>>;
+
+type InitialOpenVaultNote = {
+  readonly path: string;
+  readonly config: VaultConfig;
+  readonly notes: NoteMeta[];
+  readonly llmConfig: LlmConfig;
+  readonly isCurrent: () => boolean;
+};
 
 // ponytail: wide single-caller param object is the accepted coupling ceiling.
 // Zero-coupling needs restructuring 5 hooks' state ownership — out of scope.
@@ -99,6 +110,7 @@ function isInboxPath(path: string): boolean {
 }
 
 export function useVaultSession(params: UseVaultSessionParams) {
+  const openVaultGeneration = useRef(0);
   const {
     vault, setVault,
     activePath, setActivePath,
@@ -130,19 +142,52 @@ export function useVaultSession(params: UseVaultSessionParams) {
     setInboxCaptures([]);
   }
 
-  async function refreshArchiveStatus() {
+  function applyLoadedContext(path: string, loaded: LoadedContext, configToUse: VaultConfig) {
+    setMetadataSuggestions(null);
+    setContextBundle(null);
+    setContext(loaded.context);
+    setSnapshots(loaded.snapshots);
+    setContextCandidates(loaded.candidates);
+
+    const saved = configToUse.selectedPaths?.[path];
+    if (saved && Array.isArray(saved)) {
+      setSelectedContextPaths(new Set(saved));
+    } else {
+      setSelectedContextPaths(new Set(loaded.candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
+    }
+
+    const savedPrompt = configToUse.promptInstructions?.[path] || "";
+    setPromptInstruction(savedPrompt);
+    setInboxCaptures(loaded.inboxCaptures);
+  }
+
+  function applyNoteSuggestions(path: string, note: NoteDocument, notesForSuggestions: NoteMeta[], configToUse: LlmConfig) {
+    updateLinkSuggestions(note.content, notesForSuggestions);
+    void updateSemanticRecommendations(path, configToUse, notesForSuggestions);
+  }
+
+  function applyVaultOverview(nextGraph: GraphData, nextGitStatus: GitStatus) {
+    setGraph(nextGraph);
+    setGitStatus(nextGitStatus);
+  }
+
+  async function refreshArchiveStatus(shouldApply: () => boolean = () => true) {
     try {
       const status = await vaultApi.getArchiveStatus();
+      if (!shouldApply()) {
+        return;
+      }
       setArchiveStatus(status);
     } catch (e) {
-      console.error("Failed to load archive status", e);
+      if (shouldApply()) {
+        console.error("Failed to load archive status", e);
+      }
     }
   }
 
   async function refreshVaultOverview(): Promise<void> {
     const { graph: nextGraph, gitStatus: nextGitStatus } = await loadVaultOverview(vaultApi);
-    setGraph(nextGraph);
-    setGitStatus(nextGitStatus);
+    applyVaultOverview(nextGraph, nextGitStatus);
   }
 
   async function refreshContext(
@@ -152,36 +197,14 @@ export function useVaultSession(params: UseVaultSessionParams) {
     currentLlmConfig?: LlmConfig,
     currentDocument?: NoteDocument,
   ) {
-    setMetadataSuggestions(null);
-    setContextBundle(null);
-    const {
-      context: nextContext,
-      snapshots: nextSnapshots,
-      candidates,
-      inboxCaptures: nextInboxCaptures,
-    } = await loadNoteContext(vaultApi, path, isInboxPath(path));
-    setContext(nextContext);
-    setSnapshots(nextSnapshots);
-    setContextCandidates(candidates);
-
     const configToUse = currentConfig ?? vaultConfigRef.current;
-    const saved = configToUse.selectedPaths?.[path];
-    if (saved && Array.isArray(saved)) {
-      setSelectedContextPaths(new Set(saved));
-    } else {
-      setSelectedContextPaths(new Set(candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.path)));
-    }
-
-    const savedPrompt = configToUse.promptInstructions?.[path] || "";
-    setPromptInstruction(savedPrompt);
-
-    setInboxCaptures(nextInboxCaptures);
+    const loaded = await loadNoteContext(vaultApi, path, isInboxPath(path));
+    applyLoadedContext(path, loaded, configToUse);
 
     try {
       const note = currentDocument ?? await vaultApi.readNote(path);
       const notesForSuggestions = currentNotes ?? vault?.notes ?? [];
-      updateLinkSuggestions(note.content, notesForSuggestions);
-      void updateSemanticRecommendations(path, currentLlmConfig ?? llmConfig, notesForSuggestions);
+      applyNoteSuggestions(path, note, notesForSuggestions, currentLlmConfig ?? llmConfig);
     } catch (e) {
       console.error("Failed to read note for suggestions/semantics", e);
     }
@@ -208,8 +231,33 @@ export function useVaultSession(params: UseVaultSessionParams) {
     await Promise.all([selectNote(path), refreshVaultOverview()]);
   }
 
+  async function selectInitialOpenVaultNote(input: InitialOpenVaultNote): Promise<void> {
+    const [note, loaded] = await Promise.all([
+      vaultApi.readNote(input.path),
+      loadNoteContext(vaultApi, input.path, isInboxPath(input.path)),
+    ]);
+    if (!input.isCurrent()) {
+      return;
+    }
+
+    setActivePath(input.path);
+    setDocument(note);
+    setDraft(note.content);
+    setViewMode("split");
+    applyLoadedContext(input.path, loaded, input.config);
+    applyNoteSuggestions(input.path, note, input.notes, input.llmConfig);
+    void refreshBacklinkSuggestions(input.path);
+  }
+
   async function openVault(path: string) {
+    const generation = openVaultGeneration.current + 1;
+    openVaultGeneration.current = generation;
+    const isCurrent = () => generation === openVaultGeneration.current;
+
     const nextVault = await vaultApi.openVault(path);
+    if (!isCurrent()) {
+      return;
+    }
     setVault(nextVault);
     setResults(nextVault.notes);
     clearActiveNoteState();
@@ -219,6 +267,9 @@ export function useVaultSession(params: UseVaultSessionParams) {
     let runtimeLlmConfig: LlmConfig = DEFAULT_LLM_CONFIG;
     try {
       const rawConfig = await vaultApi.getVaultConfig();
+      if (!isCurrent()) {
+        return;
+      }
       loadedConfig = normalizeVaultConfigShared(rawConfig);
       const rawLlmConfig = rawConfig?.llmConfig;
       if (rawLlmConfig && typeof rawLlmConfig === "object" && typeof rawLlmConfig.apiKey === "string" && rawLlmConfig.apiKey.trim()) {
@@ -247,6 +298,9 @@ export function useVaultSession(params: UseVaultSessionParams) {
       setLlmConfig(llmCfg);
 
       const rawCache = await vaultApi.loadEmbeddingsCache();
+      if (!isCurrent()) {
+        return;
+      }
       setEmbeddingsCache(parseEmbeddingsCache(rawCache, embeddingModelId(llmCfg)));
 
       if (loadedConfig.archiveRetentionPolicy && loadedConfig.archiveRetentionPolicy !== "none") {
@@ -255,21 +309,40 @@ export function useVaultSession(params: UseVaultSessionParams) {
     } catch (e) {
       console.error("Failed to load vault config", e);
     }
+    if (!isCurrent()) {
+      return;
+    }
 
     if (nextVault.obsidianSettings?.detected) {
       setStatus("Imported Obsidian settings");
     }
-    const noteSelection = nextVault.notes[0]
-      ? selectNote(nextVault.notes[0].path, loadedConfig, nextVault.notes, runtimeLlmConfig)
+    const firstNote = nextVault.notes[0];
+    const noteSelection = firstNote
+      ? selectInitialOpenVaultNote({
+        path: firstNote.path,
+        config: loadedConfig,
+        notes: nextVault.notes,
+        llmConfig: runtimeLlmConfig,
+        isCurrent,
+      })
       : Promise.resolve();
-    await Promise.all([noteSelection, refreshVaultOverview()]);
+    const [{ graph: nextGraph, gitStatus: nextGitStatus }] = await Promise.all([
+      loadVaultOverview(vaultApi),
+      noteSelection,
+    ]);
+    if (!isCurrent()) {
+      return;
+    }
+    applyVaultOverview(nextGraph, nextGitStatus);
     setGitChanges([]);
     setSelectedGitFile(null);
     setActiveDiff(null);
     setCommitMessage("");
     setGitOutputLog(null);
-    void refreshArchiveStatus();
-    void runHealthAudit();
+    void refreshArchiveStatus(isCurrent);
+    if (isCurrent()) {
+      void runHealthAudit();
+    }
   }
 
   async function chooseVaultFolder() {
